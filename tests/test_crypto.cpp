@@ -262,7 +262,8 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	unsigned char pt[128];
 	unsigned long ptlen = sizeof(pt);
 	int stat = 0;
-	int vcheck = pkcs_1_v1_5_decode(tmpbuf, xlen, LTC_LTC_PKCS_1_EME, pt, &ptlen, &stat);
+	/* LTC 1.17 签名：pkcs_1_v1_5_decode(msg, msglen, block_type, modulus_bitlen, out, outlen, is_valid) */
+	int vcheck = pkcs_1_v1_5_decode(tmpbuf, xlen, LTC_LTC_PKCS_1_EME, 1024UL, pt, &ptlen, &stat);
 	printf("  [rsa] v15 decode -> %d, stat=%d, ptlen=%lu\n", vcheck, stat, ptlen); fflush(stdout);
 	CHECK(vcheck == CRYPT_OK);
 	CHECK(stat == 1);
