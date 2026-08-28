@@ -14,6 +14,10 @@
 #include <string.h>
 #include "security.h"
 #include "beacon.h"
+#include "crypto.h"
+/* LTC_SOURCE：mp_to_unsigned_bin 等便捷宏位于 tomcrypt_math.h 的
+   #if defined(LTC_SOURCE) 守卫块内，仅在测试中启用。 */
+#define LTC_SOURCE
 #include "tomcrypt.h"
 
 /* security.cpp 的重放告警只被 beacon 主流程使用，测试链接时以桩满足符号 */
