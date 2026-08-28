@@ -225,6 +225,7 @@ void security_init(char * k) {
 int rsa_encrypt_once(char * kbuffer, char * indata, int inlen, char * outdata, int * outlen) {
 	int check, prng_idx;
 	rsa_key key;
+	unsigned long outlen_tmp;
 
 	/* which crypto scheme are we using */
 	scheme = setting_short(SETTING_CRYPTO_SCHEME);
@@ -241,9 +242,16 @@ int rsa_encrypt_once(char * kbuffer, char * indata, int inlen, char * outdata, i
 	check = rsa_import((const unsigned char*)kbuffer, 162, &key);
 	sanity("rsa_import", check);
 
+	/* 注意：outlen 形参是 int*，但 rsa_encrypt_key_ex 按 unsigned long*（8 字节）
+	   写回。直接把 (unsigned long*)outlen 传下去会踩坏调用方栈上相邻 4 字节
+	   （/GS 环境下函数返回时 0xC0000409）。经局部 8 字节中转后再写回。 */
+	outlen_tmp = (unsigned long)*outlen;
+
 	/* encrypt it */
-	check = rsa_encrypt_key_ex((const unsigned char*)indata, inlen, (unsigned char*)outdata, (unsigned long*)outlen, (const unsigned char *)"Zz", 2, NULL, prng_idx, 0, LTC_LTC_PKCS_1_V1_5, &key);
+	check = rsa_encrypt_key_ex((const unsigned char*)indata, inlen, (unsigned char*)outdata, &outlen_tmp, (const unsigned char *)"Zz", 2, NULL, prng_idx, 0, LTC_LTC_PKCS_1_V1_5, &key);
 	sanity("rsa_encrypt", check);
+
+	*outlen = (int)outlen_tmp;
 
 	return CRYPT_OK;
 }

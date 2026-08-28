@@ -9,7 +9,7 @@ TEST(bformat_printf_basic) {
 	bformat_init(&f, 1024);
 	bformat_printf(&f, "hello %s %d", "world", 42);
 	CHECK(strcmp(bformat_string(&f), "hello world 42") == 0);
-	CHECK(bformat_length(&f) == 15);
+	CHECK(bformat_length(&f) == 14);
 	bformat_free(&f);
 }
 

@@ -66,12 +66,14 @@ unsigned int data_int(datap * d) {
 
 /* extract a byte! */
 unsigned int data_byte(datap * d) {
-	char * ptr;
+	unsigned char * ptr;
 
 	if (d->length == 0)
 		return 0;
 
-	ptr = d->buffer;
+	/* 修复：原实现按 char（MSVC 下有符号）读取，0x80..0xFF 会经符号扩展
+	   返回 0xFFFFFF80..，违背"取单字节"的 0..255 语义。 */
+	ptr = (unsigned char *)d->buffer;
 	d->buffer = d->buffer + sizeof(char);
 	d->length -= sizeof(char);
 	return (unsigned int)*ptr;
