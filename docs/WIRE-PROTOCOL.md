@@ -64,6 +64,8 @@ metadata_ct := RSA-1024-PKCS#1-v1.5(pubkey_spki162, session_material, lparam="Zz
   取自 settings 的 `SETTING_PUBKEY`(7)；
 - 明文 ≤117B（128 - 11 PKCS#1 v1.5 最小填充），CS 实际放 32B 会话密钥材料；
 - 密文恒 128B；
+- 注意：`lparam="Zz"` 是 `rsa_encrypt_key_ex` 的实参，但 LTC 在 V1_5 填充下
+  **忽略**该参数（仅 OAEP 使用）——填充块结构中不含 "Zz"；
 - 162B SPKI 的 DER 形状（`tests\test_crypto.cpp::build_spki_162` 逐字节构造）：
 
 ```

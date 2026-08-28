@@ -248,29 +248,37 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	CHECK(ctlen == 128); /* RSA-1024 密文恒 128B */
 	RSA_TRACE("encrypted 128B");
 
-	/* 私钥侧解密验证（独立于被测路径）——拆成两段以便二分定位：
-	   1) rsa_exptmod 原始私钥运算  2) pkcs_1_v1_5_decode 去填充 */
+	/* 私钥侧验证（独立于被测路径）。
+	   注：vendored 库的 rsa_exptmod(PK_PRIVATE) CRT 分支在本环境触发
+	   0xC0000409（/GS fastfail），beacon 生产路径只做公钥运算不受影响。
+	   这里绕开 CRT：直接用 d 做普通模幂还原明文，再手工校验
+	   PKCS#1 v1.5 EME 结构（00 02 || PS || 00 || lparam("Zz") || msg）。 */
 	register_hash(&sha256_desc);
 	int hash_idx = find_hash("sha256");
-	RSA_TRACE("decrypt: exptmod start");
-	unsigned char tmpbuf[128];
-	unsigned long xlen = sizeof(tmpbuf);
-	int dcheck = rsa_exptmod(ct, (unsigned long)ctlen, tmpbuf, &xlen, PK_PRIVATE, &key);
-	printf("  [rsa] exptmod -> %d, xlen=%lu\n", dcheck, xlen); fflush(stdout);
-	CHECK(dcheck == CRYPT_OK);
+	(void)hash_idx;
+	RSA_TRACE("decrypt: plain exptmod start");
+	void *c = NULL, *m = NULL;
+	CHECK(mp_init(&c) == CRYPT_OK);
+	CHECK(mp_init(&m) == CRYPT_OK);
+	CHECK(mp_read_unsigned_bin(c, ct, (unsigned long)ctlen) == CRYPT_OK);
+	CHECK(mp_exptmod(c, key.d, key.N, m) == CRYPT_OK);
+	unsigned char recovered[128];
+	unsigned long reclen = mp_unsigned_bin_size(m);
+	CHECK(reclen <= sizeof(recovered));
+	CHECK(mp_to_unsigned_bin(m, recovered) == CRYPT_OK);
+	printf("  [rsa] plain exptmod ok, recovered=%lu bytes\n", reclen); fflush(stdout);
 
-	unsigned char pt[128];
-	unsigned long ptlen = sizeof(pt);
-	int stat = 0;
-	/* LTC 1.17 签名：pkcs_1_v1_5_decode(msg, msglen, block_type, modulus_bitlen, out, outlen, is_valid) */
-	int vcheck = pkcs_1_v1_5_decode(tmpbuf, xlen, LTC_LTC_PKCS_1_EME, 1024UL, pt, &ptlen, &stat);
-	printf("  [rsa] v15 decode -> %d, stat=%d, ptlen=%lu\n", vcheck, stat, ptlen); fflush(stdout);
-	CHECK(vcheck == CRYPT_OK);
-	CHECK(stat == 1);
-	CHECK(ptlen == 32);
-	CHECK(memcmp(pt, session_material, 32) == 0);
+	/* PKCS#1 v1.5 EME 结构（V1_5 不使用 lparam——只有 OAEP 用）：
+	   EM = 00 02 || PS(≥8 非零) || 00 || msg；作为整数时前导 00 被丢弃 → 127 字节。 */
+	CHECK(reclen == 127);
+	CHECK(recovered[0] == 0x02);
+	for (unsigned long i = 1; i < reclen - 32 - 1; i++)
+		CHECK(recovered[i] != 0x00);
+	CHECK(recovered[reclen - 32 - 1] == 0x00);
+	CHECK(memcmp(recovered + (reclen - 32), session_material, 32) == 0);
 	RSA_TRACE("decrypted+verified");
 
+	mp_clear(c); mp_clear(m);
 	rsa_free(&key);
 	RSA_TRACE("freed");
 #undef RSA_TRACE
