@@ -10,8 +10,11 @@ int run_all_tests() {
 	int failed = 0;
 	std::vector<TestCase>& all = test_registry();
 	printf("== %zu tests ==\n", all.size());
+	fflush(stdout); /* CI 管道下 stdout 全缓冲，逐条冲刷保证崩溃时也能看到现场 */
 
 	for (size_t i = 0; i < all.size(); i++) {
+		printf("[RUN ] %s\n", all[i].name);
+		fflush(stdout);
 		try {
 			all[i].fn();
 			printf("[PASS] %s\n", all[i].name);
@@ -22,9 +25,11 @@ int run_all_tests() {
 			printf("[FAIL] %s\n       unexpected: %s\n", all[i].name, e.what());
 			failed++;
 		}
+		fflush(stdout);
 	}
 
 	printf("== %zu/%zu passed ==\n", all.size() - failed, all.size());
+	fflush(stdout);
 	return failed == 0 ? 0 : 1;
 }
 

@@ -34,8 +34,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "test build failed (exit $LASTEXITCODE)" }
 
     Write-Host '==> running tests' -ForegroundColor Cyan
-    & "$outDir\tests.exe"
-    exit $LASTEXITCODE
+    # 输出经管道捕获后回显：进程异常退出时也不丢测试现场
+    & "$outDir\tests.exe" 2>&1 | Tee-Object -Variable testOutput
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        Write-Host "tests exited with $code; captured output follows:" -ForegroundColor Red
+        $testOutput | ForEach-Object { Write-Host $_ }
+    }
+    exit $code
 }
 finally {
     Pop-Location

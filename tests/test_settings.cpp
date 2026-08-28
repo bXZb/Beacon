@@ -25,9 +25,10 @@ TEST(settings_parse_all_types) {
 	put_u16(p, 1); put_u16(p + 2, 1); put_u16(p + 4, 2); put_u16(p + 6, 0x0102); p += 8;
 	/* setting[2] = TYPE_INT 0xAABBCCDD */
 	put_u16(p, 2); put_u16(p + 2, 2); put_u16(p + 4, 4); put_u32(p + 6, 0xAABBCCDD); p += 10;
-	/* setting[3] = TYPE_PTR "test-string" */
-	put_u16(p, 3); put_u16(p + 2, 3); put_u16(p + 4, 11);
-	memcpy(p + 6, "test-string", 11); p += 17;
+	/* setting[3] = TYPE_PTR "test-string\0"（长度含结尾 NUL——settings_init 按
+	   length 原样拷贝不做补零，TS patch 语义同样要求串自带 NUL） */
+	put_u16(p, 3); put_u16(p + 2, 3); put_u16(p + 4, 12);
+	memcpy(p + 6, "test-string", 12); p += 18;
 	/* index=0 终止（已零填充） */
 
 	/* 整包 XOR 0x2E 掩码（TS patch 语义） */
