@@ -1,5 +1,8 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include "channel.h"
 #include "commands.h"
+#include "crypto.h"
 #include "security.h"
 #include "beacon.h"
 #include "link.h"
@@ -133,7 +136,7 @@ void agent_init(char * buffer, DWORD max) {
 	BYTE    flagme = 0;
 
 	/* create a [random] AES session key */
-	rng_get_bytes((unsigned char *)sessionkey, KEY_SIZE, NULL);
+	crypto_rng_get_bytes((unsigned char *)sessionkey, KEY_SIZE);
 
 	/* init our crypto */
 	security_init(sessionkey);

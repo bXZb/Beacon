@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "crypto.h" /* rng_get_bytes 收敛到 crypto 层 */
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -47,7 +48,7 @@ void command_setenv(char * buffer, int length) {
 
 unsigned int bigger_rand() {
 	unsigned int number;
-	rng_get_bytes((unsigned char *)&number, sizeof(unsigned int), NULL);
+	crypto_rng_get_bytes((unsigned char *)&number, sizeof(unsigned int));
 	return number;
 }
 

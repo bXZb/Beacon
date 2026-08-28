@@ -22,3 +22,7 @@ int crypto_base64_decode(const unsigned char * in,  unsigned long inlen,
    不可用时回退 CryptGenRandom）。返回可用于加密原语的 prng 索引。
    幂等，可重复调用。 */
 int crypto_init(void);
+
+/* 取 OS 随机字节（无状态）。返回实际写入字节数，失败返回 0。
+   替代原 LTC rng_get_bytes（后者要求已注册的 PRNG 描述符）。 */
+unsigned long crypto_rng_get_bytes(unsigned char * out, unsigned long outlen);

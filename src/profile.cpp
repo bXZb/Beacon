@@ -1,4 +1,6 @@
 #include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "profile.h"
 #include "parse.h"
 #include "crypto.h" /* P4.15: 不再直接依赖 tomcrypt */

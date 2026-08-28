@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "channel.h"
 #include "commands.h"
 #include "security.h"

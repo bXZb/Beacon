@@ -124,3 +124,8 @@ int crypto_init(void) {
 	resolve_rng_source();
 	return idx;
 }
+
+unsigned long crypto_rng_get_bytes(unsigned char * out, unsigned long outlen) {
+	resolve_rng_source();
+	return os_rng_read(out, outlen, NULL);
+}

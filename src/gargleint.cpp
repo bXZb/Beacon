@@ -1,5 +1,7 @@
 /* gargle! */
 #include <windows.h>
+#include <stdlib.h>
+#include "crypto.h"
 #include "beacon.h"
 #include "gargleint.h"
 
@@ -50,5 +52,5 @@ void gargle_trampoline(void * end, void * begin) {
 		}
 		index += 2; /* goto the next section */
 	}
-	rng_get_bytes((unsigned char *)gparms->mask, sizeof(gparms->mask), NULL);
+	crypto_rng_get_bytes((unsigned char *)gparms->mask, sizeof(gparms->mask));
 }

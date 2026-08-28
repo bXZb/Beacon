@@ -26,7 +26,7 @@ try {
     $outDir = Join-Path $root 'tests\_build'
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-    & cl /nologo /W3 /EHsc /MT /D_CRT_SECURE_NO_WARNINGS /DLTM_DESC /DUSE_LTM `
+    & cl /nologo /W3 /EHsc /MT /D_CRT_SECURE_NO_WARNINGS /DWIN32_LEAN_AND_MEAN /DLTM_DESC /DUSE_LTM `
         /Isrc /Itomcrypt-headers `
         $sources `
         /Fe:"$outDir\tests.exe" /Fo:"$outDir\" `
