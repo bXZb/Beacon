@@ -248,34 +248,21 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	CHECK(ctlen == 128); /* RSA-1024 密文恒 128B */
 	RSA_TRACE("encrypted 128B");
 
-	/* 私钥侧验证说明：vendored 库的大指数模幂（含 rsa_exptmod(PK_PRIVATE) CRT
-	   分支与普通 mp_exptmod(c, d, N)）在本环境触发 0xC0000409 fastfail，属预编译
-	   库缺陷；beacon 生产路径只做公钥运算（e=65537）不受影响。验证边界因此
-	   收在生产路径实际使用的范围：编码器输出结构 + 公钥模幂可执行。
-	   库重编（thirdparty/README.md）后应恢复完整私钥解密回路。 */
+	/* 私钥侧解密验证（独立于被测路径）：rsa_decrypt_key_ex 完整回路。
+	   此前崩溃的根因是头/库版本错配（lib=1.18.2，头=1.17，rsa_key 少
+	   qS 字段 → 栈破坏），头文件 ABI 修正后恢复完整验证。 */
 	register_hash(&sha256_desc);
 	int hash_idx = find_hash("sha256");
-	(void)hash_idx;
-	RSA_TRACE("v1.5 encode structure check");
-	unsigned char em[128];
-	unsigned long emlen = sizeof(em);
-	/* LTC 1.17 签名：pkcs_1_v1_5_encode(msg, msglen, block_type, modulus_bitlen,
-	   prng, prng_idx, out, outlen)。V1_5/EME 不使用 lparam（仅 OAEP）。 */
-	CHECK(pkcs_1_v1_5_encode(session_material, 32, LTC_LTC_PKCS_1_EME, 1024UL,
-		NULL, prng_idx, em, &emlen) == CRYPT_OK);
-	CHECK(emlen == 128);
-	CHECK(em[0] == 0x00 && em[1] == 0x02);          /* 块类型 2 */
-	for (unsigned long i = 2; i < emlen - 32 - 1; i++)
-		CHECK(em[i] != 0x00);                        /* PS 全非零 */
-	CHECK(em[emlen - 32 - 1] == 0x00);               /* 分隔符 */
-	CHECK(memcmp(em + (emlen - 32), session_material, 32) == 0);
-	RSA_TRACE("v1.5 structure ok");
-
-	/* 说明：本测试不再额外执行第二次模幂——vendored 库在进程内第二次
-	   大数 exptmod（无论指数大小）即触发 0xC0000409（首次为 rsa_encrypt_once
-	   内部那次，工作正常）。beacon 生产路径恰好全程只执行一次公钥模幂
-	   （agent_init 一次，结果缓存于 bigsession），与该行为兼容。
-	   根因须待 thirdparty/ 重编后排查。 */
+	RSA_TRACE("decrypt start");
+	unsigned char pt[128];
+	unsigned long ptlen = sizeof(pt);
+	int stat = 0;
+	CHECK(rsa_decrypt_key_ex(ct, (unsigned long)ctlen, pt, &ptlen,
+		(const unsigned char *)"Zz", 2, hash_idx, LTC_LTC_PKCS_1_V1_5, &stat, &key) == CRYPT_OK);
+	CHECK(stat == 1);
+	CHECK(ptlen == 32);
+	CHECK(memcmp(pt, session_material, 32) == 0);
+	RSA_TRACE("decrypted+verified");
 
 	rsa_free(&key);
 	RSA_TRACE("freed");

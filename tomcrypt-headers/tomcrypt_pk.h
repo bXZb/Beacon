@@ -19,21 +19,26 @@ typedef struct Rsa_key {
     /** Type of key, PK_PRIVATE or PK_PUBLIC */
     int type;
     /** The public exponent */
-    void *e; 
+    void *e;
     /** The private exponent */
-    void *d; 
+    void *d;
     /** The modulus */
-    void *N; 
+    void *N;
     /** The p factor of N */
-    void *p; 
+    void *p;
     /** The q factor of N */
-    void *q; 
+    void *q;
     /** The 1/q mod p CRT param */
-    void *qP; 
+    void *qP;
     /** The d mod (p - 1) CRT param */
-    void *dP; 
+    void *dP;
     /** The d mod (q - 1) CRT param */
     void *dQ;
+    /* ABI 修正（CI 实证 2026-08-29）：lib 实为 LTC 1.18.2 构建（见
+       lib/VERSIONS.md），1.18 的 rsa_key 末尾多一个 size_t qS。按 1.17 的
+       72 字节布局在栈上声明 rsa_key 会被 rsa_make_key/rsa_import 的 80 字节
+       写入踩掉 8 字节（/GS 环境下 0xC0000409）。此字段补齐布局。 */
+    size_t qS;
 } rsa_key;
 
 int rsa_make_key(prng_state *prng, int wprng, int size, long e, rsa_key *key);

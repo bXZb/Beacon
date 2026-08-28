@@ -15,9 +15,12 @@
 extern "C" {
 #endif
 
-/* version */
-#define CRYPT   0x0117
-#define SCRYPT  "1.17"
+/* version —— 注意：ABI 修正（CI 实证 2026-08-29，见 lib/VERSIONS.md）。
+   预编译 lib/tomcrypt.x64.lib 实为 **1.18.2** 构建（二进制内嵌版本串
+   "1.18.2" + 1.18 独有符号 rsa_get_size），本头文件集为 1.17 原版并做了
+   布局级 ABI 修正（rsa_key 增加 qS 字段）。版本宏据此更正为 0x0118。 */
+#define CRYPT   0x0118
+#define SCRYPT  "1.18.2"
 
 /* max size of either a cipher/hash block or symmetric key [largest of the two] */
 #define MAXBLOCKSIZE  128

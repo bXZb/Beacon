@@ -2,14 +2,26 @@
 
 | 文件 | 来源 | 配对头文件 |
 |---|---|---|
-| `tomcrypt.x64.lib` | 预编译 LibTomCrypt（x64 Release /MT），经 vcpkg 获取构建，随本仓库直接分发 | `tomcrypt-headers/`（**LTC 1.17**，CRYPT=0x0117） |
+| `tomcrypt.x64.lib` | 预编译 LibTomCrypt（x64 Release /MT），经 vcpkg 获取构建，随本仓库直接分发 | `tomcrypt-headers/`（1.17 原版 + **ABI 修正**，见下） |
 | `tommath.x64.lib` | 预编译 LibTomMath（x64 Release /MT），1.2.x/1.3.x 结构（`bn_cutoffs.c` 全局 cutoff 变量） | 内建于 lib |
+
+## 版本实证（CI 调试 2026-08-29 修正）
+
+**`tomcrypt.x64.lib` 实为 LTC 1.18.2 构建**——二进制内嵌版本串 `"1.18.2"`，
+且含 1.18 独有符号 `rsa_get_size`；而仓库原有头文件是 1.17。两者错配的
+后果：1.18 的 `rsa_key` 末尾多一个 `size_t qS`（72→80 字节），库函数按大
+结构体写入调用方栈上按 1.17 布局声明的 `rsa_key` 时会踩掉 8 字节——
+/GS 环境下函数返回即 `0xC0000409`。
+
+处置：`tomcrypt-headers/` 保留 1.17 原版内容并做**布局级 ABI 修正**
+（`rsa_key` 补 `qS` 字段；`CRYPT`/`SCRYPT` 版本宏更正为 0x0118/"1.18.2"）。
+1.17→1.18 其余被 beacon 用到的结构（`ltc_asn1_list`、`ltc_prng_descriptor` 等）
+布局兼容。完整换用正版 1.18.2 头文件/重编库见 `thirdparty/README.md`。
 
 ## 重要约束
 
-1. **头文件是 LTC 1.17**：`tomcrypt-headers/tomcrypt_custom.h` 等为 1.17 结构。
-   1.18+ 的 ABI 有差异（`ltc_asn1_type` typedef、`LTC_ASN1_RAW_BIT_STRING`、
-   `CRYPT_INPUT_TOO_LONG` 等），替换头文件必须同步替换 lib，反之亦然。
+1. **头/库必须成对替换**：布局级修正只覆盖已实证的差异；换 lib 必须同步
+   审查头文件，反之亦然。
 2. **链接方式**：`common.props` 已把 `$(ProjectDir)lib` 加入 `LibraryPath`，
    工程经 `#pragma comment(lib, ...)` 或链接器输入解析；x64 构建只链这两个 .lib。
 3. **x86/ARM 构建无库**：本仓库的 `lib/` 只有 x64 版本。Release|Win32/ARM 配置
