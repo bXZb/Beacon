@@ -1,0 +1,290 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="src\bformat.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\build.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\callback.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\channel.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\channel_tcp.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\commands.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\elevate.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\encoders.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\files.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\filesys.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\functions.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\jobs.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parse.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\metadata.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\profile.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\powershell.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\pivot.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ps.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\recurse.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ReflectiveDll.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ReflectiveLoader.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\security.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\settings.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\thread.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tokens.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\webserver.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\proto.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\link.cpp">
+      <Filter>link module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\link_smb.cpp">
+      <Filter>link module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\link_tcp.cpp">
+      <Filter>link module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client.cpp">
+      <Filter>link client module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\argue.cpp">
+      <Filter>argue module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\execute.cpp">
+      <Filter>argue module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gargle_pivot_tcp.cpp">
+      <Filter>gargle</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gargle_pivot_smb.cpp">
+      <Filter>gargle</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gargleint.cpp">
+      <Filter>gargle</Filter>
+    </ClCompile>
+    <ClCompile Include="src\spawn.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\process_block.cpp">
+      <Filter>process module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\process_ppid.cpp">
+      <Filter>process module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ppidfriends.cpp">
+      <Filter>process module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hotbeef.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_apcthread.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_createthread.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_hinted.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_mirror.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_rtlcreateuserthread.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_rtlcreateuserthread_wow64.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_setthreadcontext.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inject_smart.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inlineexec.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\boff.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="src\beacon_extc2.cpp">
+      <Filter>extc2</Filter>
+    </ClCompile>
+    <ClCompile Include="src\client_smb_extc2.cpp">
+      <Filter>link client module</Filter>
+    </ClCompile>
+    <ClCompile Include="src\track_memory.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\beacon.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\build.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\bformat.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\channel.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\commands.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\encoders.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\functions.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\jobs.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\parse.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\profile.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ReflectiveDLLInjection.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ReflectiveLoader.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\security.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\tasks.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\tokens.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\link.h">
+      <Filter>link module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\linkint.h">
+      <Filter>link module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\client.h">
+      <Filter>link client module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\clientint.h">
+      <Filter>link client module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\argue.h">
+      <Filter>argue module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\gargleint.h">
+      <Filter>gargle</Filter>
+    </ClInclude>
+    <ClInclude Include="src\process.h">
+      <Filter>process module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\inject.h">
+      <Filter>inject module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\inlinecommon.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\track_memory.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="source">
+      <UniqueIdentifier>{b67f8b0b-273e-4ea1-b819-232bff9f0a4a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="headers">
+      <UniqueIdentifier>{968ed762-5feb-4a4d-9ec7-2a8cdd719f6c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="link module">
+      <UniqueIdentifier>{bbad11e5-bf1d-426a-9a7c-c6946f2ec1ce}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="link client module">
+      <UniqueIdentifier>{12231d96-c8a7-480d-9f1e-6eae99dae698}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="argue module">
+      <UniqueIdentifier>{7863039b-e892-43b4-9dfe-e8e005e5b0f1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gargle">
+      <UniqueIdentifier>{a92f2222-cf14-43e6-a486-22854fd1b1d3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="process module">
+      <UniqueIdentifier>{d35d25bc-3b1f-418c-a2c3-8a3c770da217}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="inject module">
+      <UniqueIdentifier>{fa6946f0-4b61-4d84-9abc-2bad9cf1bd8f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="extc2">
+      <UniqueIdentifier>{4f7c7917-5685-4857-adbd-4d907063c340}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\ReflectiveLoader.5k">
+      <Filter>source</Filter>
+    </None>
+    <None Include="src\ReflectiveLoader.50k">
+      <Filter>source</Filter>
+    </None>
+    <None Include="src\ReflectiveLoader.100k">
+      <Filter>source</Filter>
+    </None>
+    <None Include="src\ReflectiveLoader.1000k">
+      <Filter>source</Filter>
+    </None>
+  </ItemGroup>
+</Project>

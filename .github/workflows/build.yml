@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  dll:
+    name: ${{ matrix.project }} x64 Release
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [beacon, dnsb, extc2, pivot]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # 说明：runner 只有 v143 工具集；common.props 锁的 v142 是实机验证过的组合
+      # （v143 在部分环境有 ICE 风险，见 docs/BUILD.md）。CI 用 v143 作为冒烟基线，
+      # 失败即说明工具链漂移需要关注——这正是 CI 的价值。
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1 -Project ${{ matrix.project }} -Toolset v143
+
+      - name: Report size
+        shell: pwsh
+        run: |
+          $dll = Get-Item "x64/Release/${{ matrix.project }}.x64.dll"
+          "$($dll.Name) = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project }}-x64
+          path: |
+            x64/Release/${{ matrix.project }}.x64.dll
+            x64/Release/${{ matrix.project }}.x64.map
+
+  tests:
+    name: host-side unit tests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build & run tests
+        shell: pwsh
+        run: ./tests/run_tests.ps1

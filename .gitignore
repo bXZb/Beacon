@@ -1,0 +1,33 @@
+# 构建产物
+x64/
+Win32/
+ARM/
+bin/
+Debug/
+Release/
+*.obj
+*.pdb
+*.map
+*.ilk
+*.idb
+*.log
+*.tlog
+*.lastbuildstate
+
+# IDE
+.vs/
+*.suo
+*.user
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# 临时
+_patch_*.py
+*.bak
+Thumbs.db
+
+# 本地构建/抓取工作目录
+tests/_build/
+thirdparty/_src/
