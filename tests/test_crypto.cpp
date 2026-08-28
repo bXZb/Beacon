@@ -258,7 +258,7 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	unsigned long ptlen = sizeof(pt);
 	int stat = 0;
 	CHECK(rsa_decrypt_key_ex(ct, (unsigned long)ctlen, pt, &ptlen,
-		(const unsigned char *)"Zz", 2, hash_idx, LTC_LTC_PKCS_1_V1_5, &stat, &key) == CRYPT_OK);
+		(const unsigned char *)"Zz", 2, hash_idx, LTC_PKCS_1_V1_5, &stat, &key) == CRYPT_OK);
 	CHECK(stat == 1);
 	CHECK(ptlen == 32);
 	CHECK(memcmp(pt, session_material, 32) == 0);

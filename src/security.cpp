@@ -248,7 +248,7 @@ int rsa_encrypt_once(char * kbuffer, char * indata, int inlen, char * outdata, i
 	outlen_tmp = (unsigned long)*outlen;
 
 	/* encrypt it */
-	check = rsa_encrypt_key_ex((const unsigned char*)indata, inlen, (unsigned char*)outdata, &outlen_tmp, (const unsigned char *)"Zz", 2, NULL, prng_idx, 0, LTC_LTC_PKCS_1_V1_5, &key);
+	check = rsa_encrypt_key_ex((const unsigned char*)indata, inlen, (unsigned char*)outdata, &outlen_tmp, (const unsigned char *)"Zz", 2, NULL, prng_idx, 0, LTC_PKCS_1_V1_5, &key);
 	sanity("rsa_encrypt", check);
 
 	*outlen = (int)outlen_tmp;
