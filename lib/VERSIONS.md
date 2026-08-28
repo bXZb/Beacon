@@ -18,6 +18,15 @@
    golden 测试（P3.12），并核对 MAP 文件中 RSA 路径函数
    （`rsa_import`/`rsa_exptmod` 或 `rsa_encrypt_key_ex`/`pkcs_1_oaep_encode`）存在。
 
+## 已知缺陷（CI 实证 2026-08-29）
+
+**大指数模幂路径触发 0xC0000409 fastfail**：`rsa_exptmod(PK_PRIVATE)`（CRT 分支）
+乃至普通 `mp_exptmod(c, d, N)`（1024 位私钥指数）在本库上必崩；公钥运算
+（e=65537）与密钥生成正常。beacon 生产路径只导入公钥加密，**不受影响**；
+tests 中私钥侧验证因此改为分段验证（编码器结构 + 公钥模幂）。
+该缺陷也是 `thirdparty/` 精简重编的直接动机之一：重编库落地后应恢复
+完整私钥解密回路测试。
+
 ## 重编精简版（P4.16，待源码）
 
 `thirdparty/` 下备有精简重编配置与获取脚本（`thirdparty/README.md`）。
