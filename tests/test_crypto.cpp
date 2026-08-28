@@ -212,24 +212,32 @@ TEST(crypto_init_registers_os_rng) {
 }
 
 TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
+	/* 检查点跟踪：该用例内含较慢的 1024 位密钥生成，且曾暴露 /GS fastfail，
+	   逐段打印以便 CI 上精确定位异常位置。 */
+#define RSA_TRACE(msg) do { printf("  [rsa] %s\n", msg); fflush(stdout); } while (0)
+
 	inject_scheme_setting();
+	RSA_TRACE("settings ok");
 
 	/* 测试内生成 RSA-1024 密钥对（lib 含完整 keygen；beacon 运行时只导入公钥）。
 	   PRNG 走 crypto 层（ProcessPrng 描述符）——与精简版 lib（无内置 PRNG）兼容。 */
 	ltc_mp = ltm_desc;
 	int prng_idx = crypto_init();
 	CHECK(prng_idx >= 0);
+	RSA_TRACE("prng ok");
 
 	rsa_key key;
 	memset(&key, 0, sizeof(key));
+	RSA_TRACE("keygen start (may take ~30-90s)");
 	CHECK(rsa_make_key(NULL, prng_idx, 1024, 65537, &key) == CRYPT_OK);
+	RSA_TRACE("keygen done");
 
 	/* 导出 128B 模数，构造 162B SPKI —— 即 setting_ptr(SETTING_PUBKEY) 的字节 */
 	unsigned char mod128[128];
-	unsigned long modlen = 128;
 	CHECK(mp_to_unsigned_bin(key.N, mod128) == CRYPT_OK);
 	unsigned char spki[162];
 	CHECK(build_spki_162(mod128, spki) == 162);
+	RSA_TRACE("spki built");
 
 	/* 走真实元数据加密路径：PKCS#1 v1.5 + lparam "Zz" */
 	unsigned char session_material[32];
@@ -238,6 +246,7 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	int ctlen = sizeof(ct);
 	CHECK(rsa_encrypt_once((char *)spki, (char *)session_material, 32, (char *)ct, &ctlen) == CRYPT_OK);
 	CHECK(ctlen == 128); /* RSA-1024 密文恒 128B */
+	RSA_TRACE("encrypted 128B");
 
 	/* 私钥侧解密验证（独立于被测路径） */
 	register_hash(&sha256_desc);
@@ -250,6 +259,9 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	CHECK(stat == 1);
 	CHECK(ptlen == 32);
 	CHECK(memcmp(pt, session_material, 32) == 0);
+	RSA_TRACE("decrypted+verified");
 
 	rsa_free(&key);
+	RSA_TRACE("freed");
+#undef RSA_TRACE
 }
