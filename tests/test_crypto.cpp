@@ -248,14 +248,23 @@ TEST(rsa_metadata_encrypt_decrypt_roundtrip) {
 	CHECK(ctlen == 128); /* RSA-1024 密文恒 128B */
 	RSA_TRACE("encrypted 128B");
 
-	/* 私钥侧解密验证（独立于被测路径） */
+	/* 私钥侧解密验证（独立于被测路径）——拆成两段以便二分定位：
+	   1) rsa_exptmod 原始私钥运算  2) pkcs_1_v1_5_decode 去填充 */
 	register_hash(&sha256_desc);
 	int hash_idx = find_hash("sha256");
+	RSA_TRACE("decrypt: exptmod start");
+	unsigned char tmpbuf[128];
+	unsigned long xlen = sizeof(tmpbuf);
+	int dcheck = rsa_exptmod(ct, (unsigned long)ctlen, tmpbuf, &xlen, PK_PRIVATE, &key);
+	printf("  [rsa] exptmod -> %d, xlen=%lu\n", dcheck, xlen); fflush(stdout);
+	CHECK(dcheck == CRYPT_OK);
+
 	unsigned char pt[128];
 	unsigned long ptlen = sizeof(pt);
 	int stat = 0;
-	CHECK(rsa_decrypt_key_ex(ct, (unsigned long)ctlen, pt, &ptlen,
-		(const unsigned char *)"Zz", 2, hash_idx, LTC_LTC_PKCS_1_V1_5, &stat, &key) == CRYPT_OK);
+	int vcheck = pkcs_1_v1_5_decode(tmpbuf, xlen, LTC_LTC_PKCS_1_EME, pt, &ptlen, &stat);
+	printf("  [rsa] v15 decode -> %d, stat=%d, ptlen=%lu\n", vcheck, stat, ptlen); fflush(stdout);
+	CHECK(vcheck == CRYPT_OK);
 	CHECK(stat == 1);
 	CHECK(ptlen == 32);
 	CHECK(memcmp(pt, session_material, 32) == 0);
