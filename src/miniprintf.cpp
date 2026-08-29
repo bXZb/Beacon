@@ -149,10 +149,10 @@ int __cdecl __stdio_common_vsprintf_s(unsigned long long options, char *buffer,
    locale/float chain follows.
    输出经 fputs 落到目标流（不引入 output.obj 依赖）。注意不能做成 no-op：
    测试宿主进程的 printf 全走这里，no-op 会静默吞掉一切输出。 */
-int __cdecl __stdio_common_vfprintf(unsigned long long options, void *stream,
+int __cdecl __stdio_common_vfprintf(unsigned long long options, FILE * stream,
         const char *fmt, _locale_t locale, va_list args) {
     (void)options; (void)locale;
-    FILE * f = (FILE *)stream;
+    FILE * f = stream;
     if (f == NULL || fmt == NULL) return 0;
     char stackbuf[512];
     int need = core(stackbuf, sizeof(stackbuf), fmt, args);
