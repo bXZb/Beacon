@@ -22,17 +22,18 @@ TEST(keygen_probe_rsa_make_key) {
 
 	rsa_key key;
 	memset(&key, 0, sizeof(key));
-	CHECK(rsa_make_key(NULL, prng_idx, 1024, 65537, &key) == CRYPT_OK);
+	/* 1.18 契约：size = 模数的**字节数**（octets）。128 → 1024 位。
+	   （传 1024 会生成 8192 位巨钥——此前探针超时/异常的根源。） */
+	CHECK(rsa_make_key(NULL, prng_idx, 128, 65537, &key) == CRYPT_OK);
 	CHECK(key.type == PK_PRIVATE);
 
-	/* 模数位数探针：先打印实际值（供最终断言定标），临时接受 1000..1030 */
+	/* 模数位数：LTC keygen 的 p/q 顶位策略可产生 1023 或 1024 位 */
 	int nbits = mp_count_bits(key.N);
-	printf("  [keygen] modulus bits = %d\n", nbits);
-	fflush(stdout);
-	CHECK(nbits >= 1000 && nbits <= 1030);
+	CHECK(nbits >= 1023 && nbits <= 1024);
 	unsigned char mod128[128];
 	CHECK(mp_unsigned_bin_size(key.N) <= sizeof(mod128));
 	CHECK(mp_to_unsigned_bin(key.N, mod128) == CRYPT_OK);
+	CHECK((mod128[0] & 0x80) != 0);
 
 	/* keygen 之后的堆健康探针：哈希运算仍须正常 */
 	unsigned char digest[32];
