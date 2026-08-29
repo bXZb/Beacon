@@ -18,7 +18,7 @@ TEST(mini_i64d_reads_64bit_and_consumes_arg) {
 	printf("  [mini] i64d: r=%d buf=[%s]\n", r, buf);
 	fflush(stdout);
 	CHECK(r > 0);
-	CHECK(strstr(buf, "F 549755743796 tail") == buf); /* 0x7FFFFFFF1234 = 549755743796 */
+	CHECK(strstr(buf, "F 140737488294452 tail") == buf); /* 0x7FFFFFFF1234 = 140737488294452 */
 }
 
 TEST(mini_lld_equivalent) {
@@ -77,5 +77,5 @@ TEST(mini_scprintf_counts_without_writing) {
 	int n = _scprintf("%s %I64d", "abc", 0x7FFFFFFF1234LL);
 	printf("  [mini] scprintf: n=%d (expected 16)\n", n);
 	fflush(stdout);
-	CHECK(n == 3 + 1 + 12);
+	CHECK(n == 3 + 1 + 15); /* abc + space + 15 digits */
 }
