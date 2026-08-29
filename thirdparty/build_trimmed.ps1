@@ -70,7 +70,8 @@ Write-Host '==> building libtommath' -ForegroundColor Cyan
 Push-Location $ltmDir
 try {
     $ltmSrcs = Get-ChildItem -Filter '*.c' | ForEach-Object { $_.Name }
-    & cl /nologo /c /MT /O2 /W3 /D_CRT_SECURE_NO_WARNINGS $ltmSrcs
+    # /O1：体积导向（MinSpace）；v143 下 /O2 曾触发 ICE（C1001），见 docs/BUILD.md
+    & cl /nologo /c /MT /O1 /W3 /D_CRT_SECURE_NO_WARNINGS $ltmSrcs
     if ($LASTEXITCODE -ne 0) { throw 'libtommath compile failed' }
     & lib /nologo /OUT:"$OutDir\tommath.x64.lib" *.obj
     if ($LASTEXITCODE -ne 0) { throw 'libtommath lib failed' }
@@ -94,9 +95,17 @@ try {
             $srcs = $_.Group | ForEach-Object { $_.FullName }
             # /DLTC_SOURCE：math 描述符便捷宏；LTM_DESC/USE_LTM：对齐 vendored lib
             # /I libtommath：ltm_desc.c 需要 tommath.h
-            & cl /nologo /c /MT /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /DLTC_SOURCE /DLTM_DESC /DUSE_LTM `
-                /I"src\headers" /I"$ltmDir" /Fo:"$objDir\" $srcs
-            if ($LASTEXITCODE -ne 0) { throw "libtomcrypt compile failed in $($_.Name)" }
+            # /O1：体积导向；v143 /O2 有 ICE 前科（C1001，base64_decode.c 实证），
+            #      失败的组自动降级 /Od 重试
+            $common = @('/nologo', '/c', '/MT', '/W3', '/D_CRT_SECURE_NO_WARNINGS',
+                        '/DLTC_SOURCE', '/DLTM_DESC', '/DUSE_LTM',
+                        "/Isrc\headers", "/I$ltmDir", "/Fo:$objDir\")
+            & cl @common '/O1' $srcs
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "group $($_.Name) failed at /O1, retrying at /Od"
+                & cl @common '/Od' $srcs
+                if ($LASTEXITCODE -ne 0) { throw "libtomcrypt compile failed in $($_.Name)" }
+            }
             $objAll += Get-ChildItem $objDir -Filter '*.obj' | ForEach-Object { $_.FullName }
         }
     & lib /nologo /OUT:"$OutDir\tomcrypt.x64.lib" $objAll
