@@ -34,6 +34,16 @@ jobs:
           $dll = Get-Item "x64/Release/${{ matrix.project }}.x64.dll"
           "$($dll.Name) = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
+      # stageless 形状冒烟：blob 补丁 → LoadLibrary → 导出验证 → 干净卸载
+      - name: Load smoke (beacon variant only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tests\_build | Out-Null
+          & cl /nologo /W3 /EHsc /MT tests/load_smoke.cpp /Fe:tests\_build\load_smoke.exe /Fo:tests\_build\
+          if ($LASTEXITCODE -ne 0) { throw "smoke build failed" }
+          ./tests/_build/load_smoke.exe x64/Release/beacon.x64.dll
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
