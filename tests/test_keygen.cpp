@@ -10,6 +10,9 @@
 
 #include <Windows.h>
 #include <string.h>
+
+/* LTC_SOURCE：mp_unsigned_bin_size 等便捷宏位于该守卫块内 */
+#define LTC_SOURCE
 #include "tomcrypt.h"
 
 TEST(keygen_probe_rsa_make_key) {
