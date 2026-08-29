@@ -16,6 +16,19 @@
 **处置**：`tomcrypt-headers/` 已整体换为上游 v1.18.2 原版头文件（含 LICENSE），
 与 lib 版本对齐；历史遗留的"1.17"结论以本文件为准。
 
+## 已知疑点（CI 实证 2026-08-29，全绿 run 33204694583 之后修正）
+
+- **`rsa_make_key`（keygen）路径疑似内存破坏**：多轮 CI 复现"rsa_make_key
+  返回后的下一次大数运算/函数返回触发 /GS fastfail"；改用硬编码测试密钥对
+  （跳过 keygen）后 27/27 全绿。beacon 生产路径不生成密钥（只导入公钥加密），
+  **不受影响**；但第三方库替换/重编时必须用 keygen 探针重新验收。
+- **私钥解密（CRT）路径健康**：硬编码密钥对的完整
+  `rsa_decrypt_key_ex` 回路在 CI 通过——早期"大指数模幂必崩"的结论系
+  keygen 破坏被延迟显形所致，予以修正。
+- 测试侧约定：`tests/test_keygen.cpp`（keygen 探针）仅在定义
+  `BEACON_TEST_ENABLE_KEYGEN` 时编译，默认（vendored lib）跳过，
+  重编 lib 的 CI 验收会打开该开关。
+
 ## 重要约束
 
 1. **头/库必须成对替换**：换 lib 必须同步审查头文件版本，反之亦然。

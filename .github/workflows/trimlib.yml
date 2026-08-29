@@ -1,0 +1,43 @@
+name: trimlib
+
+# P4.16：从源码重编精简版 LibTomCrypt/LibTomMath 并用测试套件验收。
+# 手动触发（workflow_dispatch），不占用常规 push CI。
+# 产物为 thirdparty/out 下的两个 .lib —— 验收通过后再人工决定是否替换 vendored lib。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rebuild-trimmed:
+    name: rebuild trimmed libs + acceptance
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build trimmed libs
+        shell: pwsh
+        run: ./thirdparty/build_trimmed.ps1
+
+      - name: Acceptance - test suite against rebuilt libs (keygen probe ON)
+        shell: pwsh
+        run: ./tests/run_tests.ps1 -LibDir thirdparty/out -ExtraDefines BEACON_TEST_ENABLE_KEYGEN
+
+      - name: Report sizes
+        shell: pwsh
+        run: |
+          Get-ChildItem thirdparty/out/*.lib | ForEach-Object {
+            "$($_.Name) = $($_.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+      - name: Upload rebuilt libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: trimmed-libs
+          path: |
+            thirdparty/out/tomcrypt.x64.lib
+            thirdparty/out/tommath.x64.lib

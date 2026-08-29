@@ -31,3 +31,4 @@ Thumbs.db
 # 本地构建/抓取工作目录
 tests/_build/
 thirdparty/_src/
+thirdparty/out/

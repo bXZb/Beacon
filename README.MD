@@ -20,8 +20,8 @@ preparation is needed:
 1. `lib\tomcrypt.x64.lib` / `lib\tommath.x64.lib` — prebuilt (see `lib\VERSIONS.md`;
    headers in `tomcrypt-headers\` are **LibTomCrypt 1.17** and must be replaced
    together with the lib)
-2. Build: VS2019/2022 with the **v142 (14.29)** toolset + **SDK 10.0.19041.0**
-   (see `common.props` / `docs\BUILD.md` for why)
+2. Build: VS2019/2022 (v143 toolset verified in CI; v142 is the original
+   author's fallback, see `common.props` / `docs\BUILD.md`)
 3. `.\build.ps1` — builds all four variants (beacon / dnsb / extc2 / pivot) as
    x64 Release DLLs, with size + MAP report
 4. `.\tests\run_tests.ps1` — host-side unit tests; `tests\test_crypto.cpp`
@@ -61,8 +61,8 @@ This is dedicated to both red and blue teams.
 1. `lib\tomcrypt.x64.lib` / `lib\tommath.x64.lib` —— 预编译库（版本与验收见
    `lib\VERSIONS.md`；`tomcrypt-headers\` 是 **LibTomCrypt 1.17** 头，必须与
    lib 成对替换）
-2. 构建：VS2019/2022 + **v142 (14.29)** 工具集 + **SDK 10.0.19041.0**
-   （原因见 `common.props` 注释与 `docs\BUILD.md`）
+2. 构建：VS2019/2022（CI 已实证 v143 可编；v142 为原作者环境备选，
+   见 `common.props` 注释与 `docs\BUILD.md`）
 3. `.\build.ps1` —— 一键构建四个变体（beacon / dnsb / extc2 / pivot）的
    x64 Release DLL，输出体积与 MAP
 4. `.\tests\run_tests.ps1` —— 宿主机侧测试；`tests\test_crypto.cpp` 即
