@@ -105,6 +105,8 @@
 #ifndef LTC_NO_HASHES
 
 #define LTC_SHA256
+/* hash_memory/hash_file 等 helper（security_init 依赖 hash_memory） */
+#define LTC_HASH_HELPERS
 
 #endif /* LTC_NO_HASHES */
 
