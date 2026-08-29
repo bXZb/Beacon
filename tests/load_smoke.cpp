@@ -51,17 +51,20 @@ int main(int argc, char ** argv) {
 		return 2;
 	}
 
-	char buf[4096];
+	/* 全文件扫描：占位串位于 .data 节，远在文件头 4KB 之外 */
+	DWORD size = GetFileSize(hf, NULL);
+	char * buf = (char *)malloc(size);
 	DWORD read = 0, wrote = 0;
-	BOOL ok = ReadFile(hf, buf, sizeof(buf), &read, NULL);
+	BOOL ok = (buf != NULL) && ReadFile(hf, buf, size, &read, NULL) && (read == size);
 	long off = -1;
 	if (ok) {
 		for (DWORD i = 0; i + sizeof(PLACEHOLDER) - 1 <= read; i++) {
 			if (memcmp(buf + i, PLACEHOLDER, sizeof(PLACEHOLDER) - 1) == 0) { off = (long)i; break; }
 		}
 	}
+	if (buf != NULL) free(buf);
 	if (off < 0) {
-		printf("FAIL: settings placeholder not found in dll (offset scan over first %lu bytes)\n", read);
+		printf("FAIL: settings placeholder not found in dll (scanned %lu bytes)\n", read);
 		CloseHandle(hf);
 		return 2;
 	}
