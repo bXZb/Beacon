@@ -93,8 +93,9 @@ try {
             New-Item -ItemType Directory -Force -Path $objDir | Out-Null
             $srcs = $_.Group | ForEach-Object { $_.FullName }
             # /DLTC_SOURCE：math 描述符便捷宏；LTM_DESC/USE_LTM：对齐 vendored lib
+            # /I libtommath：ltm_desc.c 需要 tommath.h
             & cl /nologo /c /MT /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /DLTC_SOURCE /DLTM_DESC /DUSE_LTM `
-                /I"src\headers" /Fo:"$objDir\" $srcs
+                /I"src\headers" /I"$ltmDir" /Fo:"$objDir\" $srcs
             if ($LASTEXITCODE -ne 0) { throw "libtomcrypt compile failed in $($_.Name)" }
             $objAll += Get-ChildItem $objDir -Filter '*.obj' | ForEach-Object { $_.FullName }
         }
