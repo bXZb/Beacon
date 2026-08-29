@@ -15,8 +15,7 @@ TEST(mini_i64d_reads_64bit_and_consumes_arg) {
 	char buf[128];
 	long long big = 0x7FFFFFFF1234LL; /* 高低位都非零，暴露任何 32 位截断 */
 	int r = _snprintf(buf, sizeof(buf), "F %I64d %s", big, "tail");
-	printf("  [mini] i64d: r=%d buf=[%s]
-", r, buf);
+	printf("  [mini] i64d: r=%d buf=[%s]\n", r, buf);
 	fflush(stdout);
 	CHECK(r > 0);
 	CHECK(strstr(buf, "F 549755743796 tail") == buf); /* 0x7FFFFFFF1234 = 549755743796 */
@@ -76,8 +75,7 @@ TEST(mini_truncation_and_return_count) {
 TEST(mini_scprintf_counts_without_writing) {
 	/* bformat_printf 的长度预估路径：_scprintf 以 NULL 缓冲走同一引擎 */
 	int n = _scprintf("%s %I64d", "abc", 0x7FFFFFFF1234LL);
-	printf("  [mini] scprintf: n=%d (expected 16)
-", n);
+	printf("  [mini] scprintf: n=%d (expected 16)\n", n);
 	fflush(stdout);
 	CHECK(n == 3 + 1 + 12);
 }
