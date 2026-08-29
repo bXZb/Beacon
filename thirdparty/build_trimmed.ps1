@@ -65,15 +65,35 @@ if (-not (Test-Path $customDst)) { throw "unexpected layout: $customDst missing"
 Copy-Item $customSrc $customDst -Force
 Write-Host '==> trimmed tomcrypt_custom.h applied' -ForegroundColor Cyan
 
+# ---- 编译器选择 ----
+# v143 的 C1XX 前端对 LTC 若干源文件存在硬 ICE（C1001，base64_decode.c 等，
+# /O2 /O1 /Od 皆然，与优化级别无关）；runner 自带 clang-cl，产出 ABI 兼容的
+# MSVC COFF 对象，用它绕开。无 clang-cl 的环境回退 cl + /Od 重试。
+$cc = $null
+if (Get-Command clang-cl -ErrorAction SilentlyContinue) { $cc = 'clang-cl' }
+
+function Invoke-Compile([string[]]$BaseArgs, [string[]]$Srcs, [string]$Label) {
+    if ($cc) {
+        & $cc @BaseArgs $Srcs
+        if ($LASTEXITCODE -ne 0) { throw "$Label compile failed ($cc)" }
+    }
+    else {
+        & cl @BaseArgs '/O1' $Srcs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "$Label failed at /O1 (cl), retrying at /Od"
+            & cl @BaseArgs '/Od' $Srcs
+            if ($LASTEXITCODE -ne 0) { throw "$Label compile failed (cl)" }
+        }
+    }
+}
+
 # ---- 编译 LTM 1.3.0（原样） ----
-Write-Host '==> building libtommath' -ForegroundColor Cyan
+Write-Host "==> building libtommath (compiler: $(if ($cc) { $cc } else { 'cl' }))" -ForegroundColor Cyan
 Push-Location $ltmDir
 try {
-    $ltmSrcs = Get-ChildItem -Filter '*.c' | ForEach-Object { $_.Name }
-    # /O1：体积导向（MinSpace）；v143 下 /O2 曾触发 ICE（C1001），见 docs/BUILD.md
-    & cl /nologo /c /MT /O1 /W3 /D_CRT_SECURE_NO_WARNINGS $ltmSrcs
-    if ($LASTEXITCODE -ne 0) { throw 'libtommath compile failed' }
-    & lib /nologo /OUT:"$OutDir\tommath.x64.lib" *.obj
+    $ltmSrcs = Get-ChildItem -Filter '*.c' | ForEach-Object { $_.FullName }
+    Invoke-Compile @('/nologo', '/c', '/MT', '/O1', '/W3', '/D_CRT_SECURE_NO_WARNINGS') $ltmSrcs 'libtommath'
+    & lib /nologo /OUT:"$OutDir\tommath.x64.lib" (Get-ChildItem -Filter '*.obj' | ForEach-Object { $_.FullName })
     if ($LASTEXITCODE -ne 0) { throw 'libtommath lib failed' }
 }
 finally { Pop-Location }
@@ -95,17 +115,10 @@ try {
             $srcs = $_.Group | ForEach-Object { $_.FullName }
             # /DLTC_SOURCE：math 描述符便捷宏；LTM_DESC/USE_LTM：对齐 vendored lib
             # /I libtommath：ltm_desc.c 需要 tommath.h
-            # /O1：体积导向；v143 /O2 有 ICE 前科（C1001，base64_decode.c 实证），
-            #      失败的组自动降级 /Od 重试
-            $common = @('/nologo', '/c', '/MT', '/W3', '/D_CRT_SECURE_NO_WARNINGS',
-                        '/DLTC_SOURCE', '/DLTM_DESC', '/DUSE_LTM',
-                        "/Isrc\headers", "/I$ltmDir", "/Fo:$objDir\")
-            & cl @common '/O1' $srcs
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "group $($_.Name) failed at /O1, retrying at /Od"
-                & cl @common '/Od' $srcs
-                if ($LASTEXITCODE -ne 0) { throw "libtomcrypt compile failed in $($_.Name)" }
-            }
+            Invoke-Compile @('/nologo', '/c', '/MT', '/O1', '/W3', '/D_CRT_SECURE_NO_WARNINGS',
+                             '/DLTC_SOURCE', '/DLTM_DESC', '/DUSE_LTM',
+                             "/Isrc\headers", "/I$ltmDir", "/Fo:$objDir\") `
+                           $srcs "libtomcrypt [$($_.Name)]"
             $objAll += Get-ChildItem $objDir -Filter '*.obj' | ForEach-Object { $_.FullName }
         }
     & lib /nologo /OUT:"$OutDir\tomcrypt.x64.lib" $objAll
