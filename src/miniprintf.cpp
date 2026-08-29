@@ -127,7 +127,7 @@ static int core(char *buf, size_t bufsz, const char *fmt, va_list ap) {
 
 /* UCRT override point — every _snprintf/sprintf/vsprintf_s/snprintf lands here. */
 int __cdecl __stdio_common_vsprintf(unsigned long long options, char *buffer,
-        size_t bufsz, const char *fmt, void *locale, va_list args) {
+        size_t bufsz, const char *fmt, _locale_t locale, va_list args) {
     (void)options; (void)locale;
     return core(buffer, bufsz, fmt, args);
 }
@@ -137,7 +137,7 @@ int __cdecl __stdio_common_vsprintf(unsigned long long options, char *buffer,
    Without this the linker pulls libucrt:output.obj for the _s symbol and the
    whole ~27KB printf chain comes back. */
 int __cdecl __stdio_common_vsprintf_s(unsigned long long options, char *buffer,
-        size_t bufsz, const char *fmt, void *locale, va_list args) {
+        size_t bufsz, const char *fmt, _locale_t locale, va_list args) {
     (void)options; (void)locale;
     return core(buffer, bufsz, fmt, args);
 }
@@ -150,7 +150,7 @@ int __cdecl __stdio_common_vsprintf_s(unsigned long long options, char *buffer,
    输出经 fputs 落到目标流（不引入 output.obj 依赖）。注意不能做成 no-op：
    测试宿主进程的 printf 全走这里，no-op 会静默吞掉一切输出。 */
 int __cdecl __stdio_common_vfprintf(unsigned long long options, void *stream,
-        const char *fmt, void *locale, va_list args) {
+        const char *fmt, _locale_t locale, va_list args) {
     (void)options; (void)locale;
     FILE * f = (FILE *)stream;
     if (f == NULL || fmt == NULL) return 0;
