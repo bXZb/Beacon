@@ -20,13 +20,15 @@ $sources = @(
     'tests/test_bformat.cpp',
     'tests/test_settings.cpp',
     'tests/test_crypto.cpp',
+    'tests/test_miniprintf.cpp',
     'tests/test_keygen.cpp',
     'src/parse.cpp',
     'src/bformat.cpp',
     'src/settings.cpp',
     'src/track_memory.cpp',
     'src/security.cpp',
-    'src/crypto.cpp'
+    'src/crypto.cpp',
+    'src/miniprintf.cpp'
 )
 
 Push-Location $root

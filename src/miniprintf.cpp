@@ -12,8 +12,9 @@
  *
  * Supported specifiers (only what the beacon uses): %s %c %d %i %u %x %X %p %o,
  * with optional width 'N', left-align '-', zero-pad '0', and precision '.N'
- * (string truncation). NO floating point. Length modifiers (l ll h hh z I64)
- * are accepted and ignored (x64 varargs: int/ptr widths handled per-specifier).
+ * (string truncation). NO floating point. Length modifiers: 'l' single accepted
+ * (long = 32-bit on Windows); 'll'/'I64'/'z'/'j'/'t' promote integer reads to
+ * 64-bit (filesys.cpp %I64d prints real file sizes).
  */
 #include <stdarg.h>
 #include <stddef.h>
@@ -67,11 +68,30 @@ static int core(char *buf, size_t bufsz, const char *fmt, va_list ap) {
             fmt++; prec = 0;
             while (*fmt >= '0' && *fmt <= '9') { prec = prec * 10 + (*fmt - '0'); fmt++; }
         }
-        /* swallow length modifiers (l ll h hh z j t I I64) */
-        while (*fmt == 'l' || *fmt == 'h' || *fmt == 'z' || *fmt == 'j' ||
-               *fmt == 't' || *fmt == 'I') {
-            if (*fmt == 'I' && (fmt[1] == '6' || fmt[1] == '4')) fmt++;
-            fmt++;
+        /* swallow length modifiers; track 64-bit-ness for integer conversions.
+           修复（真实 TS 测试发现，ls 命令崩溃）：旧实现对 "I64" 只前进 2 字节，
+           把 '6' 留给转换分支 → 该转换不消费 vararg，后续所有参数整体错位一格，
+           %s 读到整数当指针 → strlen 访问违例 → beacon 崩溃。
+           现按 1.18 语义完整吞掉 I64/I32，并记录 big 供 64 位读取。 */
+        int big = 0;
+        for (;;) {
+            if (*fmt == 'l') {
+                if (fmt[1] == 'l') { big = 1; fmt += 2; }
+                else fmt++;
+                continue;
+            }
+            if (*fmt == 'h' || *fmt == 'z' || *fmt == 'j' || *fmt == 't') {
+                if (*fmt == 'z' || *fmt == 'j' || *fmt == 't') big = 1; /* x64 上均为 64 位 */
+                fmt++;
+                continue;
+            }
+            if (*fmt == 'I') {
+                if (fmt[1] == '6' && fmt[2] == '4') { big = 1; fmt += 3; continue; }
+                if (fmt[1] == '3' && fmt[2] == '2') { fmt += 3; continue; }
+                fmt++;
+                continue;
+            }
+            break;
         }
         char spec = *fmt; if (!spec) break; fmt++;
         char num[40]; const char *body = num; int blen = 0, isnum = 0; char padc = ' ';
@@ -82,11 +102,13 @@ static int core(char *buf, size_t bufsz, const char *fmt, va_list ap) {
             body = s; break;
         }
         case 'c': { num[0] = (char)va_arg(ap, int); body = num; blen = 1; break; }
-        case 'd': case 'i': { blen = itoa_s((long long)va_arg(ap, int), num); isnum = 1; break; }
-        case 'u': { blen = utoa((unsigned long long)va_arg(ap, unsigned int), 10, 0, num); isnum = 1; break; }
-        case 'x': { blen = utoa((unsigned long long)va_arg(ap, unsigned int), 16, 0, num); isnum = 1; break; }
-        case 'X': { blen = utoa((unsigned long long)va_arg(ap, unsigned int), 16, 1, num); isnum = 1; break; }
-        case 'o': { blen = utoa((unsigned long long)va_arg(ap, unsigned int), 8, 0, num); isnum = 1; break; }
+        case 'd': case 'i': {
+            blen = itoa_s(big ? va_arg(ap, long long) : (long long)va_arg(ap, int), num); isnum = 1; break;
+        }
+        case 'u': { blen = utoa(big ? va_arg(ap, unsigned long long) : (unsigned long long)va_arg(ap, unsigned int), 10, 0, num); isnum = 1; break; }
+        case 'x': { blen = utoa(big ? va_arg(ap, unsigned long long) : (unsigned long long)va_arg(ap, unsigned int), 16, 0, num); isnum = 1; break; }
+        case 'X': { blen = utoa(big ? va_arg(ap, unsigned long long) : (unsigned long long)va_arg(ap, unsigned int), 16, 1, num); isnum = 1; break; }
+        case 'o': { blen = utoa(big ? va_arg(ap, unsigned long long) : (unsigned long long)va_arg(ap, unsigned int), 8, 0, num); isnum = 1; break; }
         case 'p': { blen = utoa((unsigned long long)(size_t)va_arg(ap, void *), 16, 0, num); isnum = 1; break; }
         default: { PUT('%'); PUT(spec); continue; }
         }
