@@ -70,8 +70,8 @@ TEST(mini_truncation_and_return_count) {
 	CHECK(strlen(buf) == 7);   /* 缓冲内截断且以 NUL 结尾 */
 }
 
-TEST(mini_vscprintf_counts_without_writing) {
-	/* bformat_printf 的长度预估路径：_vscprintf 以 NULL 缓冲走同一引擎 */
-	int n = _vscprintf("%s %I64d", "abc", 0x7FFFFFFF1234LL);
+TEST(mini_scprintf_counts_without_writing) {
+	/* bformat_printf 的长度预估路径：_scprintf 以 NULL 缓冲走同一引擎 */
+	int n = _scprintf("%s %I64d", "abc", 0x7FFFFFFF1234LL);
 	CHECK(n == 3 + 1 + 12);
 }
