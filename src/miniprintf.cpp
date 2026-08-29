@@ -18,6 +18,8 @@
  */
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 extern "C" {
 
@@ -142,23 +144,29 @@ int __cdecl __stdio_common_vsprintf_s(unsigned long long options, char *buffer,
 
 /* fprintf path: LTC's crypt_argchk prints a crypto-arg error to stderr. That
    branch is dead at runtime (beacon always passes valid args) and there is no
-   stderr/console in a beacon anyway, so stub the formatter. Without it the
-   linker pulls libucrt:output.obj for __stdio_common_vfprintf and the whole
-   cfout/cvt/locale/float chain follows.
-
-   NOTE on the FILE-pointer / __acrt_iob_func / stderr side of that call: we
-   deliberately do NOT stub __acrt_iob_func / atoi / atol. The beacon does real
-   file I/O (files.cpp/commands.cpp: fopen/fread/fwrite/fseek), so libucrt:_file.obj is
-   pulled in regardless -- and it defines __acrt_iob_func. The locale path
-   (get_qualified_locale) references _wtol, pulling libucrt:atox.obj, which
-   defines atoi/atol. COFF links whole objects, so once those are in they
-   provide those symbols from libucrt; redefining them here just causes LNK2005.
-   Letting libucrt own them is correct -- and _file.obj/atox.obj are tiny next
-   to the output.obj chain we keep out. */
+   stderr/console in a beacon anyway. Without this stub the linker pulls
+   libucrt:output.obj for __stdio_common_vfprintf and the whole cfout/cvt/
+   locale/float chain follows.
+   输出经 fputs 落到目标流（不引入 output.obj 依赖）。注意不能做成 no-op：
+   测试宿主进程的 printf 全走这里，no-op 会静默吞掉一切输出。 */
 int __cdecl __stdio_common_vfprintf(unsigned long long options, void *stream,
         const char *fmt, void *locale, va_list args) {
-    (void)options; (void)stream; (void)fmt; (void)locale; (void)args;
-    return 0;
+    (void)options; (void)locale;
+    FILE * f = (FILE *)stream;
+    if (f == NULL || fmt == NULL) return 0;
+    char stackbuf[512];
+    int need = core(stackbuf, sizeof(stackbuf), fmt, args);
+    if (need >= (int)sizeof(stackbuf)) {
+        char * heap = (char *)malloc((size_t)need + 1);
+        if (heap != NULL) {
+            core(heap, (size_t)need + 1, fmt, args);
+            fputs(heap, f);
+            free(heap);
+            return need;
+        }
+    }
+    fputs(stackbuf, f);
+    return need;
 }
 
 } /* extern "C" */
