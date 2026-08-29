@@ -61,6 +61,11 @@
 #define XSTRCMP strcmp
 #endif
 
+/* 1.18 新增：常时比较宏（缺失会在 pkcs_1_oaep_decode.c 等处编译失败） */
+#ifndef XMEM_NEQ
+#define XMEM_NEQ mem_neq
+#endif
+
 #ifndef XCLOCK
 #define XCLOCK   clock
 #endif
