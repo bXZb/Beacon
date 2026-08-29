@@ -43,7 +43,9 @@ int main(int argc, char ** argv) {
 	 * 后接 index=0 终止符；占位文本的其余字节解掩码后是垃圾，但解析在
 	 * 终止符处停止，不会触达。 */
 	static const char PLACEHOLDER[] = "AAAABBBBCCCC";
-	static const unsigned char PATCH[] = { 0x2E,0x31,0x2E,0x2F,0x2E,0x2C,0x2E,0x2E }; /* 001F 0001 0002 0000 ^ 0x2E */
+	/* 已掩码 blob：entry{31, SHORT, 2, 0} + 终止符 index=0（00 00 ^ 0x2E）。
+	   终止符必须有——否则解析器会把占位文本的残余当作下一项越界写 settings[]。 */
+	static const unsigned char PATCH[] = { 0x2E,0x31,0x2E,0x2F,0x2E,0x2C,0x2E,0x2E,0x2E,0x2E };
 
 	HANDLE hf = CreateFileA(smokePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hf == INVALID_HANDLE_VALUE) {
