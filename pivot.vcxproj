@@ -78,6 +78,9 @@
     <ClCompile Include="src\ReflectiveLoader.cpp" />
     <ClCompile Include="src\security.cpp" />
     <ClCompile Include="src\crypto.cpp" />
+    <ClCompile Include="src\miniprintf.cpp" />
+    <ClCompile Include="src\locale_stub.cpp" />
+    <ClCompile Include="src\der_stub.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\spawn.cpp" />
     <ClCompile Include="src\thread.cpp" />

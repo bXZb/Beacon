@@ -49,7 +49,7 @@ if (-not $msbuild -or -not (Test-Path $msbuild)) {
 if (-not $msbuild) { throw 'MSBuild not found - is Visual Studio 2019/2022 (with MSBuild) installed?' }
 
 # ---- 组装属性 ----
-$props = @('/p:Configuration=Release', '/p:Platform=x64')
+$props = @('/p:Configuration=Release', '/p:Platform=x64', '/p:CSOptimized=MinSpace')
 if ($Toolset) { $props += "/p:BeaconToolset=$Toolset" }
 if ($SDK)     { $props += "/p:BeaconSDK=$SDK" }
 foreach ($p in $ExtraProperties) {
@@ -58,25 +58,35 @@ foreach ($p in $ExtraProperties) {
 
 $projects = if ($Project -eq 'all') { @('beacon','dnsb','extc2','pivot') } else { @($Project) }
 
+# stageless 硬上限：artifact64big.exe .data RawSize(0x42600) - 20B 头
+$ceil = 271852
+
 $results = @()
 foreach ($name in $projects) {
     $vcxproj = Join-Path $root "$name.vcxproj"
     if (-not (Test-Path $vcxproj)) { throw "vcxproj not found: $vcxproj" }
 
-    Write-Host "==> Building $name (x64 Release)" -ForegroundColor Cyan
+    Write-Host "==> Building $name (x64 Release, MinSpace)" -ForegroundColor Cyan
     & $msbuild $vcxproj /t:Rebuild /nologo /v:m /m:1 @props
     if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $name (exit $LASTEXITCODE)" }
 
     $dll = Join-Path $root "x64\Release\$name.x64.dll"
     if (-not (Test-Path $dll)) { throw "Build reported success but DLL not found: $dll" }
+    $bytes = (Get-Item $dll).Length
     $results += [pscustomobject]@{
-        Project = $name
-        Dll     = $dll
-        Bytes   = (Get-Item $dll).Length
-        Map     = (Test-Path (Join-Path $root "x64\Release\$name.x64.map"))
+        Project   = $name
+        Dll       = $dll
+        Bytes     = $bytes
+        Stageless = if ($bytes -le $ceil) { "OK (+$($ceil - $bytes))" } else { "OVER (-$($bytes - $ceil))" }
+        Map       = (Test-Path (Join-Path $root "x64\Release\$name.x64.map"))
     }
 }
 
 Write-Host ''
-$results | Format-Table Project, Bytes, Map -AutoSize
-Write-Host '==> All builds OK' -ForegroundColor Green
+$results | Format-Table Project, Bytes, Stageless, Map -AutoSize
+$worst = ($results | Measure-Object -Property Bytes -Maximum).Maximum
+if ($worst -gt $ceil) {
+    Write-Host "==> WARNING: largest DLL exceeds stageless ceiling $ceil (needs more shrinking)" -ForegroundColor Yellow
+} else {
+    Write-Host '==> All builds OK, all within stageless ceiling' -ForegroundColor Green
+}

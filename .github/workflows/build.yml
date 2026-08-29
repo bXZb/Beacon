@@ -55,4 +55,5 @@ jobs:
 
       - name: Build & run tests
         shell: pwsh
-        run: ./tests/run_tests.ps1
+        # lib/ 现为自研精简重编库（1.18.2，keygen 健康），探针默认开启
+        run: ./tests/run_tests.ps1 -ExtraDefines BEACON_TEST_ENABLE_KEYGEN
