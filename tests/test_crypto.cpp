@@ -28,7 +28,7 @@ void post_crypt_replay_error(unsigned int diff) { (void)diff; }
 #define TST_CRYPTO_LICENSED 0
 #define TST_SET_CRYPTO_SCHEME 31   /* == SETTING_CRYPTO_SCHEME (beacon.h) */
 
-extern char myargs[4096];
+extern char myargs[]; /* PATCH_SIZE is 8192 since the 4.9.1 port; this test blob stays 4096, still fits */
 
 static void put_u16(unsigned char * p, unsigned int v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)(v & 0xff); }
 static void put_u32(unsigned char * p, unsigned long v) {
