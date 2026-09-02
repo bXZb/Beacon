@@ -8,7 +8,7 @@
 #include "beacon.h"   /* setting_short/int/ptr 声明 */
 
 /* settings.cpp 中的全局补丁区（外部链接，测试直接注入） */
-extern char myargs[4096];
+extern char myargs[];
 
 static void put_u16(unsigned char * p, unsigned int v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)(v & 0xff); }
 static void put_u32(unsigned char * p, unsigned long v) {
