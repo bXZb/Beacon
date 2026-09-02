@@ -110,6 +110,8 @@
 #define COMMAND_INLINE_EXECUTE_OBJECT 0x64
 #define COMMAND_JOB_REGISTER_MSGMODE 0x65
 #define COMMAND_LSOCKET_BIND_LOCALHOST 0x66
+#define COMMAND_CONNECT_UDP            103
+#define COMMAND_SEND_UDP               104
 #define COMMAND_TOKEN_STORE            105
 #define COMMAND_CHANGE_SYSCALL_METHOD  112
 #define COMMAND_QUERY_SYSCALL_METHOD   113
@@ -424,6 +426,12 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_LSOCKET_BIND_LOCALHOST:
 		command_socket_bind(buffer, length, 0x0100007f);
+		break;
+	case COMMAND_CONNECT_UDP:
+		command_connect_udp(buffer, length, command_shell_callback);
+		break;
+	case COMMAND_SEND_UDP:
+		command_send_udp(buffer, length);
 		break;
 	case COMMAND_TOKEN_STORE:
 		command_token_store(buffer, length, command_shell_callback);

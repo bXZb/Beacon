@@ -10,6 +10,7 @@
 #include "bformat.h"
 
 #include "process.h"
+#include "syscalls.h"
 
 /* spawn ppid */
 DWORD ppid = 0;
@@ -76,15 +77,15 @@ BOOL process_ppid_pre(void * thisp, int ppid, void * pattr, void * siptr) {
 
 	/* duplicate the handles, please (allows output to propagate) */
 	if (si->hStdOutput != NULL && si->hStdError != NULL && si->hStdOutput == si->hStdError) {
-		DuplicateHandle(GetCurrentProcess(), si->hStdOutput, hParentProcess, &si->hStdOutput, 0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+		beacon_DuplicateHandle(GetCurrentProcess(), si->hStdOutput, hParentProcess, &si->hStdOutput, 0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
 		si->hStdError = si->hStdOutput;
 	}
 	else {
 		if (si->hStdOutput != NULL)
-			DuplicateHandle(GetCurrentProcess(), si->hStdOutput, hParentProcess, &si->hStdOutput, 0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+			beacon_DuplicateHandle(GetCurrentProcess(), si->hStdOutput, hParentProcess, &si->hStdOutput, 0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
 
 		if (si->hStdError != NULL)
-			DuplicateHandle(GetCurrentProcess(), si->hStdError, hParentProcess, &si->hStdError, 0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+			beacon_DuplicateHandle(GetCurrentProcess(), si->hStdError, hParentProcess, &si->hStdError, 0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
 	}
 
 	return TRUE;

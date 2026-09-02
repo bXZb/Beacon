@@ -129,6 +129,12 @@
     <ClCompile Include="src\gargleint.cpp">
       <Filter>gargle</Filter>
     </ClCompile>
+    <ClCompile Include="src\hostprof.cpp">
+      <Filter>http/https/dns</Filter>
+    </ClCompile>
+    <ClCompile Include="src\syscalls.cpp">
+      <Filter>inject module</Filter>
+    </ClCompile>
     <ClCompile Include="src\spawn.cpp">
       <Filter>source</Filter>
     </ClCompile>

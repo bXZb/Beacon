@@ -5,6 +5,7 @@
 #include "parse.h"
 #include "bformat.h"
 #include "linkint.h"
+#include "udppkt.h"
 
 #define SOCKET_READ_MAX 1048576
 
@@ -24,6 +25,7 @@ typedef struct {
 	unsigned int linger;
 	unsigned int ltype;
 	unsigned int lport;
+	unsigned int is_udp;
 	DWORD start;
 	SOCKET socket;
  	void * next;
@@ -58,7 +60,7 @@ int recv_all(SOCKET MySock, char * buffer, int len) {
 }
 
 /* add a socket to our list of sockets please */
-void _add_socket(SOCKET socket, int id, int timeout, unsigned int ltype, unsigned int lport, unsigned int state) {
+void _add_socket(SOCKET socket, int id, int timeout, unsigned int ltype, unsigned int lport, unsigned int state, unsigned int is_udp) {
 	socket_entry * entry = (socket_entry *)malloc(sizeof(socket_entry));
 	socket_entry * temp = pivot_list;
 
@@ -71,6 +73,7 @@ void _add_socket(SOCKET socket, int id, int timeout, unsigned int ltype, unsigne
 	entry->linger  = 0;
 	entry->ltype   = ltype;
 	entry->lport   = lport;
+	entry->is_udp  = is_udp;
 
 	/* loop through our pivot list, invalidate any sockets with the same id */
 	while (temp != NULL) {
@@ -84,7 +87,7 @@ void _add_socket(SOCKET socket, int id, int timeout, unsigned int ltype, unsigne
 }
 
 void add_socket(SOCKET socket, int id, int timeout) {
-	_add_socket(socket, id, timeout, LISTEN_NOTREALLY, 0, STATE_CONNECT);
+	_add_socket(socket, id, timeout, LISTEN_NOTREALLY, 0, STATE_CONNECT, 0);
 }
 
 /* listen for a connection now */
@@ -155,7 +158,7 @@ void command_listen(char * buffer, int length, void (*callback)(char * buffer, i
 	}
 	else {
 		/* ok, I believe we probably did everything right to this point */
-		_add_socket(MySock, id, 180000, LISTEN_ONEOFF, port, STATE_CONNECT);
+		_add_socket(MySock, id, 180000, LISTEN_ONEOFF, port, STATE_CONNECT, 0);
 	}
 }
 
@@ -235,6 +238,81 @@ void command_connect(char * buffer, int length, void (*callback)(char * buffer, 
 
 	/* ok, I believe we probably did everything right to this point */
 	add_socket(MySock, id, 30000);
+}
+
+void command_connect_udp(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
+	struct hostent * pTarget = NULL;
+	struct sockaddr_in sock;
+	SOCKET MySock = INVALID_SOCKET;
+	char host[1024];
+	unsigned int id = 0;
+	unsigned int fid = 0;
+	unsigned short port = 0;
+	unsigned long mode = 1;
+
+	if (!socks_udp_parse_connect(buffer, length, &id, &port, host, (int)sizeof(host))) {
+		callback((char *)&fid, sizeof(int), CALLBACK_CLOSE);
+		return;
+	}
+	fid = htonl(id);
+
+	channel_winsock_init();
+	MySock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (MySock == INVALID_SOCKET) {
+		callback((char *)&fid, sizeof(int), CALLBACK_CLOSE);
+		return;
+	}
+	/* Fail fast on DNS like TCP CONNECT; do not connect() the datagram —
+	 * SOCKS UDP ASSOCIATE destinations change per sendto. */
+	pTarget = gethostbyname(host);
+	if (pTarget == NULL) {
+		closesocket(MySock);
+		callback((char *)&fid, sizeof(int), CALLBACK_CLOSE);
+		return;
+	}
+	memset(&sock, 0, sizeof(sock));
+	sock.sin_family = AF_INET;
+	sock.sin_addr.s_addr = INADDR_ANY;
+	sock.sin_port = 0;
+	if (bind(MySock, (struct sockaddr *)&sock, sizeof(sock)) == SOCKET_ERROR) {
+		closesocket(MySock);
+		callback((char *)&fid, sizeof(int), CALLBACK_CLOSE);
+		return;
+	}
+	ioctlsocket(MySock, FIONBIO, &mode);
+	_add_socket(MySock, (int)id, 30000, LISTEN_NOTREALLY, port, STATE_CONNECT, 1);
+}
+
+void command_send_udp(char * buffer, int length) {
+	socket_entry * temp = pivot_list;
+	unsigned int id = 0;
+	unsigned short port = 0;
+	char host[1024];
+	char * data = NULL;
+	int dlen = 0;
+	struct sockaddr_in dest;
+	struct hostent * pTarget;
+
+	if (!socks_udp_parse_send(buffer, length, &id, &port, host, (int)sizeof(host), &data, &dlen))
+		return;
+	if (data == NULL || dlen < 0)
+		return;
+
+	memset(&dest, 0, sizeof(dest));
+	pTarget = gethostbyname(host);
+	if (pTarget == NULL)
+		return;
+	memcpy(&dest.sin_addr.s_addr, pTarget->h_addr, pTarget->h_length);
+	dest.sin_family = AF_INET;
+	dest.sin_port = htons(port);
+
+	while (temp != NULL) {
+		if (temp->is_udp && temp->state != STATE_DEAD && temp->id == id) {
+			sendto(temp->socket, data, dlen, 0, (struct sockaddr *)&dest, sizeof(dest));
+			return;
+		}
+		temp = (socket_entry *)temp->next;
+	}
 }
 
 /* find out when the socket is ready for data and send it */
@@ -380,7 +458,7 @@ void pivot_poll_checker(void (*callback)(char * buffer, int length, int type)) {
 					fid = nextId();
 
 					/* register this socket with STATE_READ */
-					_add_socket(lsock, fid, 180000, LISTEN_NOTREALLY, 0, STATE_READ);
+					_add_socket(lsock, fid, 180000, LISTEN_NOTREALLY, 0, STATE_READ, 0);
 
 					/* let the controller know we have a new connection */
 					bformat_init(&result, 128);
@@ -541,17 +619,22 @@ int pivot_poll_reader(void (*callback)(char * buffer, int length, int type)) {
 		}
 		else if (count > 0) {
 			/* read in our data, plz */
-			ret = recv_all(temp->socket, read_buffer + sizeof(int), count);
+			if (temp->is_udp) {
+				struct sockaddr_in from;
+				int fromlen = sizeof(from);
+				ret = recvfrom(temp->socket, read_buffer + sizeof(int), count, 0, (struct sockaddr *)&from, &fromlen);
+			}
+			else {
+				ret = recv_all(temp->socket, read_buffer + sizeof(int), count);
+			}
 
 			/* something went wrong? seriously? */
 			if (ret == SOCKET_ERROR) {
 				temp->state = STATE_DEAD;
 				callback(read_buffer, sizeof(int), CALLBACK_CLOSE);
 			}
-			/* ok, we're all good... */
-			else if (ret == count) {
-				/* post the data plz */
-				callback(read_buffer, count + sizeof(int), CALLBACK_READ);
+			else if (ret > 0 && (temp->is_udp || ret == count)) {
+				callback(read_buffer, ret + sizeof(int), CALLBACK_READ);
 				read += 1;
 			}
 		}
@@ -621,7 +704,7 @@ void command_socket_bind(char * buffer, int length, DWORD bindto) {
 
 	/* process the socket when it's up */
 	if (MySock != INVALID_SOCKET) {
-		_add_socket(MySock, nextId(), 0, LISTEN_PERSISTENT, port, STATE_CONNECT);
+		_add_socket(MySock, nextId(), 0, LISTEN_PERSISTENT, port, STATE_CONNECT, 0);
 	}
 	else {
 		post_error_d(0x15, port);
@@ -645,7 +728,7 @@ void command_socket_tcppivot(char * buffer, int length) {
 
 	/* process the socket when it's up */
 	if (MySock != INVALID_SOCKET) {
-		_add_socket(MySock, nextId(), 0, LISTEN_TCPPIVOT, port, STATE_CONNECT);
+		_add_socket(MySock, nextId(), 0, LISTEN_TCPPIVOT, port, STATE_CONNECT, 0);
 	}
 	else {
 		post_error_d(0x15, port);

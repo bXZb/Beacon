@@ -123,8 +123,10 @@ void command_getprivs(char * buffer, int length, void(*callback)(char * buffer, 
 
 /* pivot related commands */
 void command_connect(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
+void command_connect_udp(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 void command_close(char * buffer, int length);
 void command_send(char * buffer, int length);
+void command_send_udp(char * buffer, int length);
 void command_listen(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 void command_socket_bind(char * buffer, int length, DWORD bindto);
 void command_socket_close(char * buffer, int length);

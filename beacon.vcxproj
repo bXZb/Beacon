@@ -78,6 +78,8 @@
     <ClCompile Include="src\der_stub.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\datastore.cpp" />
+    <ClCompile Include="src\hostprof.cpp" />
+    <ClCompile Include="src\syscalls.cpp" />
     <ClCompile Include="src\spawn.cpp" />
     <ClCompile Include="src\strategy.cpp" />
     <ClCompile Include="src\thread.cpp" />
@@ -95,6 +97,9 @@
     <ClInclude Include="src\encoders.h" />
     <ClInclude Include="src\functions.h" />
     <ClInclude Include="src\gargleint.h" />
+    <ClInclude Include="src\hostprof.h" />
+    <ClInclude Include="src\syscalls.h" />
+    <ClInclude Include="src\udppkt.h" />
     <ClInclude Include="src\inject.h" />
     <ClInclude Include="src\inlinecommon.h" />
     <ClInclude Include="src\jobs.h" />

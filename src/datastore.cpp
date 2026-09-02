@@ -7,6 +7,8 @@
 #include "parse.h"
 #include "datastore.h"
 #include "gargleint.h"
+#include "hostprof.h"
+#include "syscalls.h"
 
 extern char sleepmask_region[];
 
@@ -125,6 +127,15 @@ void cs49_apply_settings(void) {
 	if (g_syscall_method < 0 || g_syscall_method > 2)
 		g_syscall_method = 0;
 	datastore_reset_for_test(n);
+	hostprof_reload();
+	syscalls_resolve();
+	{
+		char * res = setting_ptr(SETTING_BOF_RESOURCE);
+		if (res != NULL && res[0] != '\0')
+			BeaconAddValue("bof_res", res);
+		else
+			BeaconRemoveValue("bof_res");
+	}
 }
 
 int datastore_add(int type, unsigned long long hash, char * data, int length) {
