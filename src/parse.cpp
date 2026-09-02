@@ -49,6 +49,13 @@ void data_init(datap * temp, char * buffer, int length) {
 	temp->size     = length;
 }
 
+/* extract a 64-bit integer written by Java ByteBuffer.putLong (big-endian) */
+unsigned long long data_long(datap * d) {
+	unsigned int hi = data_int(d);
+	unsigned int lo = data_int(d);
+	return ((unsigned long long)hi << 32) | (unsigned long long)lo;
+}
+
 /* extract an integer */
 unsigned int data_int(datap * d) {
 	unsigned int temp;

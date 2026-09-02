@@ -31,6 +31,15 @@
 #define CALLBACK_OUTPUT_OEM     0x1e
 #define CALLBACK_ERROR          0x1f
 #define CALLBACK_OUTPUT_UTF8    0x20
+#define CALLBACK_TOKEN_STORE         0x21
+#define CALLBACK_TOKEN_STORE_STEAL   0x22
+#define CALLBACK_TOKEN_STOLEN_NET    0x23
+#define CALLBACK_TOKEN_STOLEN_ELEVATE 0x24
+#define CALLBACK_TOKEN_REV2SELF      0x25
+#define CALLBACK_SYSCALL_METHOD      0x26
+#define CALLBACK_DATA_STORE_ADD      0x33
+#define CALLBACK_DATA_STORE_REMOVE   0x34
+#define CALLBACK_DATA_STORE_LIST     0x35
 
 /* read modes */
 #define JOB_MODE_BYTE          0x0
@@ -104,6 +113,7 @@ void command_download_stop(char * buffer, int length);
 void command_getuid(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 void command_rev2self();
 void command_steal_token(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
+void command_token_store(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 
 /* privilege escalation commands */
 void command_getsystem(char * buffer, int length);
@@ -163,6 +173,7 @@ void command_webserver_local(char * buffer, int length);
 /* inline execute mechanism... *pHEAR* */
 void command_inline_execute(char * buffer, int length);
 void command_inline_execute_object(char * buffer, int length);
+void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellcode, DWORD slen, char * parameter, DWORD plen, char * description, DWORD dlen, BOOL x86, BOOL ignoreToken);
 
 /* generic mechanism for this */
 BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength);

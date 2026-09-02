@@ -81,6 +81,7 @@
     <ClCompile Include="src\locale_stub.cpp" />
     <ClCompile Include="src\der_stub.cpp" />
     <ClCompile Include="src\settings.cpp" />
+    <ClCompile Include="src\datastore.cpp" />
     <ClCompile Include="src\spawn.cpp" />
     <ClCompile Include="src\thread.cpp" />
     <ClCompile Include="src\tokens.cpp" />

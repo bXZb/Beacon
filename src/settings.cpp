@@ -7,6 +7,7 @@
 #include "parse.h"
 #include "beacon.h"
 #include "track_memory.h"
+#include "datastore.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -407,4 +408,5 @@ void settings_init(void * bptr) {
 
 	parse_tlv_table(settings, 128, myargs, SETTINGS_BLOB_SIZE);
 	memset(myargs, 0, PATCH_SIZE);
+	cs49_apply_settings();
 }

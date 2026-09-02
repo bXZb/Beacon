@@ -17,6 +17,9 @@ void data_init(datap * temp, char * buffer, int length);
 /* extracts an integer from data parser */
 unsigned int data_int(datap * d);
 
+/* extracts a 64-bit integer (network / Java ByteBuffer big-endian) */
+unsigned long long data_long(datap * d);
+
 /* extracts an unsigned short from data parser */
 unsigned short data_short(datap * d);
 
