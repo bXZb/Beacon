@@ -78,7 +78,7 @@ void hostprof_reload(void) {
 	memset(hp_table, 0, sizeof(hp_table));
 	hp_n = 0;
 	blob = setting_ptr(SETTING_HOST_PROFILES);
-	if (blob == NULL || blob[0] == '\0')
+	if (blob == NULL)
 		return;
 	blen = 1024;
 	data_init(&parser, blob, (int)blen);
