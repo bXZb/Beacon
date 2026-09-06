@@ -33,7 +33,12 @@
     <ClCompile Include="src\boff.cpp" />
     <ClCompile Include="src\build.cpp" />
     <ClCompile Include="src\callback.cpp" />
-    <ClCompile Include="src\channel.cpp" />
+    <ClCompile Include="src\channel.cpp">
+      <ExcludedFromBuild Condition="'$(BeaconHttpLibrary)'=='winhttp'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\channel_winhttp.cpp">
+      <ExcludedFromBuild Condition="'$(BeaconHttpLibrary)'!='winhttp'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\channel_tcp.cpp" />
     <ClCompile Include="src\commands.cpp" />
     <ClCompile Include="src\elevate.cpp" />
@@ -217,6 +222,8 @@
     <LinkIncremental>false</LinkIncremental>
     <GenerateManifest>false</GenerateManifest>
     <TargetName>$(ProjectName).$(Platform)$(UDRLExtension)</TargetName>
+    <TargetName Condition="'$(BeaconHttpLibrary)'=='winhttp'">winhttpb.$(Platform)$(UDRLExtension)</TargetName>
+    <IntDir Condition="'$(BeaconHttpLibrary)'=='winhttp'">$(Platform)\$(Configuration)\winhttp\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -347,7 +354,7 @@ copy /Y "$(TargetPath)" "$(SolutionDir)bin\"</Command>
       <MinimalRebuild>false</MinimalRebuild>
     </ClCompile>
     <Link>
-      <OutputFile>$(OutDir)$(ProjectName).x64$(UDRLExtension).dll</OutputFile>
+      <OutputFile>$(OutDir)$(TargetName).dll</OutputFile>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
