@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-  构建 beacon 四变体（beacon/dnsb/extc2/pivot）的 x64 Release DLL。
+  构建 beacon 四变体（beacon/dnsb/extc2/pivot）的 x64 或 Win32 Release DLL。
 
 .DESCRIPTION
   参数化构建入口。工具集/SDK 默认取 common.props 中的 v142 / 10.0.19041.0
   （版本约束的理由见 common.props 注释与 docs/BUILD.md §工具链），
   均可用 -Toolset / -SDK 覆盖。
 
-  产物：x64\Release\<name>.x64.dll + 同名 .map（体积归因分析用）。
+  产物：x64\Release\<name>.x64.dll 或 Win32\Release\<name>.dll + 同名 .map。
 
 .EXAMPLE
   .\build.ps1                          # 构建全部四个变体
@@ -27,9 +27,13 @@ param(
     # 额外传给 MSBuild 的属性（如 /p:CSOptimized=MinSpace）
     [string[]]$ExtraProperties = @(),
 
-    # wininet (default, beacon.x64.dll) | winhttp (winhttpb.x64.dll, CS 4.9 sleeve)
+    # wininet (default, beacon.x64.dll / beacon.dll) | winhttp (winhttpb.*.dll)
     [ValidateSet('wininet','winhttp')]
-    [string]$HttpLibrary = 'wininet'
+    [string]$HttpLibrary = 'wininet',
+
+    # x64 (default) | Win32 (CS 4.9 sleeve/beacon.dll, 明文上限 247808)
+    [ValidateSet('x64','Win32')]
+    [string]$Platform = 'x64'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +57,7 @@ if (-not $msbuild -or -not (Test-Path $msbuild)) {
 if (-not $msbuild) { throw 'MSBuild not found - is Visual Studio 2019/2022 (with MSBuild) installed?' }
 
 # ---- 组装属性 ----
-$props = @('/p:Configuration=Release', '/p:Platform=x64', '/p:CSOptimized=MinSpace')
+$props = @('/p:Configuration=Release', "/p:Platform=$Platform", '/p:CSOptimized=MinSpace')
 if ($Toolset) { $props += "/p:BeaconToolset=$Toolset" }
 if ($SDK)     { $props += "/p:BeaconSDK=$SDK" }
 if ($HttpLibrary -eq 'winhttp') { $props += '/p:BeaconHttpLibrary=winhttp' }
@@ -63,21 +67,28 @@ foreach ($p in $ExtraProperties) {
 
 $projects = if ($Project -eq 'all') { @('beacon','dnsb','extc2','pivot') } else { @($Project) }
 
-# stageless 硬上限：artifact64big.exe .data RawSize(0x42600) - 20B 头
-# winhttpb.x64.dll TS sleeve 明文上限 309248（编码 309280-32）
-$ceil = if ($HttpLibrary -eq 'winhttp') { 309248 } else { 271852 }
+# 套筒明文上限：x64 wininet 走 stageless 容器 271852；x64 winhttp TS 槽 309248；
+# x86 wininet sleeve/beacon.dll 编码 247840 → 明文 247808；x86 winhttp 249888-32=249856
+$ceil = if ($Platform -eq 'Win32') {
+    if ($HttpLibrary -eq 'winhttp') { 249856 } else { 247808 }
+} elseif ($HttpLibrary -eq 'winhttp') { 309248 } else { 271852 }
+$platDir = if ($Platform -eq 'Win32') { 'Win32' } else { 'x64' }
 
 $results = @()
 foreach ($name in $projects) {
     $vcxproj = Join-Path $root "$name.vcxproj"
     if (-not (Test-Path $vcxproj)) { throw "vcxproj not found: $vcxproj" }
 
-    Write-Host "==> Building $name (x64 Release, MinSpace, http=$HttpLibrary)" -ForegroundColor Cyan
+    Write-Host "==> Building $name ($Platform Release, MinSpace, http=$HttpLibrary)" -ForegroundColor Cyan
     & $msbuild $vcxproj /t:Rebuild /nologo /v:m /m:1 @props
     if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $name (exit $LASTEXITCODE)" }
 
-    $dllName = if ($HttpLibrary -eq 'winhttp' -and $name -eq 'beacon') { 'winhttpb.x64.dll' } else { "$name.x64.dll" }
-    $dll = Join-Path $root "x64\Release\$dllName"
+    if ($Platform -eq 'Win32') {
+        $dllName = if ($HttpLibrary -eq 'winhttp' -and $name -eq 'beacon') { 'winhttpb.dll' } else { "$name.dll" }
+    } else {
+        $dllName = if ($HttpLibrary -eq 'winhttp' -and $name -eq 'beacon') { 'winhttpb.x64.dll' } else { "$name.x64.dll" }
+    }
+    $dll = Join-Path $root "$platDir\Release\$dllName"
     if (-not (Test-Path $dll)) { throw "Build reported success but DLL not found: $dll" }
     $bytes = (Get-Item $dll).Length
     $results += [pscustomobject]@{

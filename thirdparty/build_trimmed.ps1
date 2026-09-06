@@ -7,7 +7,7 @@
   - LTC 套 thirdparty/tomcrypt_custom_min_1182.h（仅 AES/CBC/ECB/SHA256/HMAC/
     BASE64/MRSA/DER，PRNG 全禁用——运行时由 src/crypto.cpp 注册 processprng）
   - LTM 原样构建（1.3.0）
-  - 产物输出到 thirdparty/out/{tomcrypt.x64.lib, tommath.x64.lib}
+  - 产物输出到 thirdparty/out/{tomcrypt.<arch>.lib, tommath.<arch>.lib}
   验收：用重编库编译并运行 tests/（含 keygen 探针），见 trimlib.yml。
 
   所有版本引用以 lib/VERSIONS.md 的实证结论为准：vendored lib 是 1.18.2。
@@ -19,7 +19,11 @@ param(
     [string]$WorkDir    = "$PSScriptRoot\_src",
     [string]$OutDir     = "$PSScriptRoot\out",
     # 本机走代理时填 http://127.0.0.1:10808；CI 留空
-    [string]$Proxy      = ''
+    [string]$Proxy      = '',
+
+    # x64 (default) | x86 — x86 用 clang-cl --target=i386，须在 x64 主机提示符下跑
+    [ValidateSet('x64','x86')]
+    [string]$Arch = 'x64'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,11 +75,13 @@ Write-Host '==> trimmed tomcrypt_custom.h applied' -ForegroundColor Cyan
 # MSVC COFF 对象，用它绕开。无 clang-cl 的环境回退 cl + /Od 重试。
 $cc = $null
 if (Get-Command clang-cl -ErrorAction SilentlyContinue) { $cc = 'clang-cl' }
+$ccTarget = @()
+if ($Arch -eq 'x86') { $ccTarget = @('--target=i386-pc-windows-msvc') }
 
 function Invoke-Compile([string[]]$BaseArgs, [string[]]$Srcs, [string]$Label) {
     if ($cc) {
-        & $cc @BaseArgs $Srcs
-        if ($LASTEXITCODE -ne 0) { throw "$Label compile failed ($cc)" }
+        & $cc @ccTarget @BaseArgs $Srcs
+        if ($LASTEXITCODE -ne 0) { throw "$Label compile failed ($cc $Arch)" }
     }
     else {
         & cl @BaseArgs '/O1' $Srcs
@@ -93,7 +99,7 @@ Push-Location $ltmDir
 try {
     $ltmSrcs = Get-ChildItem -Filter '*.c' | ForEach-Object { $_.FullName }
     Invoke-Compile @('/nologo', '/c', '/MT', '/O1', '/W3', '/D_CRT_SECURE_NO_WARNINGS') $ltmSrcs 'libtommath'
-    & lib /nologo /OUT:"$OutDir\tommath.x64.lib" (Get-ChildItem -Filter '*.obj' | ForEach-Object { $_.FullName })
+    & lib /nologo /OUT:"$OutDir\tommath.$Arch.lib" (Get-ChildItem -Filter '*.obj' | ForEach-Object { $_.FullName })
     if ($LASTEXITCODE -ne 0) { throw 'libtommath lib failed' }
 }
 finally { Pop-Location }
@@ -121,7 +127,7 @@ try {
                            $srcs "libtomcrypt [$($_.Name)]"
             $objAll += Get-ChildItem $objDir -Filter '*.obj' | ForEach-Object { $_.FullName }
         }
-    & lib /nologo /OUT:"$OutDir\tomcrypt.x64.lib" $objAll
+    & lib /nologo /OUT:"$OutDir\tomcrypt.$Arch.lib" $objAll
     if ($LASTEXITCODE -ne 0) { throw 'libtomcrypt lib failed' }
 }
 finally { Pop-Location }

@@ -67,6 +67,59 @@ jobs:
             x64/Release/winhttpb.x64.dll
             x64/Release/winhttpb.x64.map
 
+  dll-x86:
+    name: beacon x86 Release
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC (x64 host, x86 target)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build trimmed x86 libs
+        shell: pwsh
+        run: ./thirdparty/build_trimmed.ps1 -Arch x86
+
+      - name: Stage x86 libs
+        shell: pwsh
+        run: |
+          Copy-Item thirdparty/out/tomcrypt.x86.lib lib/tomcrypt.x86.lib -Force
+          Copy-Item thirdparty/out/tommath.x86.lib lib/tommath.x86.lib -Force
+          Get-Item lib/tomcrypt.x86.lib, lib/tommath.x86.lib | Format-Table Name, Length
+
+      - name: Build beacon Win32
+        shell: pwsh
+        run: ./build.ps1 -Project beacon -Toolset v143 -Platform Win32
+
+      - name: Report size
+        shell: pwsh
+        run: |
+          $dll = Get-Item "Win32/Release/beacon.dll"
+          "$($dll.Name) = $($dll.Length) bytes (cap 247808)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Load smoke (x86)
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
+          New-Item -ItemType Directory -Force -Path tests\_build86 | Out-Null
+          cmd /c "`"$vcvars`" x64_x86 && cl /nologo /W3 /EHsc /MT tests\load_smoke.cpp /Fe:tests\_build86\load_smoke.exe /Fo:tests\_build86\"
+          if ($LASTEXITCODE -ne 0) { throw "x86 smoke build failed" }
+          ./tests/_build86/load_smoke.exe Win32/Release/beacon.dll
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-x86
+          path: |
+            Win32/Release/beacon.dll
+            Win32/Release/beacon.map
+            thirdparty/out/tomcrypt.x86.lib
+            thirdparty/out/tommath.x86.lib
+
   tests:
     name: host-side unit tests
     runs-on: windows-2022

@@ -1,6 +1,6 @@
 # Live 结论：CS 4.9.1 协议兼容 HTTP WinINet x64
 
-- 窗口：2026-09-02–03
+- 窗口：2026-09-02–06
 - 目标：`CobaltStrikeBeaconCppSource-main` 4.9.1 分支，HTTP WinINet x64
 - 客户端：`4.9.1.jar` + JDK 21 + Headless Aggressor（`grok-hl*`）
 - TeamServer：`192.168.100.98:50050`，密码 `123456`
@@ -8,7 +8,7 @@
 - Listener：`http` `192.168.100.98:8080`（后续另开 8081/8084–8089 做生成期对照）
 - 原始日志：`cs-agscript-mcp/scripts/r1.log`；分轮备忘 `r1_report.md` / `r2_report.md` / `r3_report.md`
 
-**范围**：只声称 HTTP WinINet x64。WinHTTP 套筒、x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、cmd 117 assembly-from-store **未测，不在本结论内**。
+**范围**：HTTP WinINet x64 + HTTP WinHTTP x64 套筒。x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、cmd 117 assembly-from-store **未测，不在本结论内**。
 
 ---
 
@@ -41,7 +41,9 @@
 | Guardrails | **过** | 匹配 `http_gok3` 上线；不匹配 `http_gbad3` 发 307208B **无 INITIAL**（CNA 必须用真正 tab，禁止 Sleep `replace("|")`） |
 | sleep_mask ON | **过** | `957216250` `sleep 5` 后 lastf~1s，继续跳 |
 | sleep_mask OFF | **过** | `885590660` Direct + `sleep 5` 后 lastf 2s/4s，trampoline 未崩 |
-| WinHTTP / x86 / dnsb / pivot / UDRL / cmd 117 | **未测** | 约定范围外 |
+| WinHTTP 官方套筒 live | **过（官方 DLL）** | `http-beacon { set library "winhttp"; }` → spawn `311506576` listener `http_wh:8090`，payload 309256B，`HTTP Library: winhttp`，syscall Direct |
+| WinHTTP 我方套筒 live | **过** | 见 §7。CI `winhttpb.x64.dll` 290304 → CrackSleeve 290336 写入槽 `0x05624CC0`；子 `1117505292` listener `http_wh2:8091` |
+| x86 / dnsb / pivot / UDRL / cmd 117 | **未测** | 范围外 |
 
 ---
 
@@ -138,4 +140,28 @@ writeToClient DataLen: 61
 
 ## 6. 明确不在本结论内
 
-WinHTTP 套筒、x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、data-store **cmd 117** execute-assembly。
+x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、data-store **cmd 117** execute-assembly。WinHTTP 套筒见 §7。
+
+---
+
+## 7. B1：我方 `winhttpb.x64.dll` 套筒
+
+- CI run [34006482158](https://github.com/bXZb/Beacon/actions/runs/34006482158) `beacon-winhttp-x64`：plain **290304**（官方 cap 309248，余 18944）
+- CrackSleeve encode **290336**（+32）；TS 槽 `0x05624CC0`、长度 `0x05624CBC` 从 309280 改为 290336；备份 `/root/4.9.1/TeamServerImage_patched.pre_winhttpb`
+- 现网核对：`image_len 290336`，槽头 16B 与本地 encoded 一致 `0b85c60f71079b43…`；profile `r2_winhttp.profile`；TS 生成 x64 HTTP 打出 `new string table not found` / `beacon.dll not found`（官方套筒无此警告，说明用的是我方 PE）
+- 子会话 **`1117505292`** rundll32 pid **12736** listener **`http_wh2` `:8091`**，父 `988387210` spawn
+
+| 项 | 结论 | 证据（`r1.log` / 子 `1117505292`） |
+|---|---|---|
+| spawn / INITIAL / checkin | **过** | 10:52:57 INITIAL；syscall/pwd/ps 周期 lastf 10–56s |
+| syscall 生成期 Direct | **过** | `Current syscall method: Direct` |
+| pwd / ps / ls / shell | **过** | ALT pwd Desktop；PS 含 `beacon_x64.exe` 10560；LS Desktop；`echo grok-winhttp-live` |
+| getuid | **过** | `You are DESKTOP-4CPCB7A\Administrator (admin)` |
+| steal 同会话 5304 + rev2self | **过** | `Impersonated DESKTOP-4CPCB7A\Administrator`；HEART 有/无 impersonated |
+| clipboard cmd 100 | **过** | `Clipboard Data (32 bytes)` |
+| data-store add/list/remove + cmd 116 | **过** | index 0 `clipboard.x64.o`；`Executing the BOF from Data Store` + Clipboard Data |
+| upload / download 29B | **过** | upload CHECKIN 54B；download complete 29 bytes |
+| screenshot | **过** | CHECKIN **199988** bytes；`screenshots()` count=2 |
+| SOCKS5 TCP | **过** | 须等 implant CHECKIN 后再探。`:21092` CONNECT example.com → `HTTP/1.1 200 OK`。CNA `started SOCKS5` 只表示任务入队 |
+
+未在该子会话重复：Host Profiles / Guardrails / sleep_mask / SOCKS UDP / 运行时切 syscall / token-store / keylogger（WinINet 已过，通道无关）。

@@ -14,8 +14,8 @@
 #pragma comment(lib, "lib/tommath.x64.lib")
 #pragma comment(lib, "lib/tomcrypt.x64.lib")
 #elif defined _M_IX86
-#pragma comment( lib, "lib/tommath" )
-#pragma comment( lib, "lib/tomcrypt" )
+#pragma comment(lib, "lib/tommath.x86.lib")
+#pragma comment(lib, "lib/tomcrypt.x86.lib")
 #endif
 
 #define TOLERANCE (60 * 60)

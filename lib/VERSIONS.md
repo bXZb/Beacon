@@ -26,8 +26,9 @@
 1. **头/库必须成对替换**：换 lib 必须同步审查头文件版本，反之亦然。
 2. **链接方式**：`common.props` 已把 `$(ProjectDir)lib` 加入 `LibraryPath`，
    工程经 `#pragma comment(lib, ...)` 或链接器输入解析；x64 构建只链这两个 .lib。
-3. **x86/ARM 构建无库**：本仓库的 `lib/` 只有 x64 版本。Release|Win32/ARM 配置
-   属于历史遗留（原始仓库布局），当前仅维护 Release|x64（见 BUILD.md）。
+3. **x86 库不入库**：`lib/` 仍只提交 x64。CI `dll-x86` 作业每次用
+   `thirdparty/build_trimmed.ps1 -Arch x86` 现编 `tomcrypt.x86.lib` /
+   `tommath.x86.lib` 再链 `Win32\Release\beacon.dll`（见 BUILD.md）。
 4. **替换 lib 的验收**：任何重新分发/重编的 lib 必须通过 `tests/` 下的协议
    golden 测试（含 keygen 探针），并核对 MAP 文件中 RSA 路径函数存在。
 

