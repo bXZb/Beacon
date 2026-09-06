@@ -6,6 +6,7 @@
 #include "parse.h"
 #include "profile.h"
 #include "hostprof.h"
+#include "x86trace.h"
 
 #define HP_MAX 8
 #define HP_HOST 1
@@ -78,8 +79,11 @@ void hostprof_reload(void) {
 	memset(hp_table, 0, sizeof(hp_table));
 	hp_n = 0;
 	blob = setting_ptr(SETTING_HOST_PROFILES);
-	if (blob == NULL)
+	if (blob == NULL) {
+		x86_bc("hostprof_reload blob=NULL");
 		return;
+	}
+	x86_bc("hostprof_reload start");
 	blen = 1024;
 	data_init(&parser, blob, (int)blen);
 	while (parser.length >= 4) {
@@ -91,8 +95,10 @@ void hostprof_reload(void) {
 		if (slen == 0)
 			continue;
 		s = data_ptr(&parser, slen);
-		if (s == NULL)
+		if (s == NULL) {
+			x86_bc("hostprof_reload slen overrun");
 			break;
+		}
 		if (type == HP_HOST) {
 			if (hp_n >= HP_MAX)
 				break;
@@ -126,6 +132,7 @@ void hostprof_reload(void) {
 			break;
 		}
 	}
+	x86_bc("hostprof_reload done");
 }
 
 static hp_entry * hp_find(const char * hostname) {
@@ -146,6 +153,7 @@ void hostprof_apply(const char * hostname, profile * p, int is_post) {
 	e = hp_find(hostname);
 	if (e == NULL)
 		return;
+	x86_bc(is_post ? "hostprof_apply POST match" : "hostprof_apply GET match");
 	if (!is_post) {
 		if (e->get_uri[0])
 			_snprintf(p->uri, 1024, "%s", e->get_uri);

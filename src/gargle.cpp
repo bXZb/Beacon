@@ -7,6 +7,7 @@
 #include "track_memory.h"
 #include "datastore.h"
 #include "parse.h"
+#include "x86trace.h"
 
 
 typedef void(*GARGLEF)(GARGLEP * parms, void (__stdcall *Sleep)(DWORD), DWORD time);
@@ -118,11 +119,14 @@ static void setup_trampoline2() {
 }
 
 void GargleSleep(DWORD time) {
+#if !defined(_M_IX86)
 	GARGLEF func;
+#endif
 	char decoded[16384];
 	int dlen;
 
 	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
+		x86_bc("GargleSleep Sleep() nook=0");
 		Sleep(time);
 		return;
 	}
@@ -133,6 +137,7 @@ void GargleSleep(DWORD time) {
 		DWORD entry;
 		int prefix;
 		DWORD be_time;
+		x86_bc("GargleSleep sleepmask BOF");
 		data_init(&parser, decoded, dlen);
 		data_int(&parser);
 		data_extract(&parser);
@@ -148,8 +153,15 @@ void GargleSleep(DWORD time) {
 		return;
 	}
 
+#if defined(_M_IX86)
+	/* 4.5 trampoline body is INT3 placeholders. x86 must not execute it. */
+	x86_bc("GargleSleep x86 skip INT3 trampoline");
+	Sleep(time);
+	return;
+#else
 	setup_trampoline2();
 	func = (GARGLEF)gtrampoline;
 	gparms->heap_records = track_memory_get_heap_records_to_mask();
 	func(gparms, Sleep, time);
+#endif
 }
