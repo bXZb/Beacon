@@ -96,7 +96,7 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 	/* setup our context... assumes we're injecting into a same arch process */
 	ctx.lpStartAddress  = lpStartAddress;
 	ctx.lpParameter     = lpParameter;
-	ctx.pCreateThread   = reinterpret_cast<HANDLE(__cdecl*)(LPVOID, SIZE_T, LPVOID, LPVOID, DWORD, LPDWORD)>(CreateThread);
+	ctx.pCreateThread   = reinterpret_cast<HANDLE(WINAPI*)(LPVOID, SIZE_T, LPVOID, LPVOID, DWORD, LPDWORD)>(CreateThread);
 	ctx.fired           = FALSE;
 
 	pNtQueueApcThread  = (NTQUEUEAPCTHREAD)GetProcAddress(GetModuleHandleA("ntdll"), "NtQueueApcThread");
