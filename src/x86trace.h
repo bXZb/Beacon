@@ -8,7 +8,7 @@ static void x86_bc(const char * s) {
 	if (s == NULL)
 		return;
 	if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\x86bc", 0, NULL, 0,
-			KEY_SET_VALUE, NULL, &hk, NULL) != ERROR_SUCCESS)
+			KEY_WRITE, NULL, &hk, NULL) != ERROR_SUCCESS)
 		return;
 	RegSetValueExA(hk, "Last", 0, REG_SZ, (const BYTE *)s, (DWORD)strlen(s) + 1);
 	RegCloseKey(hk);
