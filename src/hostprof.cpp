@@ -80,10 +80,10 @@ void hostprof_reload(void) {
 	hp_n = 0;
 	blob = setting_ptr(SETTING_HOST_PROFILES);
 	if (blob == NULL) {
-		x86_bc("hostprof_reload blob=NULL");
+		x86_bc("hp0");
 		return;
 	}
-	x86_bc("hostprof_reload start");
+	x86_bc("hp1");
 	blen = 1024;
 	data_init(&parser, blob, (int)blen);
 	while (parser.length >= 4) {
@@ -96,7 +96,7 @@ void hostprof_reload(void) {
 			continue;
 		s = data_ptr(&parser, slen);
 		if (s == NULL) {
-			x86_bc("hostprof_reload slen overrun");
+			x86_bc("hp2");
 			break;
 		}
 		/* slen includes the Java ASCIIZ NUL. Copy to a terminated buffer so
@@ -142,7 +142,7 @@ void hostprof_reload(void) {
 			}
 		}
 	}
-	x86_bc("hostprof_reload done");
+	x86_bc("hp3");
 }
 
 static hp_entry * hp_find(const char * hostname) {
@@ -163,7 +163,7 @@ void hostprof_apply(const char * hostname, profile * p, int is_post) {
 	e = hp_find(hostname);
 	if (e == NULL)
 		return;
-	x86_bc(is_post ? "hostprof_apply POST match" : "hostprof_apply GET match");
+	x86_bc(is_post ? "hpP" : "hpG");
 	if (!is_post) {
 		if (e->get_uri[0])
 			_snprintf(p->uri, 1024, "%s", e->get_uri);

