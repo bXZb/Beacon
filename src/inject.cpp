@@ -59,14 +59,22 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 				break;
 
 #elif defined _M_IX86
-			/* try to use CreateRemoteThread */
+			/* CreateRemoteThread / RtlCreateUserThread start a *new* thread and
+			 * leave the suspended primary thread parked. x86 SetThreadContext
+			 * cannot pass lpParameter, so EA/post-ex jobs with args fall through
+			 * here; a suspended rundll32 + worker thread deadlocks in the loader
+			 * / CLR. Skip these and let NtQueueApcThread-s resume the primary
+			 * with the argument. */
 			case PI_EXEC_CREATEREMOTETHREAD:
+				if (context->isSuspended && parameter != NULL)
+					break;
 				if (context->sameArch && inject_via_remotethread(context->hProcess, (char *)ptr + offset, parameter))
 					return TRUE;
 				break;
 
-			/* try to use RtlCreateUserThread */
 			case PI_EXEC_RTLCREATEUSERTHREAD:
+				if (context->isSuspended && parameter != NULL)
+					break;
 				if (!context->sameArch && inject_via_remotethread_wow64(context->hProcess, (char *)ptr + offset, parameter))
 					return TRUE;
 				else if (context->sameArch && inject_via_createuserthread(context->hProcess, (char *)ptr + offset, parameter))
@@ -98,6 +106,10 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 				module   = data_string_asciiz(&parser);
 				function = data_string_asciiz(&parser);
 
+#if defined(_M_IX86)
+				if (context->isSuspended && parameter != NULL)
+					break;
+#endif
 				if (context->sameArch && inject_with_hinted_func(opcode, context->hProcess, (char *)ptr + offset, parameter, module, function, funcoff))
 					return TRUE;
 				break;

