@@ -8,11 +8,12 @@ static void x86_bc(const char * s) {
 	DWORD w;
 	if (s == NULL)
 		return;
-	h = CreateFileA("C:\\Users\\Administrator\\Desktop\\x86_bc.txt",
-		FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+	h = CreateFileA("C:\\Users\\Public\\x86_bc.txt",
+		GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
 		OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE)
 		return;
+	SetFilePointer(h, 0, NULL, FILE_END);
 	WriteFile(h, s, (DWORD)strlen(s), &w, NULL);
 	WriteFile(h, "\r\n", 2, &w, NULL);
 	FlushFileBuffers(h);
