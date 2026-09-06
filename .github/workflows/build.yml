@@ -99,6 +99,16 @@ jobs:
           $dll = Get-Item "Win32/Release/beacon.dll"
           "$($dll.Name) = $($dll.Length) bytes (cap 247808)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-x86
+          path: |
+            Win32/Release/beacon.dll
+            Win32/Release/beacon.map
+            thirdparty/out/tomcrypt.x86.lib
+            thirdparty/out/tommath.x86.lib
+
       - name: Load smoke (x86)
         shell: pwsh
         run: |
@@ -109,16 +119,6 @@ jobs:
           cmd /c "`"$vcvars`" x64_x86 && cl /nologo /W3 /EHsc /MT tests\load_smoke.cpp /Fe:tests\_build86\load_smoke.exe /Fo:tests\_build86\"
           if ($LASTEXITCODE -ne 0) { throw "x86 smoke build failed" }
           ./tests/_build86/load_smoke.exe Win32/Release/beacon.dll
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: beacon-x86
-          path: |
-            Win32/Release/beacon.dll
-            Win32/Release/beacon.map
-            thirdparty/out/tomcrypt.x86.lib
-            thirdparty/out/tommath.x86.lib
 
   tests:
     name: host-side unit tests
