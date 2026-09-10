@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <Windows.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include "beacon.h"
 #include "commands.h"
