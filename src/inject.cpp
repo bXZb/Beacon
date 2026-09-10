@@ -115,6 +115,13 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 
 			/* try NtQueueApcThread against a suspended process */
 			case PI_EXEC_NTQUEUEAPCTHREAD_S:
+#if defined(_M_IX86)
+				/* x86 early-bird APC on the primary deadlocks the caller in
+				 * NtQueueApcThread/ResumeThread + CLR loader lock. The
+				 * SetThreadContext trampoline already passed the argument. */
+				if (context->isSuspended)
+					break;
+#endif
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))
 					return TRUE;
 				break;
