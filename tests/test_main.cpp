@@ -1,6 +1,13 @@
 #include "test_harness.h"
 #include <cstdio>
 
+void command_shell_post(char * buffer, int length, int type, int sendNow) {
+	(void)buffer;
+	(void)length;
+	(void)type;
+	(void)sendNow;
+}
+
 std::vector<TestCase>& test_registry() {
 	static std::vector<TestCase> registry;
 	return registry;
