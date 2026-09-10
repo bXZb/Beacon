@@ -16,6 +16,8 @@
 #pragma comment(lib, "ws2_32")
 
 static char http_current_host[256];
+static char http_saved_ua[256];
+static int http_saved_port;
 
 #define PROXYB_MANUAL 0
 #define PROXYB_DIRECT 1
@@ -98,11 +100,15 @@ void http_init(char * host, int port, char * ua) {
 	}
 
 	memset(http_current_host, 0, sizeof(http_current_host));
+	memset(http_saved_ua, 0, sizeof(http_saved_ua));
 	memset(http_host_w, 0, sizeof(http_host_w));
+	http_saved_port = port;
 	if (host != NULL) {
 		strncpy(http_current_host, host, sizeof(http_current_host) - 1);
 		to_wide(host, http_host_w, 256);
 	}
+	if (ua != NULL)
+		strncpy(http_saved_ua, ua, sizeof(http_saved_ua) - 1);
 	connect_h = WinHttpConnect(session_h, http_host_w, (INTERNET_PORT)port, 0);
 
 	token_guard_stop();
@@ -119,6 +125,14 @@ void http_close() {
 		session_h = NULL;
 	}
 	token_guard_stop();
+}
+
+void http_flush_post(char * hook) {
+	if (http_post_len == 0 || hook == NULL || http_current_host[0] == '\0')
+		return;
+	http_close();
+	http_init(http_current_host, http_saved_port, http_saved_ua);
+	http_post_maybe(hook);
 }
 
 static void fixRequest(HINTERNET request) {

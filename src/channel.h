@@ -7,6 +7,7 @@ void http_init(char * host, int port, char * ua);
 void http_close();
 void http_put(char * url, void * buffer, int len, BOOL postNow);
 void http_post_maybe(char * url);
+void http_flush_post(char * url);
 int http_get(char * url, void * cookie, char* buffer, int max);
 
 BOOL channel_lookup(char * domain, unsigned int * result);

