@@ -263,17 +263,20 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	}
 
 	{
-		HANDLE hf;
+		char path[MAX_PATH];
 		char line[80];
-		DWORD nw = 0;
-		int n;
-		hf = CreateFileA("C:\\Users\\Public\\x86ea2.txt", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (hf != INVALID_HANDLE_VALUE) {
-			n = _snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\r\n",
-				(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
-			if (n > 0)
-				WriteFile(hf, line, (DWORD)n, &nw, NULL);
-			CloseHandle(hf);
+		HANDLE hf;
+		DWORD n, nw = 0;
+		n = GetTempPathA(MAX_PATH, path);
+		if (n > 0 && n + 12 < MAX_PATH) {
+			lstrcatA(path, "x86ea2.txt");
+			hf = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (hf != INVALID_HANDLE_VALUE) {
+				_snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\r\n",
+					(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
+				WriteFile(hf, line, (DWORD)lstrlenA(line), &nw, NULL);
+				CloseHandle(hf);
+			}
 		}
 	}
 
