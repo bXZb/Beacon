@@ -452,6 +452,7 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_DATA_STORE_EXECUTE_ASSEMBLY:
 		x86_bc("7");
+		command_shell_post("ea117-enter", 11, CALLBACK_OUTPUT, TRUE);
 		command_data_store_execute_assembly(buffer, length, TRUE, TRUE);
 		break;
 	}

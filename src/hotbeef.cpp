@@ -263,21 +263,10 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	}
 
 	{
-		char path[MAX_PATH];
 		char line[80];
-		HANDLE hf;
-		DWORD n, nw = 0;
-		n = GetTempPathA(MAX_PATH, path);
-		if (n > 0 && n + 12 < MAX_PATH) {
-			lstrcatA(path, "x86ea2.txt");
-			hf = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (hf != INVALID_HANDLE_VALUE) {
-				_snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\r\n",
-					(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
-				WriteFile(hf, line, (DWORD)lstrlenA(line), &nw, NULL);
-				CloseHandle(hf);
-			}
-		}
+		_snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\n",
+			(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
+		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, TRUE);
 	}
 
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
