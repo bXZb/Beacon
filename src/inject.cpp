@@ -12,6 +12,7 @@
 #include "tokens.h"
 #include "functions.h"
 #include "bformat.h"
+#include "x86trace.h"
 
 BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, void * parameter) {
 	char *          options = setting_ptr(SETTING_PROCINJ_EXECUTE);
@@ -161,12 +162,18 @@ void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, 
 		ptr = remote_mirror_data(context, buffer, length);
 	}
 
-	if (ptr == NULL)
+	if (ptr == NULL) {
+		x86_bc("N");
 		return;
+	}
+	x86_bc("D");
 
 	/* call our logic to execute code */
-	if (inject_process_execute(context, (char *)ptr, offset, parameter))
+	if (inject_process_execute(context, (char *)ptr, offset, parameter)) {
+		x86_bc("E");
 		return; /* TODO: what happens to ptr? From what I can see the allocated memory is lost as well as the handle to the thread. local - uses VirtualAlloc remote - uses VirtualAlloc or NTMAPVIEWOFSECTION */
+	}
+	x86_bc("F");
 
 	/* post an error staging PI failed... not 0x20 though */
 	post_error_dd(0x48, context->pid, GetLastError());
@@ -207,9 +214,19 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 
 	/* populate our context to avoid the need for other functions to figure out the same crap */
 	populate_inject_context(&context, pi, hProcess, pid);
+	{
+		char st[5];
+		st[0] = context.sameArch ? 'S' : 'D';
+		st[1] = context.isSuspended ? 'U' : 'R';
+		st[2] = (plen > 0) ? 'P' : '0';
+		st[3] = context.targetArch == INJECT_ARCH_X64 ? '6' : '3';
+		st[4] = 0;
+		x86_bc(st);
+	}
 
 	/* if we're a smart inject DLL, act on it */
 	SetupSmartInject(&context, buffer, length);
+	x86_bc("B");
 
 	/* figure out which transform we want to apply. I know this is ugly */
 	if (context.targetArch == INJECT_ARCH_X64)
@@ -229,6 +246,7 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 		rparameter = remote_mirror_data(&context, (char *)parameter, plen);
 	else
 		rparameter = NULL;
+	x86_bc("C");
 
 	/* easiest case, nothing needs to happen. Pass the data on as needed */
 	if (prependl == 0 && appendl == 0) {

