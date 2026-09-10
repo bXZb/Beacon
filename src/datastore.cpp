@@ -9,6 +9,7 @@
 #include "gargleint.h"
 #include "hostprof.h"
 #include "syscalls.h"
+#include "x86trace.h"
 
 extern char sleepmask_region[];
 
@@ -397,6 +398,7 @@ void command_data_store_inline_execute(char * buffer, int length) {
 }
 
 void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
+	x86_bc("0");
 	datap parser;
 	int index;
 	datap_buffer jobblob;
@@ -442,6 +444,21 @@ void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BO
 	}
 	x86 = (inner_type == 70 || inner_type == 87);
 	ignoreToken = (inner_type == 70 || inner_type == 71);
+	x86_bc(x86 ? "1" : "8");
+	{
+		HANDLE hf;
+		char line[96];
+		DWORD nw = 0;
+		int n;
+		hf = CreateFileA("C:\\Users\\Public\\x86ea.txt", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hf != INVALID_HANDLE_VALUE) {
+			n = _snprintf(line, sizeof(line), "inner=%u x86=%d wait=%u off=%u dll=%d plen=%d\r\n",
+				inner_type, (int)x86, wait, offset, dlllen, extra.length);
+			if (n > 0)
+				WriteFile(hf, line, (DWORD)n, &nw, NULL);
+			CloseHandle(hf);
+		}
+	}
 	command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, extra.buffer, extra.length, desc, dlen, x86, ignoreToken);
 	BeaconDataStoreProtectItem((size_t)index);
 }

