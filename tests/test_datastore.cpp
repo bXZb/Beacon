@@ -15,9 +15,23 @@ GARGLEP * gparms = NULL;
 void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen) {
 	(void)objblob; (void)objlen; (void)entry; (void)args; (void)alen;
 }
+static DWORD g_spawn_slen;
+static DWORD g_spawn_plen;
+static BOOL g_spawn_x86;
+static char g_spawn_dll[16];
+static char g_spawn_param[32];
+
 void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellcode, DWORD slen, char * parameter, DWORD plen, char * description, DWORD dlen, BOOL x86, BOOL ignoreToken) {
-	(void)type; (void)wait; (void)offset; (void)shellcode; (void)slen;
-	(void)parameter; (void)plen; (void)description; (void)dlen; (void)x86; (void)ignoreToken;
+	(void)type; (void)wait; (void)offset; (void)description; (void)dlen; (void)ignoreToken;
+	g_spawn_slen = slen;
+	g_spawn_plen = plen;
+	g_spawn_x86 = x86;
+	memset(g_spawn_dll, 0, sizeof(g_spawn_dll));
+	memset(g_spawn_param, 0, sizeof(g_spawn_param));
+	if (shellcode != NULL && slen > 0)
+		memcpy(g_spawn_dll, shellcode, slen < sizeof(g_spawn_dll) ? slen : sizeof(g_spawn_dll) - 1);
+	if (parameter != NULL && plen > 0)
+		memcpy(g_spawn_param, parameter, plen < sizeof(g_spawn_param) ? plen : sizeof(g_spawn_param) - 1);
 }
 void post_error_na(int error) { (void)error; }
 void post_error_d(int error, int arg) { (void)error; (void)arg; }
@@ -145,6 +159,53 @@ TEST(beacon_information_fills_sleepmask_region) {
 	CHECK(info.sleep_mask_ptr == sleepmask_region);
 	CHECK(info.sleep_mask_total_size == 16384);
 	CHECK(info.heap_records != NULL);
+}
+
+TEST(cmd117_passes_store_assembly_plus_args) {
+	unsigned char store[32];
+	unsigned char inner[32];
+	unsigned char cmd[96];
+	unsigned char * p;
+	int inner_len;
+	int idx;
+
+	memset(store, 0, sizeof(store));
+	put_u32(store, 4);
+	memcpy(store + 4, "DLL!", 4);
+	put_u32(store + 8, 5);
+	memcpy(store + 12, "HELLO", 5);
+
+	datastore_reset_for_test(4);
+	idx = datastore_add(DATA_STORE_TYPE_DOTNET, 0x99ULL, (char *)store, 17);
+	CHECK(idx == 0);
+
+	memset(inner, 0, sizeof(inner));
+	p = inner;
+	put_u32(p, 87); p += 4;          /* inner command type */
+	put_u32(p, 15); p += 4;          /* size of payload below */
+	put_u16(p, 0); p += 2;           /* callback type */
+	put_u16(p, 20000); p += 2;       /* wait */
+	put_u32(p, 0); p += 4;           /* offset */
+	put_u32(p, 3); p += 4;           /* desc len */
+	memcpy(p, "net", 3); p += 3;
+	inner_len = (int)(p - inner);
+
+	memset(cmd, 0, sizeof(cmd));
+	p = cmd;
+	put_u32(p, 0); p += 4;           /* index */
+	put_u32(p, (unsigned)inner_len); p += 4;
+	memcpy(p, inner, (size_t)inner_len); p += inner_len;
+	put_u32(p, 4); p += 4;           /* extra = args */
+	memcpy(p, "ARGS", 4); p += 4;
+
+	g_spawn_slen = g_spawn_plen = 0;
+	command_data_store_execute_assembly((char *)cmd, (int)(p - cmd), TRUE, TRUE);
+	CHECK(g_spawn_slen == 4);
+	CHECK(memcmp(g_spawn_dll, "DLL!", 4) == 0);
+	CHECK(g_spawn_x86 == TRUE);
+	CHECK(g_spawn_plen == 9 + 4);
+	CHECK(g_spawn_param[4] == 'H' && g_spawn_param[8] == 'O');
+	CHECK(g_spawn_param[9] == 'A' && g_spawn_param[12] == 'S');
 }
 
 TEST(custom_user_data_is_null_without_udrl) {

