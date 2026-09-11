@@ -7,7 +7,6 @@
 #include "track_memory.h"
 #include "datastore.h"
 #include "parse.h"
-#include "x86trace.h"
 #include <stdlib.h>
 
 
@@ -128,7 +127,6 @@ void GargleSleep(DWORD time) {
 
 	/* nook=0: Sleep() without a 16KB stack frame (__chkstk on x86 spawn). */
 	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
-		x86_bc("gs0");
 		Sleep(time);
 		return;
 	}
@@ -144,7 +142,6 @@ void GargleSleep(DWORD time) {
 		DWORD entry;
 		int prefix;
 		DWORD be_time;
-		x86_bc("gsb");
 		data_init(&parser, decoded, dlen);
 		data_int(&parser);
 		data_extract(&parser);
@@ -164,7 +161,6 @@ void GargleSleep(DWORD time) {
 
 #if defined(_M_IX86)
 	/* 4.5 trampoline body is INT3 placeholders. x86 must not execute it. */
-	x86_bc("gsx");
 	Sleep(time);
 	return;
 #else

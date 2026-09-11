@@ -43,7 +43,9 @@
 | sleep_mask OFF | **过** | `885590660` Direct + `sleep 5` 后 lastf 2s/4s，trampoline 未崩 |
 | WinHTTP 官方套筒 live | **过（官方 DLL）** | `http-beacon { set library "winhttp"; }` → spawn `311506576` listener `http_wh:8090`，payload 309256B，`HTTP Library: winhttp`，syscall Direct |
 | WinHTTP 我方套筒 live | **过** | 见 §7。CI `winhttpb.x64.dll` 290304 → CrackSleeve 290336 写入槽 `0x05624CC0`；子 `1117505292` listener `http_wh2:8091` |
-| x86 / dnsb / pivot / UDRL / cmd 117 | **未测** | 范围外 |
+| data-store execute-assembly（cmd 117） | **过** | 见 §8。父 `988387210` load type=dotnet + `bexecute_assembly` → `Executing the .NET program from Data Store` + `grok-ea-117` |
+| x86 我方套筒 | **过（后修）** | §9 是早期掉线记录。GargleSleep 堆分配修掉 `__chkstk` 后主循环已绿。**当前矩阵以 `docs/MATRIX.md` 为准**。 |
+| x86 后续任务 / dnsb / pivot / UDRL | **见 MATRIX.md** | x86 核心矩阵已过；**cmd 117 仍失败**。dnsb/pivot/UDRL 仍范围外。 |
 
 ---
 
@@ -140,7 +142,7 @@ writeToClient DataLen: 61
 
 ## 6. 明确不在本结论内
 
-x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、data-store **cmd 117** execute-assembly。WinHTTP 套筒见 §7。
+x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend。WinHTTP 套筒见 §7。cmd 117 见 §8。
 
 ---
 
@@ -165,3 +167,34 @@ x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、data-store **cmd 1
 | SOCKS5 TCP | **过** | 须等 implant CHECKIN 后再探。`:21092` CONNECT example.com → `HTTP/1.1 200 OK`。CNA `started SOCKS5` 只表示任务入队 |
 
 未在该子会话重复：Host Profiles / Guardrails / sleep_mask / SOCKS UDP / 运行时切 syscall / token-store / keylogger（WinINet 已过，通道无关）。
+
+---
+
+## 8. B3：cmd 117 execute-assembly from data store
+
+官方路径：`bdata_store_load("dotnet", exe)` 把 `invokeassembly` + .NET 二进制写入 store（cmd 115）；随后 `bexecute_assembly(exe)` 若 hash 命中则 **cmd 117**，日志 `Executing the .NET program from Data Store`。未命中则走普通 70/71/87/88。
+
+活体（2026-09-06，父 `988387210` WinINet x64，`hello.exe` 3584B `grok-ea-117`）：
+
+```
+OUTPUT  Stored the item to the index 1
+DATA_STORE  … t1thello.exen
+TASKED  Executing the .NET program from Data Store
+OUTPUT  grok-ea-117
+```
+
+implant `command_data_store_execute_assembly` 已在 4.9.1 分支，本次只加 CNA `execute_assembly`。Headless 须重载 CNA（`grok-hl10`）。
+
+---
+
+## 9. B2：x86 `beacon.dll` 套筒（历史；已被 MATRIX 取代）
+
+> **2026-09 更正**：第一次 RSA checkin 后掉线的根因是 `GargleSleep` 16KB 栈上缓冲触发 x86 `__chkstk`。堆分配修复后主循环稳定。本节保留当时现场，**不要当当前结论**。当前 x86 矩阵与 cmd 117 见 `docs/MATRIX.md`、`docs/CMD117-X86-HANDOFF.md`。
+
+- CI [34010289682](https://github.com/bXZb/Beacon/actions/runs/34010289682) `beacon-x86`：plain **246272**（槽明文 cap 247808，余 1536）
+- 修复：`CreateThread` 按 WINAPI 转（x86 C2440）；`/EXPORT:ReflectiveLoader=_ReflectiveLoader@4`
+- CrackSleeve 246304；槽 `0x054968E0` 长度 247840 → 246304；备份 `TeamServerImage_patched.pre_beacon_x86`
+- TS `r2_nosm.profile`（wininet）；生成 x86 打 `new string table not found`
+- spawn `http` x86：父 CHECKIN **247816** B；**INITIAL `1185460666`** rundll32 pid **5924** `arch=x86` listener `http`
+
+之后 pid 5924 退出，无第二次 `host called home`，syscall/pwd/ls/getuid/ps 都没有回调。第一次 RSA checkin 通，主循环/sleep 后的二次 GET 未通。下一步：x86 上线后崩溃点（WinINet 二次请求、sleep、host-profile 解析）。

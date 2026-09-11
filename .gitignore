@@ -32,3 +32,4 @@ Thumbs.db
 tests/_build/
 thirdparty/_src/
 thirdparty/out/
+ci-artifacts/

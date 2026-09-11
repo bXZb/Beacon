@@ -54,3 +54,5 @@ RawSize `0x42600` = 271872 B，扣 20 B 头 → **payload 上限 271852 B**，
 - `tests\test_crypto.cpp` 同时是 C2 线缆协议加密层的可执行规格
   （见 `docs\WIRE-PROTOCOL.md`），替换任何依赖库后必须全绿；
 - CI 每次推送自动运行。
+
+推送、下载 artifact、CrackSleeve 套筒、patch TeamServer、Headless 矩阵活测：见 `docs/LIVE-OPS.md`。功能完成度见 `docs/MATRIX.md`。
