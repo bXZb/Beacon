@@ -25,7 +25,8 @@ static __inline void cmd117_probe(char mark) {
 	HANDLE h;
 	DWORD wrote = 0;
 
-	if (!WaitNamedPipeA(CMD117_PIPE_PROBE, 50))
+	/* Prefer CreateFile once WaitNamedPipe says an instance is ready. */
+	if (!WaitNamedPipeA(CMD117_PIPE_PROBE, 200))
 		return;
 
 	h = CreateFileA(CMD117_PIPE_PROBE, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
