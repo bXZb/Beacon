@@ -12,7 +12,6 @@
 #include "tokens.h"
 #include "functions.h"
 #include "bformat.h"
-#include "cmd117_probe.h"
 
 BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, void * parameter) {
 	char *          options = setting_ptr(SETTING_PROCINJ_EXECUTE);
@@ -144,9 +143,6 @@ void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, 
 		ptr = remote_mirror_data(context, buffer, length);
 	}
 
-	/* TEMP cmd117: reached after remote/local mirror returns */
-	cmd117_probe('2');
-
 	if (ptr == NULL)
 		return;
 
@@ -190,9 +186,6 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	formatp       tbuffer;
 	int           field = 0;
 	INJECTCONTEXT context;
-
-	/* TEMP cmd117: enter inject before any remote mirror */
-	cmd117_probe('1');
 
 	/* populate our context to avoid the need for other functions to figure out the same crap */
 	populate_inject_context(&context, pi, hProcess, pid);

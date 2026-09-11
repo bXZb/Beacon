@@ -5,7 +5,6 @@
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
-#include "cmd117_probe.h"
 
 typedef BOOL(WINAPI * X64FUNCTION)(DWORD dwParameter);
 typedef DWORD(WINAPI * EXECUTEX64)(X64FUNCTION pFunction, DWORD dwParameter);
@@ -105,14 +104,9 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	// Transition this wow64 process into native x64 and call pX64function( ctx )
 	// The native function will use the native Win64 API's to create a remote thread in the target process.
 	if (!pExecuteX64(pX64function, (DWORD)ctx)) {
-		/* TEMP cmd117: Gate returned (failure) */
-		cmd117_probe('3');
 		SetLastError(ERROR_ACCESS_DENIED);
 		return FALSE;  /* TODO: pExecuteX64 and pX64function not released. */
 	}
-
-	/* TEMP cmd117: Gate returned (success path before handle check) */
-	cmd117_probe('3');
 
 	if (!ctx->t.hThread) {
 		SetLastError(ERROR_INVALID_HANDLE);
