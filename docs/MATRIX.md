@@ -13,7 +13,7 @@
 | 通道 / 架构 | 主循环 | 核心任务矩阵 | cmd 117（store EA） | 备注 |
 |---|---|---|---|---|
 | HTTP WinINet x64 | **过** | **过** | **过** `grok-ea-117` | 父会话曾用 `988387210` / `1403836542` |
-| HTTP WinHTTP x64（我方 `winhttpb.x64.dll`） | **过** | **过**（B1 子集） | 未在该子会话重复（通道无关，WinINet 已过） | 子 `1117505292` `http_wh2:8091` |
+| HTTP WinHTTP x64（我方 `winhttpb.x64.dll`） | **过** | **过**（B1 子集） | **过** `grok-ea-117` | 子 `1204167688` CHECKIN **290312**；旧 `1117505292` lastf 31h 已不用 |
 | HTTP WinINet x86（我方 `beacon.dll`） | **过** | **核心过** | **过** `grok-ea-117` | GargleSleep 堆分配；store EA 同架构；见 §4.1 |
 | dnsb / SMB·TCP pivot / ExtC2 | — | — | — | **范围外**（C1 完成前不做） |
 | UDRL / rl0k | — | — | — | **范围外** |
@@ -49,11 +49,11 @@
 
 ## 3. x64 WinHTTP 我方套筒
 
-CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。子 `1117505292`。
+CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。B1 子 `1117505292`（已 stale）。cmd 117 补测子 **`1204167688`**（2026-09-11，CHECKIN **290312** = 明文 290304+8，profile 当时 `r2_winhttp`，随后 TS 已改回 `r2_nosm`）。
 
-过：spawn/INITIAL、syscall Direct、pwd/ps/ls/shell、getuid、steal+rev2self、clipboard、cmd 116、upload/download、screenshot、SOCKS5 TCP。
+过：spawn/INITIAL、syscall Direct、pwd/ps/ls/shell、getuid、steal+rev2self、clipboard、cmd 116、upload/download、screenshot、SOCKS5 TCP、**cmd 117** store EA `grok-ea-117`。
 
-未在该子会话重复（WinINet 已过、通道无关）：Host Profiles、Guardrails、sleep_mask、SOCKS UDP、运行时切 syscall、token-store、keylogger、cmd 117。
+未在 WinHTTP 子会话重复（WinINet 已过、通道无关）：Host Profiles、Guardrails、sleep_mask、SOCKS UDP、运行时切 syscall、token-store、keylogger。
 
 ---
 
@@ -77,13 +77,15 @@ CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。子 `1117505292`
 | SOCKS TCP + UDP | **过** | |
 | Host Profiles | **过** | 子 `1146059844` |
 | sleep_mask true | **过** | 子 `1975336374` lastf 56s→11s |
-| **cmd 117** store EA | **过** | 见 §4.1 |
+| **cmd 117** store EA | **过** | 见 §4.1；收敛后再测仍过 |
+| 非 store `execute_assembly` | **过** | 子 `1026850514`：无 Data Store 横幅，CHECKIN **112904**，OUTPUT `grok-ea-117` |
+| hashdump | **过** | 同子；SAM hashes + 后再 pwd |
 
 ### 4.1 x86 cmd 117（2026-09-11 过）
 
 官方 store EA 在 x86 上是 **同架构作业**（`ExecuteAssemblyJob`：`beacon.is64() ? x64 : x86` → inner 70/87，x86 `invokeassembly.dll`）。不要用 Heaven’s Gate / `spawn_patsy(TRUE)` 当修复。
 
-过线活测（implant **`1ffbde2`**，Headless `grok-hl117k`，`-XX:+UseParallelGC -Xms256m -Xmx1g`）：
+过线活测（implant **`1ffbde2`** 仍含探针，Headless `grok-hl117k`）：
 
 | 项 | 值 |
 |---|---|
@@ -95,6 +97,8 @@ CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。子 `1117505292`
 | banner | `Executing the .NET program from Data Store` |
 | OUTPUT | **`grok-ea-117`**（无 `0x8007000b`） |
 | EA 后再 pwd | PASS |
+
+**收敛后再测（`b243338` / CI `34593437113`，无 `cmd117probe`）**：Headless `grok-hl117m`，overlay 明文 ts **`0x6AA3E415`**，编码头 `9b980d33…`。子 **`1026850514`** pid **13476**。SCAN `ci_ts`×4 ReWolf×2 **probe=0** stock=0。store 117 仍 OUTPUT **`grok-ea-117`**。unload 完成后再非 store EA：**无** Data Store 横幅，CHECKIN **112904**，OUTPUT **`grok-ea-117`**。hashdump OUTPUT 含 `Administrator:500:aad3b435…`，随后 pwd 仍过。
 
 真修复（保留）：
 

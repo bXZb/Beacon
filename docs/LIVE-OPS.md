@@ -169,14 +169,19 @@ Python 写 inbox、读 `r1.log`。可复用：
 | `r1_drive.py` / `r2_drive.py` | 早期 x64 矩阵 |
 | `c1_x86_matrix.py` | x86 核心矩阵（改脚本里的 CHILD bid） |
 | `c1_x86_cmd117.py` | 新 spawn x86 再跑 cmd 117 |
-| `c1_x86_1ffbde2_live.py` | spawn + 扫 TimeDateStamp/ReWolf + store EA（结案脚本） |
+| `c1_x86_1ffbde2_live.py` | spawn + 扫 TimeDateStamp/ReWolf + store EA（`1ffbde2` 结案） |
+| `c1_supplement_live.py` | 无探针套筒：store 117 + hashdump + WinHTTP 尝试 |
+| `c1_nostore_retry.py` | store unload 完成后再非 store EA |
+| `c1_winhttp_cmd117.py` | `r2_winhttp` 下 spawn `http_wh2`，CHECKIN 须 **290312** |
 | `c1_x86_cmd117_child.py` | 已有 x86 子会话只跑 117 |
 | `b3_cmd117_live.py` | x64 父会话 cmd 117 对照 |
 | `c1_x64_ea_live.py` | Defender 关闭后的 x64 EA 回归 |
 
-inbox 命令（见 `headless_drive.cna` `run_cmd`）：`target` `dump` `pick` `spawn` `pwd` `ls` `shell` `ps` `getuid` `steal_token` `rev2self` `syscall_method` `clipboard` `inline_execute` `data_store_load` `data_store_list` `execute_assembly` `upload` `download` `screenshot` `keylogger` `socks` `sleep` `exit` `listener_create` …
+inbox 命令（见 `headless_drive.cna` `run_cmd`）：`target` `dump` `pick` `spawn` `pwd` `ls` `shell` `ps` `getuid` `steal_token` `rev2self` `syscall_method` `clipboard` `inline_execute` `data_store_load` `data_store_list` `data_store_unload` `execute_assembly` `hashdump` `mimikatz` `upload` `download` `screenshot` `keylogger` `socks` `sleep` `exit` `listener_create` …
 
-`data_store_load` 的 type：BOF 用文件本身；EA 用 `dotnet` + `ea\hello.exe`。命中 store 后 `execute_assembly` 才走 **cmd 117**（日志 `Executing the .NET program from Data Store`）。未命中则走普通 70/71/87/88。
+`data_store_load` 的 type：BOF 用文件本身；EA 用 `dotnet` + `ea\hello.exe`。命中 store 后 `execute_assembly` 才走 **cmd 117**（日志 `Executing the .NET program from Data Store`）。未命中则走普通 70/71/87/88。非 store EA 必须等 `Removed` / list 为空再发，否则客户端仍按 store hash 走 117。
+
+WinHTTP 套筒：TS profile 必须 `http-beacon { set library "winhttp"; }`（`r2_winhttp`），spawn CHECKIN **290312**。默认 `r2_nosm` 是 wininet，对 `http_wh2` spawn 会得到 **307208**，那不是 `winhttpb.x64.dll`。测完改回 `r2_nosm`。
 
 ### 5.3 判定
 

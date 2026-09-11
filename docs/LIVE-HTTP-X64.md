@@ -8,7 +8,7 @@
 - Listener：`http` `192.168.100.98:8080`（后续另开 8081/8084–8089 做生成期对照）
 - 原始日志：`cs-agscript-mcp/scripts/r1.log`；分轮备忘 `r1_report.md` / `r2_report.md` / `r3_report.md`
 
-**范围**：HTTP WinINet x64 + HTTP WinHTTP x64 套筒。x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend、cmd 117 assembly-from-store **未测，不在本结论内**。
+**范围**：本文是 2026-09-02–06 的 x64 原始记录。x86 / WinHTTP cmd 117 / 收敛后再测以 **`docs/MATRIX.md` 为准**。dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend 仍范围外。
 
 ---
 
@@ -45,7 +45,7 @@
 | WinHTTP 我方套筒 live | **过** | 见 §7。CI `winhttpb.x64.dll` 290304 → CrackSleeve 290336 写入槽 `0x05624CC0`；子 `1117505292` listener `http_wh2:8091` |
 | data-store execute-assembly（cmd 117） | **过** | 见 §8。父 `988387210` load type=dotnet + `bexecute_assembly` → `Executing the .NET program from Data Store` + `grok-ea-117` |
 | x86 我方套筒 | **过（后修）** | §9 是早期掉线记录。GargleSleep 堆分配修掉 `__chkstk` 后主循环已绿。**当前矩阵以 `docs/MATRIX.md` 为准**。 |
-| x86 后续任务 / dnsb / pivot / UDRL | **见 MATRIX.md** | x86 核心矩阵已过；**cmd 117 仍失败**。dnsb/pivot/UDRL 仍范围外。 |
+| x86 后续任务 / dnsb / pivot / UDRL | **见 MATRIX.md** | x86 核心矩阵 + cmd 117 + 非 store EA + hashdump **已过**。dnsb/pivot/UDRL 仍范围外。 |
 
 ---
 
@@ -167,6 +167,8 @@ x86、dnsb、SMB/TCP pivot、ExtC2、UDRL、Post-Ex prepend。WinHTTP 套筒见 
 | SOCKS5 TCP | **过** | 须等 implant CHECKIN 后再探。`:21092` CONNECT example.com → `HTTP/1.1 200 OK`。CNA `started SOCKS5` 只表示任务入队 |
 
 未在该子会话重复：Host Profiles / Guardrails / sleep_mask / SOCKS UDP / 运行时切 syscall / token-store / keylogger（WinINet 已过，通道无关）。
+
+**cmd 117 补测（2026-09-11）**：TS 临时切 `r2_winhttp`（generate 打 `HTTP Library: winhttp`），client overlay `winhttpb.x64.dll` 明文 290304。父 `890778478` spawn `http_wh2` → 子 **`1204167688`** CHECKIN **290312**。store Stored；banner；OUTPUT **`grok-ea-117`**；pwd 后仍过。测完 TS 已改回 `r2_nosm`。旧子 `1117505292` lastf 31h，未再用。
 
 ---
 

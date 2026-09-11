@@ -251,3 +251,18 @@ Headless `grok-hl117k` java pid **22556**，CWD artifacts，**`-XX:+UseParallelG
 CI https://github.com/bXZb/Beacon/actions/runs/34592888623 **全绿**（host-side tests、beacon x86/x64、dnsb/extc2/pivot x64）。artifact `beacon-x86` **10196379698**。
 
 收敛后二进制不再含 `cmd117probe`；以后判别用 TimeDateStamp / ReWolf，不要再用探针字符串。
+
+### 补测（2026-09-11 21:41–22:01）
+
+CI https://github.com/bXZb/Beacon/actions/runs/34593437113（与 `b243338` 同植入）。明文 x86 ts **`0x6AA3E415`** probe=0 ReWolf×1。overlay 编码头 `9b980d33b73fd2354a1f3791fd5127c6`。Headless `grok-hl117m` / `grok-hl117n`，JVM `-XX:+UseParallelGC -Xms256m -Xmx1g`。父 `890778478` / 17600 全程未杀。
+
+| 项 | 子 / 证据 | 结论 |
+|---|---|---|
+| 无探针交付 | `1026850514` pid 13476；SCAN probe=0 ci_ts×4 ReWolf×2 | **过** |
+| store cmd 117 | banner + OUTPUT `grok-ea-117` | **过** |
+| 非 store EA | 须等 `Removed` 后再 `execute_assembly`；无 Data Store 横幅；CHECKIN **112904**；OUTPUT `grok-ea-117` | **过** |
+| hashdump | SAM `Administrator:500:aad3b435…`；后再 pwd | **过** |
+| WinHTTP cmd 117 | 须 TS `r2_winhttp` 才会 spawn `winhttpb`。CHECKIN **290312** 子 **`1204167688`**；`grok-ea-117`。r2_nosm 下 spawn `http_wh2` 会变成 WinINet **307208**（`457034960`），不能当 winhttpb | **过** |
+| mimikatz | CNA 已加 `hashdump`/`mimikatz`；本轮未跑 mimikatz | **未测** |
+
+第一次非 store 与 unload 抢跑，误报 FAIL；重试过。测完 TS 已改回 `r2_nosm`，Headless `grok-hl117p`。

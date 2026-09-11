@@ -123,3 +123,5 @@ Headless 必须在 **artifacts 目录** 启动。JVM 先试 `-XX:+UseParallelGC 
 ## 6. 收敛（`b243338`）
 
 删除管道探针和 force-x86 开关。CI https://github.com/bXZb/Beacon/actions/runs/34592888623 全绿。日常步骤：`docs/LIVE-OPS.md` §3.1。矩阵：`docs/MATRIX.md` §4.1。
+
+补测 overlay（CI `34593437113`）：明文 ts **`0x6AA3E415`**，无 `cmd117probe`，编码头 **`9b980d33…`**。子 `1026850514` store 117 + 非 store EA + hashdump 过。WinHTTP 须 `r2_winhttp`，子 `1204167688` CHECKIN **290312** cmd 117 过。

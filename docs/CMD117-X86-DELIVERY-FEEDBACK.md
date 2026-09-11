@@ -94,3 +94,5 @@ HANDOFF **假设 5 成立（主因）**：`bspawn` 在 client 上 `exportLocal`�
 Headless `grok-hl117k`，`-XX:+UseParallelGC -Xms256m -Xmx1g`，CWD artifacts。父 `890778478` spawn → 子 **463543496** pid **1216**。CHECKIN **245768**。进程里 CI ts + ReWolf。`data_store_load` Stored；cmd 117 OUTPUT **`grok-ea-117`**。
 
 探针 / force-x86 已在 **`b243338`** 删除。CI https://github.com/bXZb/Beacon/actions/runs/34592888623 全绿。TS 槽仍不必为 spawn 再打。
+
+补测（无探针套筒 `0x6AA3E415`）：子 `1026850514` store 117 / 非 store EA / hashdump 过。WinHTTP 真套筒子 `1204167688` CHECKIN **290312** cmd 117 过（TS 曾切 `r2_winhttp`，已改回 `r2_nosm`）。
