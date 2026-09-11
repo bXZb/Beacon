@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | HTTP WinINet x64 | **过** | **过** | **过** `grok-ea-117` | 父会话曾用 `988387210` / `1403836542` |
 | HTTP WinHTTP x64（我方 `winhttpb.x64.dll`） | **过** | **过**（B1 子集） | 未在该子会话重复（通道无关，WinINet 已过） | 子 `1117505292` `http_wh2:8091` |
-| HTTP WinINet x86（我方 `beacon.dll`） | **过** | **核心过** | **失败** | GargleSleep 堆分配修掉上线后 `__chkstk`；EA 卡在 x86→x64 注入 |
+| HTTP WinINet x86（我方 `beacon.dll`） | **过** | **核心过** | **过** `grok-ea-117` | GargleSleep 堆分配；store EA 同架构；见 §4.1 |
 | dnsb / SMB·TCP pivot / ExtC2 | — | — | — | **范围外**（C1 完成前不做） |
 | UDRL / rl0k | — | — | — | **范围外** |
 | Post-Ex prepend | — | — | — | **范围外** |
@@ -77,18 +77,33 @@ CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。子 `1117505292`
 | SOCKS TCP + UDP | **过** | |
 | Host Profiles | **过** | 子 `1146059844` |
 | sleep_mask true | **过** | 子 `1975336374` lastf 56s→11s |
-| **cmd 117** store EA | **失败** | 见下 |
+| **cmd 117** store EA | **过** | 见 §4.1 |
 
-### 4.1 x86 cmd 117（未过，已交接）
+### 4.1 x86 cmd 117（2026-09-11 过）
 
-- TASKED：`Executing the .NET program from Data Store`
-- CHECKIN：`sent: 55 bytes`（任务已下到 implant）
-- **没有** OUTPUT `grok-ea-117`
-- lastf 从秒变成分钟，pwd 不再回；**进程不退出**
-- ps：x86 rundll32 仍在，并多一个 **x64 rundll32 作业**（官方语义：x86 EA 默认 spawn x64 invokeassembly）
-- 关 Defender 仍失败；同机 x64 父会话 cmd 117 **过**
-- 排查插桩已从树里拿掉；注入回到 `9539bb2` 的 `inject_process_execute` / SetThreadContext / `pipe_try`
-- 接手：`docs/CMD117-X86-HANDOFF.md`；反馈写 `docs/CMD117-X86-FEEDBACK.md`
+官方 store EA 在 x86 上是 **同架构作业**（`ExecuteAssemblyJob`：`beacon.is64() ? x64 : x86` → inner 70/87，x86 `invokeassembly.dll`）。不要用 Heaven’s Gate / `spawn_patsy(TRUE)` 当修复。
+
+过线活测（implant **`1ffbde2`**，Headless `grok-hl117k`，`-XX:+UseParallelGC -Xms256m -Xmx1g`）：
+
+| 项 | 值 |
+|---|---|
+| 父 | `890778478` / pid **17600** `beacon_x64.exe` |
+| spawn CHECKIN | **245768** B |
+| 子 | **463543496** / pid **1216** |
+| 进程标记 | CI `TimeDateStamp` + ReWolf；**无**官方 `0x64F88C5F` |
+| store | **Stored** index 0 |
+| banner | `Executing the .NET program from Data Store` |
+| OUTPUT | **`grok-ea-117`**（无 `0x8007000b`） |
+| EA 后再 pwd | PASS |
+
+真修复（保留）：
+
+- **`1050045`**：68 字节 guardrails needle 只留在 `guard_region`，避免 Java `indexOf` 盖掉 LTC / 公钥 → checkin 前 `abort`
+- **`1ffbde2`**：cmd 117 作业参数 = store 余下的 `[len][assembly]` + extra 宽参数，不再把 extra 单独当 CLR 输入
+
+排查插桩已从树里拿掉（**`b243338`**）：`cmd117_probe.h`、管道 `'1'/'2'/'3'`、`C:\Users\Public\cmd117_force_x86`。注入仍是 `9539bb2` 行为。CI 收敛后全绿：https://github.com/bXZb/Beacon/actions/runs/34592888623
+
+交付：`bspawn` 走 Headless `exportLocal`，overlay **client jar** + CWD 影子，不是 TS 槽。步骤见 `docs/LIVE-OPS.md`；经过见 `docs/CMD117-X86-FEEDBACK.md` 结案、`docs/CMD117-X86-DELIVERY.md`。
 
 hello.exe：`cs-agscript-mcp/scripts/ea/hello.exe`（PE x86 / 0x14c），stdout `grok-ea-117`。
 

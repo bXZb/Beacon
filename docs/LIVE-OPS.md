@@ -56,7 +56,9 @@ x86 产物路径：`Win32/Release/beacon.dll`（zip 里可能带目录）。明�
 
 ## 3. CrackSleeve 编码
 
-4.9.1 TS 是 GraalVM `TeamServerImage`，套筒在镜像里，**不是** jar 的 `sleeve/`。交付 = 明文 DLL → CrackSleeve encode（+32B XOR）→ 覆盖镜像 blob + 长度 4 字节。
+4.9.1 TS 是 GraalVM `TeamServerImage`，套筒在镜像里，**不是** jar 的 `sleeve/`。**监听器启动时 generate** = 明文 DLL → CrackSleeve encode（+32B XOR）→ 覆盖镜像 blob + 长度 4 字节。
+
+**`bspawn` / Headless `exportLocal` 不读 TS 槽。** spawn 在 **Headless JVM** 里 `SleevedResource.readResource("resources/beacon.dll")` → `CommonUtils.readResource("sleeve/beacon.dll")`：优先 CWD 相对文件，否则 jar 条目。x86 活测必须 overlay **client jar + CWD 影子**（见 §3.1）。TS 槽只给 TeamServerImage 自己的 `export()` / 监听器 generate 用。
 
 目录：`C:\Users\Administrator\Desktop\cobaltstrike\4.9.1\CrackSleeve4.9\`
 
@@ -76,7 +78,27 @@ powershell -NoProfile -File C:\Users\Administrator\Desktop\cobaltstrike\cs-agscr
 
 **禁止** `java ... CrackSleeve encode | Select-Object -First 1`：管道会把编码结果吃成 0 字节。让 Java 自己写 `Resource\Encode\...`。
 
+`CrackSleeve encode` 会把 `Resource\Decode\sleeve\` **全部** 再编码一遍。只替换了 `beacon.dll` 时，其它 Encode 产物也会被重写；overlay 时只拷 `Encode\sleeve\beacon.dll`。
+
 JDK：`C:\Program Files\Java\jdk-21.0.12\bin\java.exe`，`-cp cobaltstrike-client.jar;.`，工作目录必须是 `CrackSleeve4.9`。
+
+### 3.1 Overlay client jar（spawn 真正走的路）
+
+Headless 工作目录必须是 jar 所在目录，这样 `new File("sleeve/beacon.dll")` 能盖住 jar 里的官方条目：
+
+| 目标 | 路径 |
+|---|---|
+| CWD 影子（优先） | `C:\Users\Administrator\Desktop\4.9.1\out\artifacts\sleeve\beacon.dll` |
+| fat jar 条目 | `C:\Users\Administrator\Desktop\4.9.1\out\artifacts\4.9.1.jar` → `sleeve/beacon.dll` |
+| 源树备份 | `C:\Users\Administrator\Desktop\cobaltstrike\4.9.1\src\sleeve\beacon.dll`（`build.ps1` 打 fat jar 时用） |
+
+步骤：CI `beacon-x86` 明文 `Win32/Release/beacon.dll`（≤ 247808）→ 写入 CrackSleeve `Resource\Decode\sleeve\beacon.dll` → `CrackSleeve encode` → 把 `Resource\Encode\sleeve\beacon.dll`（≤ 247840）同时写到上表三处。改 jar 前备份（例如 `4.9.1.jar.pre_<sha>`）。
+
+GitHub artifact zip 若 302 到 Azure blob：**重定向请求不要带 Authorization**，否则 401/415。
+
+判别用 **TimeDateStamp** 和 ReWolf `66 8C D8 66 8E D0`，不要用 `MZRE`（MalleablePE）。`cmd117probe` 已从树里删除（`b243338`）。x86 `setExportName() failed` 不能当「官方 vs 我方」：CI 导出名已经是 `beacon.dll` 时是 no-op。
+
+过线：新 spawn 的 x86 rundll32 CHECKIN = 明文+8（CI 245760 → **245768**），进程里是这次 CI 的时间戳，不是官方 `0x64F88C5F`。
 
 ---
 
@@ -125,9 +147,13 @@ SSL `-Djavax.net.ssl.keyStore=./cobaltstrike.store` 四个 `-D` 不能少，否�
 $jar  = 'C:\Users\Administrator\Desktop\4.9.1\out\artifacts\4.9.1.jar'
 $java = 'C:\Program Files\Java\jdk-21.0.12\bin\java.exe'
 $cna  = 'C:\Users\Administrator\Desktop\cobaltstrike\cs-agscript-mcp\scripts\headless_drive.cna'
-& $java -XX:+AggressiveHeap -XX:+UseParallelGC -cp $jar aggressor.headless.Start `
+# CWD 必须是 artifacts，CWD 影子 sleeve/beacon.dll 才能盖住 jar
+Set-Location (Split-Path $jar)
+& $java -XX:+UseParallelGC -Xms256m -Xmx1g -cp $jar aggressor.headless.Start `
   192.168.100.98 50050 grok-hlXX 123456 $cna
 ```
+
+先用 **`-XX:+UseParallelGC -Xms256m -Xmx1g`**。不行再 `-XX:+UseParallelGC -XX:+AggressiveHeap`。不要并行再起一份 AggressiveHeap（会把已有 Headless 挤死）。
 
 - 用户名每次换 `grok-hl*`，不要和 GUI 抢同一个。
 - CNA 轮询 `scripts\r1_inbox.txt`，一行：`CMD\targ1\targ2...`（真正的 TAB）。
@@ -143,6 +169,7 @@ Python 写 inbox、读 `r1.log`。可复用：
 | `r1_drive.py` / `r2_drive.py` | 早期 x64 矩阵 |
 | `c1_x86_matrix.py` | x86 核心矩阵（改脚本里的 CHILD bid） |
 | `c1_x86_cmd117.py` | 新 spawn x86 再跑 cmd 117 |
+| `c1_x86_1ffbde2_live.py` | spawn + 扫 TimeDateStamp/ReWolf + store EA（结案脚本） |
 | `c1_x86_cmd117_child.py` | 已有 x86 子会话只跑 117 |
 | `b3_cmd117_live.py` | x64 父会话 cmd 117 对照 |
 | `c1_x64_ea_live.py` | Defender 关闭后的 x64 EA 回归 |
@@ -170,8 +197,8 @@ SOCKS 绑在 **TeamServer** `192.168.100.98`，不是 Headless 那台 Windows。
 |---|---|
 | TS | `192.168.100.98:50050` 密码 `123456`；HTTP 8080 |
 | 探针 | `192.168.100.198` `DESKTOP-4CPCB7A` |
-| 优先保活的 x64 父 | `1403836542`（若仍在：x64 `beacon_x64.exe`） |
-| hello.exe | `cs-agscript-mcp/scripts/ea/hello.exe` → stdout `grok-ea-117` |
+| 操作机 / 优先保活的 x64 父 | `DESKTOP-EUEJDE2`；`890778478` pid **17600** `beacon_x64.exe` |
+| hello.exe | `cs-agscript-mcp/scripts/ea/hello.exe`（PE32 x86）→ stdout `grok-ea-117` |
 
 生成 x86 payload 时 TS 可能打 `new string table not found` / `setExportName() failed`：MalleablePE 警告，**只要 INITIAL 出来就不是生成失败**。
 
@@ -187,10 +214,11 @@ SOCKS 绑在 **TeamServer** `192.168.100.98`，不是 Headless 那台 Windows。
 - x86 挂起进程 skip CRT / RtlCreateUserThread / APC-s
 - SetThreadContext 忽略 `lpParameter` 只改 EAX
 - job 超时 `TerminateProcess` 代替 `pipe_try`
+- `src/cmd117_probe.h`、管道 `'1'/'2'/'3'`、`C:\Users\Public\cmd117_force_x86` / `cmd117force_x86`（`b243338`）
 
-需要面包屑时：用已有 job 回调，或 `post_error_dd` 一次（走下一轮 POST）。不要再开 `http_flush_post`。
+需要面包屑时：用已有 job 回调，或 `post_error_dd` 一次（走下一轮 POST）。不要再开 `http_flush_post`。不要把 `spawn_patsy(TRUE)` / force-x86 当产品修复。
 
-**保留的真修复**：`GargleSleep` 16KB 堆分配（x86 `__chkstk`）。
+**保留的真修复**：`GargleSleep` 16KB 堆分配（x86 `__chkstk`）；`1050045` guardrails needle 只在 `guard_region`；`1ffbde2` cmd 117 作业参数 = store 余下 assembly + extra。
 
 ---
 
@@ -199,8 +227,12 @@ SOCKS 绑在 **TeamServer** `192.168.100.98`，不是 Headless 那台 Windows。
 | 文件 | 内容 |
 |---|---|
 | `docs/MATRIX.md` | 当前功能/矩阵完成度 |
-| `docs/CMD117-X86-HANDOFF.md` | x86 cmd 117 接手说明 |
-| `docs/CMD117-X86-FEEDBACK.md` | 接手会话写回这里 |
+| `docs/LIVE-OPS.md` | 本文件：CI、套筒、Headless、overlay |
+| `docs/CMD117-X86-HANDOFF.md` | x86 cmd 117 早期注入排查（已结案，勿当实验笔记改） |
+| `docs/CMD117-X86-FEEDBACK.md` | 排查经过 + 结案活测 |
+| `docs/CMD117-X86-DELIVERY.md` | spawn 走 client jar，不是 TS 槽 |
+| `docs/CMD117-X86-DELIVERY-HANDOFF.md` | 交付接手（已结案） |
+| `docs/CMD117-X86-DELIVERY-FEEDBACK.md` | 交付写回：CWD/jar overlay |
 | `docs/LIVE-HTTP-X64.md` | x64 活测原始结论（§9 x86 掉线是过时记录） |
 | `docs/BUILD.md` | MSVC/CI 工程 |
 | `docs/WIRE-PROTOCOL.md` | 线缆协议 |

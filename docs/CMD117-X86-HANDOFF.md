@@ -1,8 +1,10 @@
 # x86 cmd 117 排查交接
 
-给**另一个会话**用。本仓库已去掉排查插桩（HKCU tracer、Public/%TEMP% dump、BeaconOutput sendNow、`http_flush_post`）。注入逻辑回到 4.5 泄漏树在 `9539bb2` 时的 `inject_process_execute` / `SetThreadContext` / `pipe_try`。
+> **已结案（2026-09-11）。** 活测 OUTPUT `grok-ea-117`。不要改 Heaven’s Gate / force-x86。经过写在 `CMD117-X86-FEEDBACK.md` 结案；交付写在 `CMD117-X86-DELIVERY.md`；日常步骤 `LIVE-OPS.md`。下面正文是排查当时的交接，保留作历史。
 
-**反馈写到**：同目录 `CMD117-X86-FEEDBACK.md`（空模板，按表填）。不要改本文件当实验笔记。
+给**另一个会话**用。本仓库已去掉排查插桩（HKCU tracer、Public/%TEMP% dump、BeaconOutput sendNow、`http_flush_post`、管道探针 / force-x86）。注入逻辑回到 4.5 泄漏树在 `9539bb2` 时的 `inject_process_execute` / `SetThreadContext` / `pipe_try`。
+
+**反馈写到**：同目录 `CMD117-X86-FEEDBACK.md`。不要改本文件当实验笔记。
 
 规范与套筒：`docs/LIVE-OPS.md`。矩阵快照：`docs/MATRIX.md`。调用 `cs-agscript-mcp/scripts/patch_ts.py` 打槽，不要再手写一次性 SSH。
 
