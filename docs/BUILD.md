@@ -15,6 +15,8 @@
 x86 wininet 槽 `sleeve/beacon.dll` 明文上限 **247808**（编码 247840-32）。
 x86 库：CI `dll-x86` 作业用 `thirdparty/build_trimmed.ps1 -Arch x86` 现编，不提交 `lib/*.x86.lib`。
 
+本机不编。推送 GitHub Actions、CrackSleeve、**client jar overlay**（`bspawn` 走 jar 不是 TS 槽）、`patch_ts.py`：见 `docs/LIVE-OPS.md`。客户端 `Desktop\4.9.1` 的 `src/sleeve/` + `build.ps1` 把编码 DLL 打进 `out/artifacts/4.9.1.jar`。
+
 ## 工具链（CI 实证 2026-08-29 修订）
 
 | 项 | 默认 | 说明 |

@@ -241,3 +241,5 @@ SOCKS 绑在 **TeamServer** `192.168.100.98`，不是 Headless 那台 Windows。
 | `docs/LIVE-HTTP-X64.md` | x64 活测原始结论（§9 x86 掉线是过时记录） |
 | `docs/BUILD.md` | MSVC/CI 工程 |
 | `docs/WIRE-PROTOCOL.md` | 线缆协议 |
+| `docs/NEXT-HANDOFF.md` | C1 结案后下一会话（mimikatz / WinHTTP 尾巴 / dnsb） |
+| `docs/NEXT-FEEDBACK.md` | 那个会话写回 |

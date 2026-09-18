@@ -121,4 +121,4 @@ hello.exe：`cs-agscript-mcp/scripts/ea/hello.exe`（PE x86 / 0x14c），stdout 
 - `dll-x86`：现场编 trimmed x86 lib → `Win32\Release\beacon.dll`
 - `tests`：宿主机单测（`BEACON_TEST_ENABLE_KEYGEN`）
 
-推送与套筒步骤见 `docs/LIVE-OPS.md`。
+推送与套筒步骤见 `docs/LIVE-OPS.md`。C1 已结案后的下一会话：`docs/NEXT-HANDOFF.md`（mimikatz、WinHTTP 未重复项、dnsb）。
