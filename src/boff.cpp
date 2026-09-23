@@ -266,7 +266,7 @@ void setup_functions(BOFF_FUNCTIONS * f) {
  *
  * Return value: if value is false, relocation process failed and the BOFF should not execute. This function reports its own errors.
  */
-BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * symbol, int soff, char * imgbase) {
+BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * symbol, int soff) {
 #if defined _M_IX86
 	if (reloc->type == RELOC_ADDR32) {
 		DWORD addr, offset, rip;
@@ -519,16 +519,16 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				post_error_na(0x4e);
 				break;
 			}
-			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base))
+			if (!process_reloc(reloc, src, dst, (char *)slot, 0))
 				break;
 		}
 		else if (reloc->symbol < 1024) {
-			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
+			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0))
 				break;
 		}
 		else {
 			sym = bof_section_base(reloc->symbol, code_dst, rdata_dst, data_dst, xdata_dst, pdata_dst, bss_dst);
-			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section, base))
+			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section))
 				break;
 		}
 	}
