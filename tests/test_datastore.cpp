@@ -12,8 +12,8 @@
 
 GARGLEP * gparms = NULL;
 
-BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen) {
-	(void)objblob; (void)objlen; (void)entry; (void)args; (void)alen;
+BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv) {
+	(void)objblob; (void)objlen; (void)entry; (void)args; (void)alen; (void)conv;
 	return TRUE;
 }
 static DWORD g_spawn_slen;

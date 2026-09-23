@@ -392,7 +392,7 @@ void command_data_store_inline_execute(char * buffer, int length) {
 		BeaconDataStoreProtectItem((size_t)index);
 		return;
 	}
-	command_inline_execute_object_parsed(obj, objlen, entry, args.buffer, args.length);
+	command_inline_execute_object_parsed(obj, objlen, entry, args.buffer, args.length, 0);
 	BeaconDataStoreProtectItem((size_t)index);
 }
 
