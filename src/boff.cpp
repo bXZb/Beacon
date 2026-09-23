@@ -258,6 +258,64 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
+#if defined(_M_X64)
+static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t) {
+	HANDLE h;
+	char buf[3584];
+	int n = 0;
+	int i;
+	DWORD wr;
+	h = CreateFileA("C:\\Users\\Public\\sm_gparms.txt", GENERIC_WRITE, FILE_SHARE_READ,
+		NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return;
+	n += wsprintfA(buf + n, "t=%u bof=%p blen=%u gp=%p\r\n", t, bof, (unsigned)blen, gp);
+	if (gp == NULL) {
+		WriteFile(h, buf, (DWORD)n, &wr, NULL);
+		CloseHandle(h);
+		return;
+	}
+	n += wsprintfA(buf + n, "beacon_ptr=%p sections=%p heap=%p\r\n",
+		gp->beacon_ptr, gp->sections, gp->heap_records);
+	if (gp->sections == NULL)
+		n += wsprintfA(buf + n, "sections=NULL\r\n");
+	else {
+		for (i = 0; i < 24 && n < 3000; i++) {
+			DWORD a = gp->sections[i * 2];
+			DWORD b = gp->sections[i * 2 + 1];
+			n += wsprintfA(buf + n, "sec[%d] %08X %08X", i, a, b);
+			if (a == 0 && b == 0) {
+				n += wsprintfA(buf + n, " END\r\n");
+				break;
+			}
+			if (a >= b)
+				n += wsprintfA(buf + n, " BAD_ORDER");
+			if (a == 0xFFFFFFFFUL || b == 0xFFFFFFFFUL)
+				n += wsprintfA(buf + n, " NEG1");
+			n += wsprintfA(buf + n, "\r\n");
+		}
+	}
+	if (gp->heap_records == NULL)
+		n += wsprintfA(buf + n, "heap=NULL FAULT_[rcx+10]\r\n");
+	else {
+		for (i = 0; i < 24 && n < 3400; i++) {
+			char * p = gp->heap_records[i].ptr;
+			unsigned z = (unsigned)gp->heap_records[i].size;
+			n += wsprintfA(buf + n, "heap[%d] ptr=%p size=%u", i, p, z);
+			if (p == NULL) {
+				n += wsprintfA(buf + n, " END\r\n");
+				break;
+			}
+			if (bof != NULL && p >= bof && p < bof + blen)
+				n += wsprintfA(buf + n, " IN_BOF");
+			n += wsprintfA(buf + n, "\r\n");
+		}
+	}
+	WriteFile(h, buf, (DWORD)n, &wr, NULL);
+	CloseHandle(h);
+}
+#endif
+
 /*
  * These get somewhat complicated. Here's what the variables mean:
  *
@@ -581,16 +639,17 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				 * sections), not OpenBeacon BEACON_INFO (ptr, sizes, ...).
 				 * Fill BEACON_INFO then pass a GARGLEP rcx the object can walk.
 				 */
-				if (gparms == NULL) {
-					Sleep(t);
-				}
-				else {
+				if (gparms != NULL) {
 					gparms->beacon_ptr = info.beacon_ptr;
 					gparms->sections = info.sections;
 					gparms->heap_records = info.heap_records;
 					memcpy(gparms->mask, info.mask, MASK_SIZE);
-					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
 				}
+#if defined(_M_X64)
+				sm_dump_gparms(gparms, code_dst, total, t);
+#endif
+				/* Capture-only: dump then Sleep. Do not invoke until dump is read. */
+				Sleep(t);
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {
