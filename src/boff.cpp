@@ -16,6 +16,8 @@
 
 #define RELOC_ENDTABLE 0
 #define RELOC_ADDR64   1
+#define RELOC64_ADDR32   2  /* IMAGE_REL_AMD64_ADDR32 */
+#define RELOC64_ADDR32NB 3  /* IMAGE_REL_AMD64_ADDR32NB — sleep-mask BOF */
 #define RELOC_ADDR32   6
 #define RELOC_REL32    20
 #define RELOC64_REL32_0  4
@@ -264,7 +266,7 @@ void setup_functions(BOFF_FUNCTIONS * f) {
  *
  * Return value: if value is false, relocation process failed and the BOFF should not execute. This function reports its own errors.
  */
-BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * symbol, int soff) {
+BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * symbol, int soff, char * imgbase) {
 #if defined _M_IX86
 	if (reloc->type == RELOC_ADDR32) {
 		DWORD addr, offset, rip;
@@ -299,6 +301,18 @@ BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * sym
 		memcpy(&offset, execsrc + reloc->offset, 8);
 		addr = (UINT64)(ULONG_PTR)symbol + offset + (UINT64)(ULONG_PTR)soff;
 		memcpy(execsrc + reloc->offset, &addr, 8);
+		return TRUE;
+	}
+	else if (reloc->type == RELOC64_ADDR32NB || reloc->type == RELOC64_ADDR32) {
+		DWORD addend, out;
+		UINT64 target;
+		memcpy(&addend, execsrc + reloc->offset, 4);
+		target = (UINT64)(ULONG_PTR)symbol + addend + (UINT64)(ULONG_PTR)soff;
+		if (reloc->type == RELOC64_ADDR32NB && imgbase != NULL)
+			out = (DWORD)(target - (UINT64)(ULONG_PTR)imgbase);
+		else
+			out = (DWORD)target;
+		memcpy(execsrc + reloc->offset, &out, 4);
 		return TRUE;
 	}
 	else if (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5) {
@@ -511,16 +525,16 @@ void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				post_error_na(0x4e);
 				break;
 			}
-			if (!process_reloc(reloc, src, dst, (char *)slot, 0))
+			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base))
 				break;
 		}
 		else if (reloc->symbol < 1024) {
-			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0))
+			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
 				break;
 		}
 		else {
 			sym = bof_section_base(reloc->symbol, code_dst, rdata_dst, data_dst, xdata_dst, pdata_dst, bss_dst);
-			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section))
+			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section, base))
 				break;
 		}
 	}
