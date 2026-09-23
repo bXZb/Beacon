@@ -540,6 +540,13 @@ void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	if (success) {
+		/* Relocs patch the extract buffers (execsrc). Copy them onto the
+		 * executable mapping before wiping the extracts. */
+		if (code.buffer) memcpy(code_dst, code.buffer, code.length);
+		if (rdata.buffer) memcpy(rdata_dst, rdata.buffer, rdata.length);
+		if (data.buffer) memcpy(data_dst, data.buffer, data.length);
+		if (xdata.buffer) memcpy(xdata_dst, xdata.buffer, xdata.length);
+		if (pdata.buffer) memcpy(pdata_dst, pdata.buffer, pdata.length);
 		if (code.buffer)
 			memset(code.buffer, 0, code.length);
 		inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
