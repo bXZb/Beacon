@@ -62,4 +62,4 @@ unsigned long long datastore_hash_at(int index);
 int datastore_type_at(int index);
 void datastore_reset_for_test(int slots);
 
-void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen);
+BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen);

