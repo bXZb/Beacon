@@ -266,8 +266,9 @@ void setup_functions(BOFF_FUNCTIONS * f) {
  *
  * Return value: if value is false, relocation process failed and the BOFF should not execute. This function reports its own errors.
  */
-BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * symbol, int soff) {
+BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * symbol, int soff, char * imgbase) {
 #if defined _M_IX86
+	(void)imgbase;
 	if (reloc->type == RELOC_ADDR32) {
 		DWORD addr, offset, rip;
 
@@ -304,10 +305,26 @@ BOOL process_reloc(OBJ_RELOC * reloc, char * execsrc, char * execdst, char * sym
 		return TRUE;
 	}
 	else if (reloc->type == RELOC64_ADDR32NB) {
-		/* Fail the object: a wrong ADDR32NB hangs the sleep-mask BOF and
-		 * never returns from GargleSleep. GargleSleep Sleep()s on FALSE. */
-		post_error_d(0x4f, reloc->type);
-		return FALSE;
+		/* IMAGE_REL_AMD64_ADDR32NB: 32-bit RVA from the BOF mapping base.
+		 * sleepmask.x64.o uses this only in .pdata (RUNTIME_FUNCTION). */
+		DWORD addend, rva;
+		UINT64 target, basev;
+		if (imgbase == NULL) {
+			post_error_d(0x4f, reloc->type);
+			return FALSE;
+		}
+		memcpy(&addend, execsrc + reloc->offset, 4);
+		target = (UINT64)(ULONG_PTR)symbol + addend + (UINT64)(ULONG_PTR)soff;
+		basev = (UINT64)(ULONG_PTR)imgbase;
+		if (target < basev || (target - basev) > 0xFFFFFFFFULL) {
+			post_error_na(0x4d);
+			return FALSE;
+		}
+		rva = (DWORD)(target - basev);
+		memcpy(execsrc + reloc->offset, &rva, 4);
+		if (execdst != NULL && execdst != execsrc)
+			memcpy(execdst + reloc->offset, &rva, 4);
+		return TRUE;
 	}
 	else if (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5) {
 		char * rip, * fsymbol;
@@ -519,16 +536,16 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				post_error_na(0x4e);
 				break;
 			}
-			if (!process_reloc(reloc, src, dst, (char *)slot, 0))
+			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base))
 				break;
 		}
 		else if (reloc->symbol < 1024) {
-			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0))
+			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
 				break;
 		}
 		else {
 			sym = bof_section_base(reloc->symbol, code_dst, rdata_dst, data_dst, xdata_dst, pdata_dst, bss_dst);
-			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section))
+			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section, base))
 				break;
 		}
 	}
