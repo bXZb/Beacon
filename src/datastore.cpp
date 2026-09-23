@@ -272,14 +272,24 @@ BOOL BeaconRemoveValue(const char * key) {
 	return FALSE;
 }
 
+static char * g_sm_exec;
+static DWORD g_sm_text;
+static DWORD g_sm_total;
+
+void beacon_sleep_mask_set_exec(char * ptr, DWORD text_size, DWORD total_size) {
+	g_sm_exec = ptr;
+	g_sm_text = text_size;
+	g_sm_total = total_size;
+}
+
 void BeaconInformation(BEACON_INFO * info) {
 	static DWORD empty_sections[2] = { 0, 0 };
 	if (info == NULL)
 		return;
 	memset(info, 0, sizeof(BEACON_INFO));
-	info->sleep_mask_ptr = sleepmask_region;
-	info->sleep_mask_text_size = 16384;
-	info->sleep_mask_total_size = 16384;
+	info->sleep_mask_ptr = g_sm_exec != NULL ? g_sm_exec : sleepmask_region;
+	info->sleep_mask_text_size = g_sm_text != 0 ? g_sm_text : 16384;
+	info->sleep_mask_total_size = g_sm_total != 0 ? g_sm_total : 16384;
 	info->beacon_ptr = (char *)get_beacon_ptr();
 	if (gparms != NULL) {
 		info->sections = gparms->sections;

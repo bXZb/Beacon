@@ -25,9 +25,12 @@ void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon) {
 	 * will not be masked.
 	 */
 	index = gparms->sections;
-	if (index == NULL)
-		return;
-	while (TRUE) {
+	if (index == NULL) {
+		static DWORD empty_sections[2] = { 0, 0 };
+		gparms->sections = empty_sections;
+	}
+	else {
+	 while (TRUE) {
 		a = *index; b = *(index + 1);
 		if (a == 0 && b == 0) {
 			break;
@@ -54,6 +57,7 @@ void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon) {
 			b = *(index + 1);
 		}
 		index += 2; /* goto the next section */
+	}
 	}
 	crypto_rng_get_bytes((unsigned char *)gparms->mask, sizeof(gparms->mask));
 }

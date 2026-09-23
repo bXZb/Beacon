@@ -45,6 +45,7 @@ int  syscall_method_get(void);
 void syscall_method_set(int method);
 
 void BeaconInformation(BEACON_INFO * info);
+void beacon_sleep_mask_set_exec(char * ptr, DWORD text_size, DWORD total_size);
 BOOL BeaconAddValue(const char * key, void * ptr);
 void * BeaconGetValue(const char * key);
 BOOL BeaconRemoveValue(const char * key);
