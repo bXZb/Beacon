@@ -567,7 +567,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				DWORD t = 0;
 				if (args != NULL && alen >= (int)sizeof(DWORD))
 					memcpy(&t, args, sizeof(DWORD));
-				gargle_setup_parms(code_dst, code_dst + code.length);
+				gargle_setup_parms(code_dst, code_dst + code.length, 0);
 				if (gparms == NULL) {
 					Sleep(t);
 				}

