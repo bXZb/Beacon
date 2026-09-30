@@ -21,6 +21,21 @@
 
 static LCHANNEL server;
 
+/* extc2 debug breadcrumbs: append a line to Public so a remote kill can be
+ * pinned to an exact stage. Remove after the channel hardening is proven. */
+static void bc(const char * stage, int a, int b) {
+	HANDLE h = CreateFileA("C:\Users\Public\ec2_bc.txt", FILE_APPEND_DATA,
+		FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return;
+	char line[96];
+	int n = wsprintfA(line, "%s %d %d
+", stage, a, b);
+	DWORD wr;
+	WriteFile(h, line, (DWORD)n, &wr, NULL);
+	CloseHandle(h);
+}
+
 static char * client_write_buffer = NULL;
 static int    client_write_len    = 0;
 static char * client_read_buffer  = NULL;
@@ -151,19 +166,24 @@ void client_process() {
 
 	while (TRUE) {
 		/* wait for data to be available (and obfuscate our agent if gargling is enabled) */
+		bc("wait", 0, 0);
 		LCHANNEL_WAIT(server);
+		bc("wait-done", 0, 0);
 
 		/* read from the connection */
 		length = LCHANNEL_READ_FRAME(server, client_read_buffer, MAX_GET);
+		bc("read", length, 0);
 		if (length < 0) {
 			return;
 		}	
 
 		if (length > 0) {
 			length = security_decrypt(client_read_buffer, length);
+			bc("dec", length, 0);
 			/* keep-alive guard, see client_write() */
 			if (length >= 4) {
 				process_payload(client_read_buffer, length);
+				bc("task-done", length, 0);
 			}
 		}
 
