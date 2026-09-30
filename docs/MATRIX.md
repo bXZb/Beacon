@@ -15,7 +15,7 @@
 | HTTP WinINet x64 | **过** | **过** | **过** `grok-ea-117` | 父会话曾用 `988387210` / `1403836542` |
 | HTTP WinHTTP x64（我方 `winhttpb.x64.dll`） | **过** | **过**（B1 子集） | **过** `grok-ea-117` | 子 `1204167688` CHECKIN **290312**；旧 `1117505292` lastf 31h 已不用 |
 | HTTP WinINet x86（我方 `beacon.dll`） | **过** | **核心过** | **过** `grok-ea-117` | GargleSleep 堆分配；store EA 同架构；见 §4.1 |
-| dnsb / SMB·TCP pivot / ExtC2 | — | — | — | 见 §6（2026-09-30 首轮活测） |
+| dnsb / SMB·TCP pivot / ExtC2 | **过** | **过**（§6.2 bootstrap 语义） | — | 见 §6 |
 | SMB·TCP pivot | **过** | **过** | — | 见 §6.1 |
 | UDRL / rl0k | — | — | — | **范围外** |
 | Post-Ex prepend | — | — | — | **范围外** |
@@ -153,14 +153,20 @@ cna 新增 `smb_listener_create`/`tcp_listener_create`/`smb_link`/`unlink`（bin
 
 要点：`beacon_link(bid, ".", listener)` 对本地已 bind 的子是**接管**语义；spawn 到 bind 监听器的载荷会自行 bind 并回连父。
 
-### 6.2 dnsb.x64.dll —— 部署/协议正确，**TS 应答器环境阻断**
+### 6.2 dnsb.x64.dll —— **过线（2026-10-01 凌晨，根因定位并绕开 TS bootstrap 语义）**
+
+**根因（反编译 4.5 jar `BeaconDNS`/`BeaconC2`/`BeaconData`/`Beacons` + dig 实证）**：TS 应答器语义——新 DNS beacon 首查 `<hexid>.<domain>` 只会 `update()` 创建**空会话**（fire 无消费者的 `beacon_initial_empty` 事件）并回 idle；**元数据信号（A=idlemask^240|x）只发给 `isCheckinRequired==true` 的会话**（= 有排队任务/SOCKS/下载/分片/pivot 子链）。无人 task 空会话 → 官方载荷也永远 idle。`isDNSBeacon` 门槛 = `(agentid & 0x4B2)==0x4B2`（官方/我方 agentid 生成均强制此位模式，验算通过）。
+
+**操作闭环（每步 dig/wire 实证）**：spawn → 空会话出现在 dump（如 `1571999486`，pid/user 空）→ **target 空会话并 task（pwd）** → 下轮轮询应答变 `0.0.0.243`（240|1|2）→ beacon 经 `www.` 信道上传元数据 → 真会话 INITIAL → 任务经 `cdn./api.` 下行、`post.` 上行回包 → 稳态（无任务时回 idle）。
 
 | 项 | 结果 |
 |---|---|
-| DNS 监听器（`dns_listener_create`，cna 键名 **`dnsresolver`** 无下划线=setting 66） | 建、绑 :53 成功（同名第二监听器会 `Address already in use` 且打残共享应答器——**一个 TS 只建一个**） |
-| 载荷 spawn + 显式 resolver | staging **289288**；tshark 证实 beacon 每 60s 查 `<hexid>.<domain>`，查询名形状与**官方 dnsb EXE 完全一致** |
-| 上线 | **未过——环境阻断**：TS 应答器对任何查询（含官方载荷、含无关域名）恒回 idle（A 0.0.0.0），会话永不建立；重启 TS 无效。sing-box TUN 关闭后 UDP:53 双向可达（本机查询此前被 TUN 吞包） |
-| 结论 | **dnsb DLL 无缺陷嫌疑**；下一步=排查 GraalVM TeamServerImage 的 DNS 应答器会话建立（对照 4.5 jar `BeaconDNS.respond_nosync`/`ConversationManager` 逻辑） |
+| 监听器/显式 resolver | `dns_listener_create`（cna 键 **`dnsresolver`**=setting 66）；:53 单实例（第二个 `Address already in use` 会打残应答器） |
+| 上线 | **过**：INITIAL `1571999486`（rundll32，internal=192.168.100.198，listener=dns_go） |
+| 任务 | **过**：pwd（ALT `Current directory…`）、shell（OUTPUT `dnsb-marker-ok`）、多周期 CHECKIN（60s 周期）、进程持续存活 |
+| 信道证据 | 轮询 `5db2cefe.go.regr.test`→idle/243 按任务状态切换（tshark）；stager 路径 `aaa.stage.<domain>` TXT 亦活（alpha 编码 stage 可下载） |
+
+遗留：上一轮子会话在收到 243 后曾无声消失一次（WER 未捕获，本轮未复现）；后续回归若再现在意。**sing-box TUN 开启时本机 UDP:53 出站会被吞——测 DNS 须关 TUN 或加 LAN 直连。**
 
 ### 6.3 extc2.x64.dll —— 链路打通至**会话建立**，持续任务化待控制器完善
 
