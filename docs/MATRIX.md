@@ -53,7 +53,17 @@ CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。B1 子 `11175052
 
 过：spawn/INITIAL、syscall Direct、pwd/ps/ls/shell、getuid、steal+rev2self、clipboard、cmd 116、upload/download、screenshot、SOCKS5 TCP、**cmd 117** store EA `grok-ea-117`。
 
-未在 WinHTTP 子会话重复（WinINet 已过、通道无关）：Host Profiles、Guardrails、sleep_mask、SOCKS UDP、运行时切 syscall、token-store、keylogger。
+2026-09-23 补测（profile `r2_winhttp`，子 **`952730060`** pid **2508**，CHECKIN **290312**，随后 TS 已改回 `r2_nosm`）：
+
+| 项 | 结论 |
+|---|---|
+| 运行时 syscall Indirect → Direct | **过** `Current syscall method: Indirect/Direct` |
+| token-store steal + show | **过** `TOKEN_STEAL` / `TOKEN_STORE` `Administrator (admin)` |
+| keylogger | **过** TASKED + CHECKIN **83770**（作业下发） |
+| SOCKS5 UDP ASSOCIATE | **过（复测）** ASSOCIATE 须等 implant 下一轮 CHECKIN（sleeptime 60s）；12s 超时是测试窗口不是套筒。`c1_winhttp_four.py` 90s 过 |
+| Host Profiles `http_hp` | **过（复测）** hosts `192.168.100.98 hp1.test.local` 后 INITIAL `1903551958` + pwd |
+| Guardrails | 旧 `http_gok` 仍 33。匹配 `http_whgok` **过**。不匹配 `http_whgbad` **过**（CHECKIN 290312、无 INITIAL） |
+| sleep_mask true | **过（真掩码，2026-09-30）**。`5c753e1`：自建 PE 掩码表（跳 .pdata/.fptable/.reloc），子 `1305512946` 3+ 掩码睡眠周期存活、pwd 过、reloc=0、还原 diffs=0。根因=TS 下发表按官方布局，pair 5 打中我们 .pdata 的 CRT unwind 条目 → 窗口期异常分发 fail-fast。详见 `SLEEP-MASK-FEEDBACK.md` |
 
 ---
 
@@ -80,6 +90,7 @@ CI `winhttpb.x64.dll` 槽 `0x05624CC0`（编码 cap 309280）。B1 子 `11175052
 | **cmd 117** store EA | **过** | 见 §4.1；收敛后再测仍过 |
 | 非 store `execute_assembly` | **过** | 子 `1026850514`：无 Data Store 横幅，CHECKIN **112904**，OUTPUT `grok-ea-117` |
 | hashdump | **过** | 同子；SAM hashes + 后再 pwd |
+| mimikatz | **过** | 子 `1026850514`：`privilege::debug` → OUTPUT `Privilege '20' OK`；后再 pwd |
 
 ### 4.1 x86 cmd 117（2026-09-11 过）
 
