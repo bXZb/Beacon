@@ -124,6 +124,19 @@ hello.exe：`cs-agscript-mcp/scripts/ea/hello.exe`（PE x86 / 0x14c），stdout 
 
 ---
 
+## 4.2 三 DLL 全量回归（2026-09-30 晚，HEAD 5c753e1，CI 36700547283）
+
+`regr_drive.py`（scripts/）对三条已过线通道整体重测，套筒=当日 CI 重新编码 overlay（jar 备份 `.pre_regr_E51B9BD2`）：
+
+| DLL | profile / listener | spawn 针 | 结果 |
+|---|---|---|---|
+| beacon.x64.dll | r2_nosm / http | **292872** | **21/21 过**：pwd/ls/ps/shell/getuid、upload+download 回环（47B）、steal(`Impersonated`)+rev2self(静默)、clipboard(1488B)、syscall 查询+Indirect+Direct、data-store 存/列/卸、cmd117 store EA、keylogger、screenshot、矩阵后存活 |
+| winhttpb.x64.dll | r2_winhttp / http_wh2 | **291848** | **10/10 过**：pwd/ls/ps/shell/getuid、data-store、cmd117 store EA |
+| winhttpb.x64.dll（sleep_mask true） | r2_winhttp_sm / http_wh2 | 291848 | **过**：2+ 掩码睡眠周期存活（lastf=1s）、pwd、0 reloc 错误 |
+| beacon.dll (x86) | r2_nosm / http | **245768** | **11/11 过**：pwd/ls/shell/getuid、hashdump（`Administrator:500:aad3b435…`）、mimikatz（`Privilege '20' OK`）、非 store EA + cmd117 store EA（两次 `grok-ea-117`） |
+
+驱动脚本判定期望的四个已知坑（非 beacon 缺陷，原始日志均验证）：upload 成功静默（用 download 回环判定）、rev2self 静默、data-store 存/卸确认走 OUTPUT 类型（非 DATA_STORE）；sleep 单位是秒。测试后 TS 已回 `r2_nosm`，进程已清。
+
 ## 5. 本机不编、以 CI 为准
 
 本工作站无 MSVC。C++ 对错只看 GitHub Actions `build.yml`：
