@@ -24,13 +24,12 @@ static LCHANNEL server;
 /* extc2 debug breadcrumbs: append a line to Public so a remote kill can be
  * pinned to an exact stage. Remove after the channel hardening is proven. */
 static void bc(const char * stage, int a, int b) {
-	HANDLE h = CreateFileA("C:\Users\Public\ec2_bc.txt", FILE_APPEND_DATA,
+	HANDLE h = CreateFileA("C:\\Users\\Public\\ec2_bc.txt", FILE_APPEND_DATA,
 		FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE)
 		return;
 	char line[96];
-	int n = wsprintfA(line, "%s %d %d
-", stage, a, b);
+	int n = wsprintfA(line, "%s %d %d\r\n", stage, a, b);
 	DWORD wr;
 	WriteFile(h, line, (DWORD)n, &wr, NULL);
 	CloseHandle(h);
