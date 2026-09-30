@@ -15,7 +15,8 @@
 | HTTP WinINet x64 | **过** | **过** | **过** `grok-ea-117` | 父会话曾用 `988387210` / `1403836542` |
 | HTTP WinHTTP x64（我方 `winhttpb.x64.dll`） | **过** | **过**（B1 子集） | **过** `grok-ea-117` | 子 `1204167688` CHECKIN **290312**；旧 `1117505292` lastf 31h 已不用 |
 | HTTP WinINet x86（我方 `beacon.dll`） | **过** | **核心过** | **过** `grok-ea-117` | GargleSleep 堆分配；store EA 同架构；见 §4.1 |
-| dnsb / SMB·TCP pivot / ExtC2 | — | — | — | **范围外**（C1 完成前不做） |
+| dnsb / SMB·TCP pivot / ExtC2 | — | — | — | 见 §6（2026-09-30 首轮活测） |
+| SMB·TCP pivot | **过** | **过** | — | 见 §6.1 |
 | UDRL / rl0k | — | — | — | **范围外** |
 | Post-Ex prepend | — | — | — | **范围外** |
 | steal `PROCESS_QUERY_LIMITED_INFORMATION`（A3） | — | — | — | **范围外**；跨会话 ERROR 5 是官方语义 |
@@ -136,6 +137,42 @@ hello.exe：`cs-agscript-mcp/scripts/ea/hello.exe`（PE x86 / 0x14c），stdout 
 | beacon.dll (x86) | r2_nosm / http | **245768** | **11/11 过**：pwd/ls/shell/getuid、hashdump（`Administrator:500:aad3b435…`）、mimikatz（`Privilege '20' OK`）、非 store EA + cmd117 store EA（两次 `grok-ea-117`） |
 
 驱动脚本判定期望的四个已知坑（非 beacon 缺陷，原始日志均验证）：upload 成功静默（用 download 回环判定）、rev2self 静默、data-store 存/卸确认走 OUTPUT 类型（非 DATA_STORE）；sleep 单位是秒。测试后 TS 已回 `r2_nosm`，进程已清。
+
+## 6. dnsb / pivot / extc2 首轮活测（2026-09-30 深夜，套筒=CI 36700547283 重新编码 overlay）
+
+### 6.1 pivot.x64.dll —— **两种链路全过**
+
+cna 新增 `smb_listener_create`/`tcp_listener_create`/`smb_link`/`unlink`（bind_pipe 监听器的**管道名存 `port` 选项**，payload 类型串=`windows/beacon_bind_pipe`/`bind_tcp`）。
+
+| 链 | 步骤 | 结果 |
+|---|---|---|
+| SMB bind | `spawn smb_li3 x64`（staging **282159**）→ 子自动 bind `\.\pipeegr3pipe` → `established link to parent` → INITIAL | **过**（INITIAL `140939900`） |
+| SMB 转发 | 经链 pwd（ALT `Current directory…`）/ shell `pivot-smb-marker`（OUTPUT）/ getuid（ALT `You are …Administrator (admin)`） | **过** |
+| TCP bind | `spawn tcp_li x64`（端口 4445）→ `established link to parent` → INITIAL `1362593722` | **过** |
+| TCP 转发 | pwd / shell `pivot-tcp-marker` | **过** |
+
+要点：`beacon_link(bid, ".", listener)` 对本地已 bind 的子是**接管**语义；spawn 到 bind 监听器的载荷会自行 bind 并回连父。
+
+### 6.2 dnsb.x64.dll —— 部署/协议正确，**TS 应答器环境阻断**
+
+| 项 | 结果 |
+|---|---|
+| DNS 监听器（`dns_listener_create`，cna 键名 **`dnsresolver`** 无下划线=setting 66） | 建、绑 :53 成功（同名第二监听器会 `Address already in use` 且打残共享应答器——**一个 TS 只建一个**） |
+| 载荷 spawn + 显式 resolver | staging **289288**；tshark 证实 beacon 每 60s 查 `<hexid>.<domain>`，查询名形状与**官方 dnsb EXE 完全一致** |
+| 上线 | **未过——环境阻断**：TS 应答器对任何查询（含官方载荷、含无关域名）恒回 idle（A 0.0.0.0），会话永不建立；重启 TS 无效。sing-box TUN 关闭后 UDP:53 双向可达（本机查询此前被 TUN 吞包） |
+| 结论 | **dnsb DLL 无缺陷嫌疑**；下一步=排查 GraalVM TeamServerImage 的 DNS 应答器会话建立（对照 4.5 jar `BeaconDNS.respond_nosync`/`ConversationManager` 逻辑） |
+
+### 6.3 extc2.x64.dll —— 链路打通至**会话建立**，持续任务化待控制器完善
+
+Python 控制器（`ci-artifacts/extc2_controller.py`）按官方协议打通：选项帧（`arch=x64`、`pipename=…`）→ 字面 **`go`** 帧 → TS 回载荷（295936B PE）→ LoadLibrary + **以 reason 4 手动调 DllMain**（PE32+ 入口在 optional header **+0x10**）→ beacon 自 bind `\.\pipe\<pipename>`（smb_init，setting 15）→ 控制器连管道 → 帧中继（TS:2222 帧=**4 字节小端**长度）。
+
+| 项 | 结果 |
+|---|---|
+| 会话建立 | **过**：TS 登记 `INITIAL new python.exe`，`BEACON alive=true listener=ext_regr`（两次独立复现） |
+| 双向传输 | **过**：beacon 元数据 132B→TS；TS 空转储 1B 帧→控制器 |
+| 持续任务化 | **未完成**：beacon 每连接周期 `收任务→发回包→Flush→Disconnect` 的帧语义（1B 空帧是否转发、EOF 结束周期）需对照官方控制器行为打磨；非 DLL 缺陷——我方 extc2 代码路径= `command_link_wait`（与 pivot SMB bind 同源，§6.1 已过） |
+
+**协议备忘**（逆向自 4.5 jar `ExternalC2Session`/`DNSServer` 字节码）：帧长=4 字节 **小端**；选项合法键 `arch/type(rdll)/pipename/block`；结束选项=字面 `go`；载荷=`ScListener.export(arch)`；TS 会话循环=转储→写 1B 或任务帧→读 1 帧（长度 1=跳过）→100ms。
 
 ## 5. 本机不编、以 CI 为准
 
