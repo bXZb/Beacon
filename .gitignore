@@ -1,0 +1,9 @@
+implant/bin/
+implant/*.o
+tests/*.o
+tests/test_profile_vm
+__pycache__/
+*.pyc
+tools/bridge/out/
+*.class
+tools/fixtures/.cobaltstrike.beacon_keys
