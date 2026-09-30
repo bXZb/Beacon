@@ -419,13 +419,15 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 		unsigned __int64 v5 = *(unsigned __int64 *)(gp->beacon_ptr + 0x62000);
 		unsigned __int64 v6 = *(unsigned __int64 *)(gp->beacon_ptr + 0x63000);
 		unsigned short lfanew;
+		unsigned short optsize;
 		int sec;
 		n += wsprintfA(buf + n, "k62000=%08X%08X k63000=%08X%08X\r\n",
 			(unsigned)(v5 >> 32), (unsigned)v5, (unsigned)(v6 >> 32), (unsigned)v6);
 		memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
-		if (lfanew > 0 && lfanew < 0x400) {
+		memcpy(&optsize, gp->beacon_ptr + lfanew + 20, sizeof(optsize));
+		if (lfanew > 0 && lfanew < 0x400 && optsize >= 0xF0 - 24 && optsize < 0x400) {
 			unsigned short nsec;
-			DWORD sectbl = lfanew + 24 + *(unsigned int *)(gp->beacon_ptr + lfanew + 20);
+			DWORD sectbl = lfanew + 24 + optsize;
 			memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
 			n += wsprintfA(buf + n, "nsec=%u\r\n", nsec);
 			for (sec = 0; sec < nsec && sec < 8; sec++) {
