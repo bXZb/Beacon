@@ -3,6 +3,8 @@
 #define TRACK_MEMORY_MALLOC 1
 #define TRACK_MEMORY_VALLOC 2
 #define TRACK_MEMORY_CLEANUP_FUNC 3
+/* static/.bss memory: masked during sleep, zeroed at cleanup, never freed */
+#define TRACK_MEMORY_STATIC 4
 
 typedef struct {
 	char * ptr;

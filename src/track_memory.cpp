@@ -88,6 +88,11 @@ void track_memory_cleanup() {
 			memset(memoryTracker[i].ptr, 0, memoryTracker[i].size);
 			VirtualFree(memoryTracker[i].ptr, 0, MEM_RELEASE);
 		}
+		else if (memoryTracker[i].type == TRACK_MEMORY_STATIC) {
+			/* static storage: zero at exit but never free() - the pointer
+			 * does not belong to the heap */
+			memset(memoryTracker[i].ptr, 0, memoryTracker[i].size);
+		}
 	}
 
 	/* Cleanup the tracker */

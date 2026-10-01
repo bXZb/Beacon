@@ -159,6 +159,7 @@ void agent_init(char * buffer, DWORD max) {
 	/* format our buffer with our data, suitable for decrypt */
 	build_init(&b, buffer, max);
 	build_add_data(&b, sessionkey, 16);
+	memset(sessionkey, 0, sizeof(sessionkey));  /* raw key never needed again */
 	build_add_data(&b, (char *)&encoding_ansi, 2);
 	build_add_data(&b, (char *)&encoding_oem, 2);
 	build_add_int(&b, agentid);

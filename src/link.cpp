@@ -1,4 +1,5 @@
 #include "beacon.h"
+#include "track_memory.h"
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
@@ -113,8 +114,11 @@ void command_link_route(char * buffer, int length, void (*callback)(char * buffe
 	int x = 0;
 	int status = 0, wrote = 0, read = 0, rlen = 0;
 
-	if (link_read_buffer == NULL)
+	if (link_read_buffer == NULL) {
 		link_read_buffer = (char *)malloc(MAX_GET);
+		if (link_read_buffer != NULL)
+			track_memory_add(link_read_buffer, MAX_GET, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	}
 
 	/* parse out the agent id */
 	memcpy(&agentidN, buffer, sizeof(unsigned int));

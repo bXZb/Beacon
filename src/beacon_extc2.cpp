@@ -2,6 +2,7 @@
 #include "commands.h"
 #include "security.h"
 #include "beacon.h"
+#include "track_memory.h"
 #include "link.h"
 #include "build.h"
 #include "parse.h"
@@ -72,7 +73,10 @@ void beacon(LPVOID lpReserved) {
 	jitter = setting_short(SETTING_JITTER);
 
 	/* allocate our buffers */
-	buffer = (char *)malloc(MAX_GET);  /* TODO don't think it is needed after agent_init call. */
+	buffer = (char *)malloc(MAX_GET);
+	if (buffer == NULL)
+		safe_exit();
+	track_memory_add(buffer, MAX_GET, TRACK_MEMORY_MALLOC, FALSE, NULL);
 
 	/* initialize the agent */
 	agent_init(buffer, MAX_GET);
