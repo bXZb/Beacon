@@ -138,6 +138,42 @@ hello.exe：`cs-agscript-mcp/scripts/ea/hello.exe`（PE x86 / 0x14c），stdout 
 
 驱动脚本判定期望的四个已知坑（非 beacon 缺陷，原始日志均验证）：upload 成功静默（用 download 回环判定）、rev2self 静默、data-store 存/卸确认走 OUTPUT 类型（非 DATA_STORE）；sleep 单位是秒。测试后 TS 已回 `r2_nosm`，进程已清。
 
+## 7. 全量替换 + 六通道全量回归（2026-10-01 晚，HEAD ebf98d3，CI 36833611193）
+
+### 7.1 替换范围（client + teamserver 两条链全部换成当日构建）
+
+编码产物（CrackSleeve，明文 cap 全过）：beacon.dll 245792、beacon.x64.dll 292896、winhttpb.x64.dll 291872、dnsb.x64.dll 289312、extc2.x64.dll 280096、pivot.x64.dll 282144。
+
+**client 链**（spawn 真正走的路，三处哈希一致）：CWD 影子 `4.9.1\out\artifacts\sleeve\`、fat jar `4.9.1.jar` 的 `sleeve/*` 条目（备份 `.pre_36833611193`）、源树备份 `4.9.1\src\sleeve\`。
+
+**TS 链**（六槽一次打齐，sha256 逐一核对 + 尾部清零 + r2_nosm 重启）：
+
+| `--slot` | VA | enc cap | 本轮 enc |
+|---|---|---|---|
+| x86 | `0x054968E0` | 247840 | 245792 |
+| x64 | `0x04B40EE0` | 307232 | 292896 |
+| winhttp | `0x05624CC0` | 309280 | 291872 |
+| extc2 | `0x0553E9A0` | 295968 | 280096 |
+| **dnsb64（新定位）** | `0x055DA860` | 304160 | 289312 |
+| **pivot64（新定位）** | `0x058CD600` | 297504 | 282144 |
+
+dnsb64/pivot64 槽定位方法：官方 client jar 的 sleeve 条目（官方编码字节）做 96B 指纹在镜像内搜索，各**唯一命中**且 slot-4 长度前缀=官方 enc 尺寸。全量备份 `TeamServerImage_patched.pre_full_36833611193`。`patch_ts.py` 已收录两个新槽。
+
+### 7.2 回归结果（父会话本轮新引导：EXE `beacon_r2a.exe` → bid 973130948）
+
+| 通道 | 驱动输出 | 裁定 | 关键证据 |
+|---|---|---|---|
+| x64 WinINet（http） | 16/21 | **21/21 过** | 四静默坑同 §4.2（upload 静默→download 47B 回环、rev2self 静默、ds 存/卸走 OUTPUT）；steal 死 PID 假失败→活 PID 9656 补测 `Impersonated DESKTOP-4CPCB7A\Administrator` + rev2self 清空 |
+| x64 WinHTTP（http_wh2，r2_winhttp） | 8/10 | **10/10 过** | Stored/Removed 各 ~1s 往返、store EA `grok-ea-117` |
+| x64 WinHTTP 真掩码（r2_winhttp_sm） | — | **过** | 5+ 掩码周期存活（lastf 23→38→53→回绕）、pwd 过、0 ERROR（sm_build_own_table 未动，行为与 5c753e1 一致） |
+| x86 WinINet（http） | 10/11 | **11/11 过** | hashdump `Administrator:500:`、mimikatz `Privilege '20' OK`、非 store EA + store EA 双 `grok-ea-117` |
+| pivot SMB bind（smb_r2b/regr2smb） | — | **过** | 双向 `established link`、pwd/shell `regr2-pivot-smb`/getuid |
+| pivot TCP bind（tcp_r2b:4446） | — | **过** | 双向 link、pwd、shell `regr2-pivot-tcp` |
+| extc2（ext_r2b:2222/RegrExtC2） | — | **过** | TS 给载荷 280064B（=TS 槽新构建，经 stage 变换后与 CI 明文同尺寸不同哈希，官方行为）；INITIAL+pwd/shell `regr2-extc2-ok`/getuid 全部秒级、224 帧 0 错 |
+| dnsb（dns_go/go.regr.test） | — | **过** | 空 session 1907877810(=0x71b7e7b2) → task pwd → 39s 后 CHECKIN+ALT+INITIAL（bootstrap 语义复现）；shell `regr2-dnsb-ok` 22s 往返；60s 周期轮询稳定 |
+
+过程要点：残留 8 个 extc2 监听器抢 2222（hd_ext2 先绑成功）→ 全删后 ext_r2b 正常起；`sm_drive.wait` 有 pos 追踪 bug 会报假超时（dnsb INITIAL 实际 20:37:30 已到，看原始 r1.log）；`regr_drive.py` 已修 steal PID（env）与 ds 类型期望。测试后监听器/子会话/Headless 已清，TS 留 r2_nosm。原始日志 `ci-artifacts/regr2_*.log`。
+
 ## 6. dnsb / pivot / extc2 首轮活测（2026-09-30 深夜，套筒=CI 36700547283 重新编码 overlay）
 
 ### 6.1 pivot.x64.dll —— **两种链路全过**

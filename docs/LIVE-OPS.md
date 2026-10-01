@@ -113,6 +113,11 @@ GitHub artifact zip 若 302 到 Azure blob：**重定向请求不要带 Authoriz
 | `x86` | `0x054968E0` | 247840 | `.pre_beacon_x86` | `/tmp/beacon.dll.enc` |
 | `x64` | `0x04B40EE0` | 307232 | `.pre_beacon_x64` | `/tmp/beacon.x64.dll.enc` |
 | `winhttp` | `0x05624CC0` | 309280 | `.pre_winhttpb` | `/tmp/winhttpb.x64.dll.enc` |
+| `extc2` | `0x0553E9A0` | 295968 | `.pre_extc2_x64` | `/tmp/extc2.x64.dll.enc` |
+| `dnsb64` | `0x055DA860` | 304160 | `.pre_dnsb_x64` | `/tmp/dnsb.x64.dll.enc` |
+| `pivot64` | `0x058CD600` | 297504 | `.pre_pivot_x64` | `/tmp/pivot.x64.dll.enc` |
+
+dnsb64/pivot64 于 2026-10-01 定位：官方 jar sleeve 字节指纹在镜像内唯一命中。多槽批量打参见 `ci-artifacts/patch_all_slots.py`（一次读写镜像打全部槽）。**残留监听器会在 TS 重启时抢端口**（extc2 全家用 2222、dns 全家 :53）：启动日志里 `Address already in use` = 有监听器没绑上，先 `listener_delete` 掉历史监听器再建新的。
 
 ```powershell
 # 编码 + 写入 x86 槽 + 用 r2_nosm.profile 重启 TS
