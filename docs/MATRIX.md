@@ -172,9 +172,10 @@ cna 新增 `smb_listener_create`/`tcp_listener_create`/`smb_link`/`unlink`（bin
 
 **关键前提**：TS 交付的 extc2 载荷来自 **TS 镜像槽 0x0553E9A0**（cap 295968），不是 client jar sleeve——必须 `patch_ts.py --slot extc2` 打槽（已打，`TeamServerImage_patched.pre_extc2_x64` 备份）。
 
-**beacon 侧两个真修复**（含在槽内当前构建 `39799bd`）：
-- `926be56`：SMB/extc2 通道读循环丢弃 **<4 字节的保活帧**（TS 空转储 1B 帧直接转发会把 beacon 线程杀死）
-- `39799bd`：`client_process` 每轮发射**零长度帧**（extc2 通道变体写作单字节 0x00 心跳）——空闲 beacon 也持续驱动 TS 读步骤
+**beacon 侧真修复与一次回滚**（槽内当前构建 `8195ac9`）：
+- `926be56`/`e83a243`：SMB/extc2 通道读循环丢弃 **<4 字节的保活帧**（TS 空转储 1B 帧直接转发会把 beacon 线程杀死），且检查在解密**之前**
+- ~~`39799bd` 零长度心跳帧~~ → **`8195ac9` 已回滚**：心跳发射基于对规范的误读——`block` 选项是 **TS 侧读超时**，会话循环自己推进，空闲 beacon 无需发任何帧；实测带心跳的构建输出时延 43-313s（输出帧被排在心跳后滞留），无心跳构建亚秒往返
+- `patch_ts.py` 曾有 **ETXTBSY 静默失败**：对运行中镜像 `open('wb')` 写入被 Linux 拒绝，报错被输出过滤吞掉——已改为写临时文件 + `os.replace`（rename 对运行中二进制合法）
 
 **控制器契约**（`ci-artifacts/extc2_controller.py`，全部实测钉死）：
 
@@ -186,7 +187,7 @@ cna 新增 `smb_listener_create`/`tcp_listener_create`/`smb_link`/`unlink`（bin
 | 读侧 | 客户端切 PIPE_READMODE_MESSAGE：每次 ReadFile=一条消息（心跳=1B 0x00；帧=4B 头+载荷消息，8KB 拆分） |
 | 线程模型 | **单线程严格交替**（同句柄另一线程阻塞 ReadFile 会把同步 WriteFile 卡死） |
 | 排水 | 转发输出后 PeekNamedPipe 短窗探测，静默即回主循环取 TS dump（否则 me-beacon-TS 三边环形死锁） |
-| 心跳 | beacon 心跳转发为 1B 帧=TS 文档化良性跳过；TS 空转储 1B 帧=beacon 护栏丢弃 |
+| 心跳 | **无**——空闲 beacon 不发帧（TS `block` 超时自推进）；TS 空转储 1B 帧=beacon 护栏丢弃 |
 
 **过线证据**（子 `679261210`，listener=ext_regr，python.exe 载体）：
 
