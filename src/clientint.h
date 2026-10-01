@@ -1,4 +1,8 @@
-#define MAX_GET 1024 * 1024
+/* SMB/extc2 channel buffer ceiling. Parenthesized - the unparenthesized
+ * form silently misparses in any MAX_GET - x / foo(MAX_GET, y) expression.
+ * (The HTTP entry files define their own runtime MAX_GET from
+ * SETTING_MAXGET - a different, profile-driven value.) */
+#define MAX_GET (1024 * 1024)
 
 /* initialize our client sub-system */
 void client_init(LCHANNEL channel);

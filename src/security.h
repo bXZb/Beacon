@@ -12,5 +12,3 @@ int security_encrypt(char * buffer, int length);
 void security_init(char * k);
 int rsa_encrypt_once(char * kbuffer, char * indata, int inlen, char * outdata, int * outlen);
 
-int createWMKey(unsigned int watermark);
-int decodeWatermark(unsigned char * encodedText, unsigned long encodedLen, int watermarkKey, unsigned int watermark);

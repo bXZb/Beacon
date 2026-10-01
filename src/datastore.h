@@ -58,7 +58,6 @@ char * BeaconGetCustomUserData(void);
 /* test-visible store core */
 int datastore_add(int type, unsigned long long hash, char * data, int length);
 int datastore_remove_at(int index);
-int datastore_slot_count(void);
 unsigned long long datastore_hash_at(int index);
 int datastore_type_at(int index);
 void datastore_reset_for_test(int slots);

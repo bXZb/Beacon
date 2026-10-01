@@ -178,10 +178,6 @@ int datastore_remove_at(int index) {
 	return index;
 }
 
-int datastore_slot_count(void) {
-	return ds_cap;
-}
-
 unsigned long long datastore_hash_at(int index) {
 	if (ds_slots == NULL || index < 0 || index >= ds_cap || !ds_slots[index].occupied)
 		return 0;
