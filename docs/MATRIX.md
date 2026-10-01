@@ -15,7 +15,7 @@
 | HTTP WinINet x64 | **过** | **过** | **过** `grok-ea-117` | 父会话曾用 `988387210` / `1403836542` |
 | HTTP WinHTTP x64（我方 `winhttpb.x64.dll`） | **过** | **过**（B1 子集） | **过** `grok-ea-117` | 子 `1204167688` CHECKIN **290312**；旧 `1117505292` lastf 31h 已不用 |
 | HTTP WinINet x86（我方 `beacon.dll`） | **过** | **核心过** | **过** `grok-ea-117` | GargleSleep 堆分配；store EA 同架构；见 §4.1 |
-| dnsb / SMB·TCP pivot / ExtC2 | **过** | **过**（§6.2 bootstrap 语义） | — | 见 §6 |
+| dnsb / SMB·TCP pivot / ExtC2 | **过** | **过** | **过**（§6.3） | 见 §6 |
 | SMB·TCP pivot | **过** | **过** | — | 见 §6.1 |
 | UDRL / rl0k | — | — | — | **范围外** |
 | Post-Ex prepend | — | — | — | **范围外** |
@@ -168,17 +168,37 @@ cna 新增 `smb_listener_create`/`tcp_listener_create`/`smb_link`/`unlink`（bin
 
 遗留：上一轮子会话在收到 243 后曾无声消失一次（WER 未捕获，本轮未复现）；后续回归若再现在意。**sing-box TUN 开启时本机 UDP:53 出站会被吞——测 DNS 须关 TUN 或加 LAN 直连。**
 
-### 6.3 extc2.x64.dll —— 链路打通至**会话建立**，持续任务化待控制器完善
+### 6.3 extc2.x64.dll —— **过线（2026-10-01 晨，全矩阵秒级往返）**
 
-Python 控制器（`ci-artifacts/extc2_controller.py`）按官方协议打通：选项帧（`arch=x64`、`pipename=…`）→ 字面 **`go`** 帧 → TS 回载荷（295936B PE）→ LoadLibrary + **以 reason 4 手动调 DllMain**（PE32+ 入口在 optional header **+0x10**）→ beacon 自 bind `\.\pipe\<pipename>`（smb_init，setting 15）→ 控制器连管道 → 帧中继（TS:2222 帧=**4 字节小端**长度）。
+**关键前提**：TS 交付的 extc2 载荷来自 **TS 镜像槽 0x0553E9A0**（cap 295968），不是 client jar sleeve——必须 `patch_ts.py --slot extc2` 打槽（已打，`TeamServerImage_patched.pre_extc2_x64` 备份）。
+
+**beacon 侧两个真修复**（含在槽内当前构建 `39799bd`）：
+- `926be56`：SMB/extc2 通道读循环丢弃 **<4 字节的保活帧**（TS 空转储 1B 帧直接转发会把 beacon 线程杀死）
+- `39799bd`：`client_process` 每轮发射**零长度帧**（extc2 通道变体写作单字节 0x00 心跳）——空闲 beacon 也持续驱动 TS 读步骤
+
+**控制器契约**（`ci-artifacts/extc2_controller.py`，全部实测钉死）：
+
+| 规则 | 内容 |
+|---|---|
+| 帧格式 | 两侧 [4B 小端长][载荷]；选项帧 arch/pipename + 字面 go；载荷=PE |
+| 载荷启动 | LoadLibrary 后手动调 DllMain(reason=4)（PE32+ 入口在 opt+0x10）；beacon 自 bind 管道（setting 15） |
+| 写侧 | **4B 头与载荷分两条消息写**（对齐 beacon read_all 粒度；合并写→ERROR_MORE_DATA→周期结束断连） |
+| 读侧 | 客户端切 PIPE_READMODE_MESSAGE：每次 ReadFile=一条消息（心跳=1B 0x00；帧=4B 头+载荷消息，8KB 拆分） |
+| 线程模型 | **单线程严格交替**（同句柄另一线程阻塞 ReadFile 会把同步 WriteFile 卡死） |
+| 排水 | 转发输出后 PeekNamedPipe 短窗探测，静默即回主循环取 TS dump（否则 me-beacon-TS 三边环形死锁） |
+| 心跳 | beacon 心跳转发为 1B 帧=TS 文档化良性跳过；TS 空转储 1B 帧=beacon 护栏丢弃 |
+
+**过线证据**（子 `679261210`，listener=ext_regr，python.exe 载体）：
 
 | 项 | 结果 |
 |---|---|
-| 会话建立 | **过**：TS 登记 `INITIAL new python.exe`，`BEACON alive=true listener=ext_regr`（两次独立复现） |
-| 双向传输 | **过**：beacon 元数据 132B→TS；TS 空转储 1B 帧→控制器 |
-| 持续任务化 | **未完成**：beacon 每连接周期 `收任务→发回包→Flush→Disconnect` 的帧语义（1B 空帧是否转发、EOF 结束周期）需对照官方控制器行为打磨；非 DLL 缺陷——我方 extc2 代码路径= `command_link_wait`（与 pivot SMB bind 同源，§6.1 已过） |
+| 会话 | **过**：INITIAL + alive lastf=209ms（长连接心跳 ~10Hz 持续） |
+| pwd | **过**：ALT `Current directory is C:/Users/Administrator/Desktop/cobaltstrike/ci-artifacts`（1s 往返） |
+| shell | **过**：OUTPUT `extc2-matrix-ok`（1s 往返） |
+| getuid | **过**：ALT `You are DESKTOP-4CPCB7A/Administrator (admin)`（1s 往返） |
+| 错误 | 0 ERROR 行 |
 
-**协议备忘**（逆向自 4.5 jar `ExternalC2Session`/`DNSServer` 字节码）：帧长=4 字节 **小端**；选项合法键 `arch/type(rdll)/pipename/block`；结束选项=字面 `go`；载荷=`ScListener.export(arch)`；TS 会话循环=转储→写 1B 或任务帧→读 1 帧（长度 1=跳过）→100ms。
+cna：`extc2_listener_create <名> <端口> <管道名>`（pipename 选项；默认 externalc2）。官方规范 `externalc2spec.pdf` 存 ci-artifacts/（含 block 选项语义=TS 空转储超时）。
 
 ## 5. 本机不编、以 CI 为准
 
