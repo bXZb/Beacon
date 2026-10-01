@@ -19,7 +19,7 @@ GARGLEP * gparms = NULL;
  * .pdata/.fptable/.reloc. [xbegin,xend) is an optional absolute-address
  * exclusion for the mask function itself (the trampoline path executes
  * from our own .text and must never mask the code it is running). */
-static DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
+DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
 	static DWORD own[70]; /* header pair + 16 sections, each split at most once */
 	unsigned short lfanew, optsize, nsec;
 	unsigned int i, imgsz;

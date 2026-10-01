@@ -121,3 +121,7 @@ void gargle_trampoline(void * end, void * begin);
 	__debugbreak(); __nop(); __nop(); __nop(); __nop(); __nop(); __nop(); __nop(); \
 	__debugbreak(); __nop(); __nop(); __nop(); __nop(); __nop(); __nop(); __nop(); \
 	__debugbreak(); __nop(); __nop(); __nop(); __nop(); __nop(); __nop(); __nop(); \
+
+/* rebuild gparms->sections from our own in-memory PE layout; returns the
+ * highest masked VA (0 = parse failed, caller keeps the existing table) */
+DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend);
