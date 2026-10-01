@@ -70,8 +70,8 @@ BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength) {
 	foo.args             = arg;
 	foo.alen             = alength;
 
-	/* init and copy over to it */
-	execpatch = (char *)VirtualAlloc(NULL, plength, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	/* init and copy over to it (RW -> copy -> RX: never RWX) */
+	execpatch = (char *)VirtualAlloc(NULL, plength, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (execpatch == NULL)
 		return FALSE;
 
@@ -80,6 +80,16 @@ BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength) {
 
 	/* cast our inline func, please */
 	inlinefunc = (void(__stdcall*)(BEACON_FUNCS*))execpatch;
+
+	/* code is complete: drop to RX before we execute it */
+	{
+		DWORD old = 0;
+		if (!VirtualProtect(execpatch, plength, PAGE_EXECUTE_READ, &old)) {
+			VirtualFree(execpatch, plength, MEM_RELEASE);
+			return FALSE;
+		}
+		FlushInstructionCache(GetCurrentProcess(), execpatch, plength);
+	}
 
 	/* call it */
 	inlinefunc(&foo);

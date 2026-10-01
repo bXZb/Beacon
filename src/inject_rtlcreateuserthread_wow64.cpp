@@ -65,6 +65,7 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	X64FUNCTION pX64function = NULL;
 	WOW64CONTEXT * ctx = NULL;
 	OSVERSIONINFO  os = { 0 };
+	DWORD old = 0;
 
 	os.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
 
@@ -77,15 +78,31 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 		return FALSE;
 	}
 
-	// alloc a RWX buffer in this process for the EXECUTEX64 function
-	pExecuteX64 = (EXECUTEX64)VirtualAlloc(NULL, sizeof(migrate_executex64), MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	/* Both stubs are write-then-execute: allocate RW, copy, flip RX. The
+	 * context lives in its own RW block - the x64 stub writes the created
+	 * thread handle back into it, which is exactly why it must NOT share a
+	 * page with the code (the old combined RWX block kept code writable
+	 * for its whole lifetime). */
+
+	// alloc a buffer in this process for the EXECUTEX64 function
+	pExecuteX64 = (EXECUTEX64)VirtualAlloc(NULL, sizeof(migrate_executex64), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!pExecuteX64)
 		return FALSE;
 
-	// alloc a RWX buffer in this process for the X64FUNCTION function (and its context)
-	pX64function = (X64FUNCTION)VirtualAlloc(NULL, sizeof(migrate_wownativex) + sizeof(WOW64CONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-	if (!pX64function)
-		return FALSE;   /* TODO: pExecuteX64 not released. */
+	// alloc a buffer in this process for the X64FUNCTION code
+	pX64function = (X64FUNCTION)VirtualAlloc(NULL, sizeof(migrate_wownativex), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (!pX64function) {
+		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		return FALSE;
+	}
+
+	// alloc the context (stays RW: handle write-back from x64 mode)
+	ctx = (WOW64CONTEXT *)VirtualAlloc(NULL, sizeof(WOW64CONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (!ctx) {
+		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		VirtualFree(pX64function, 0, MEM_RELEASE);
+		return FALSE;
+	}
 
 	// copy over the wow64->x64 stub
 	memcpy(pExecuteX64, &migrate_executex64, sizeof(migrate_executex64));
@@ -93,9 +110,11 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	// copy over the native x64 function
 	memcpy(pX64function, &migrate_wownativex, sizeof(migrate_wownativex));
 
-	// set the context
-	ctx = (WOW64CONTEXT *)((BYTE *)pX64function + sizeof(migrate_wownativex));
+	// both code blocks become RX before anything executes
+	VirtualProtect(pExecuteX64, sizeof(migrate_executex64), PAGE_EXECUTE_READ, &old);
+	VirtualProtect(pX64function, sizeof(migrate_wownativex), PAGE_EXECUTE_READ, &old);
 
+	// set the context
 	ctx->h.hProcess = hProcess;
 	ctx->s.lpStartAddress = lpStartAddress;
 	ctx->p.lpParameter = lpParameter;
@@ -105,12 +124,18 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	// The native function will use the native Win64 API's to create a remote thread in the target process.
 	if (!pExecuteX64(pX64function, (DWORD)ctx)) {
 		SetLastError(ERROR_ACCESS_DENIED);
-		return FALSE;  /* TODO: pExecuteX64 and pX64function not released. */
+		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		VirtualFree(pX64function, 0, MEM_RELEASE);
+		VirtualFree(ctx, 0, MEM_RELEASE);
+		return FALSE;
 	}
 
 	if (!ctx->t.hThread) {
 		SetLastError(ERROR_INVALID_HANDLE);
-		return FALSE; /* TODO: pExecuteX64 and pX64function not released. */
+		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		VirtualFree(pX64function, 0, MEM_RELEASE);
+		VirtualFree(ctx, 0, MEM_RELEASE);
+		return FALSE;
 	}
 
 	// Success! grab the new thread handle from of the context
@@ -121,11 +146,9 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	*/
 	ResumeThread(ctx->t.hThread);
 
-	if (pExecuteX64)
-		VirtualFree(pExecuteX64, 0, MEM_DECOMMIT);  /* TODO: why MEM_DECOMMIT */
-
-	if (pX64function)
-		VirtualFree(pX64function, 0, MEM_DECOMMIT);
+	VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+	VirtualFree(pX64function, 0, MEM_RELEASE);
+	VirtualFree(ctx, 0, MEM_RELEASE);
 
 	return TRUE;
 }

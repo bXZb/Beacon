@@ -19,7 +19,7 @@ typedef NTSTATUS (NTAPI * fn_NtDuplicateObject)(HANDLE, HANDLE, HANDLE, PHANDLE,
 typedef struct {
 	DWORD ssn;
 	BYTE * gadget; /* ntdll syscall;ret */
-	BYTE stub[32];
+	BYTE * stub;   /* VirtualAlloc'd 32B page; RX except while rewritten */
 } sc_entry;
 
 static sc_entry sc_write;
@@ -71,31 +71,49 @@ static BOOL parse_nt_stub(BYTE * fn, sc_entry * out) {
 	return FALSE;
 }
 
-static void build_direct_stub(sc_entry * e) {
+static void build_direct_stub(BYTE * dst, DWORD ssn) {
 	/* mov r10, rcx; mov eax, SSN; syscall; ret */
-	e->stub[0] = 0x4C; e->stub[1] = 0x8B; e->stub[2] = 0xD1;
-	e->stub[3] = 0xB8;
-	memcpy(e->stub + 4, &e->ssn, 4);
-	e->stub[8] = 0x0F; e->stub[9] = 0x05;
-	e->stub[10] = 0xC3;
+	dst[0] = 0x4C; dst[1] = 0x8B; dst[2] = 0xD1;
+	dst[3] = 0xB8;
+	memcpy(dst + 4, &ssn, 4);
+	dst[8] = 0x0F; dst[9] = 0x05;
+	dst[10] = 0xC3;
 }
 
 static void * make_exec(sc_entry * e, int indirect) {
 	DWORD old = 0;
-	BYTE * p = e->stub;
+	BYTE built[32];
+	BYTE * p;
+
+	/* The stub used to live in static .data flipped to RWX for the process
+	 * lifetime. VirtualProtect is page-granular, so making the .data page
+	 * non-writable would break neighbouring statics - instead give each
+	 * stub its own page, build it locally, and only ever expose RW->RX
+	 * (never RWX). */
+	if (e->stub == NULL) {
+		e->stub = (BYTE *)VirtualAlloc(NULL, 32, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (e->stub == NULL)
+			return NULL;
+	}
+	p = e->stub;
+
+	memset(built, 0, sizeof(built));
 	if (indirect && e->gadget) {
 		/* mov r10, rcx; mov eax, SSN; jmp [rip+0]; gadget */
-		e->stub[0] = 0x4C; e->stub[1] = 0x8B; e->stub[2] = 0xD1;
-		e->stub[3] = 0xB8;
-		memcpy(e->stub + 4, &e->ssn, 4);
-		e->stub[8] = 0xFF; e->stub[9] = 0x25; /* jmp qword ptr [rip+0] */
-		e->stub[10] = 0x00; e->stub[11] = 0x00; e->stub[12] = 0x00; e->stub[13] = 0x00;
-		memcpy(e->stub + 14, &e->gadget, 8);
+		built[0] = 0x4C; built[1] = 0x8B; built[2] = 0xD1;
+		built[3] = 0xB8;
+		memcpy(built + 4, &e->ssn, 4);
+		built[8] = 0xFF; built[9] = 0x25; /* jmp qword ptr [rip+0] */
+		memcpy(built + 14, &e->gadget, 8);
 	}
 	else {
-		build_direct_stub(e);
+		build_direct_stub(built, e->ssn);
 	}
-	if (!VirtualProtect(p, 32, PAGE_EXECUTE_READWRITE, &old))
+
+	if (!VirtualProtect(p, 32, PAGE_READWRITE, &old))
+		return NULL;
+	memcpy(p, built, 32);
+	if (!VirtualProtect(p, 32, PAGE_EXECUTE_READ, &old))
 		return NULL;
 	FlushInstructionCache(GetCurrentProcess(), p, 32);
 	return p;
