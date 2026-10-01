@@ -101,19 +101,14 @@ int read_all(HANDLE pipe, char * buffer, int get) {
 		/* do our read */
 		status = ReadFile(pipe, buffer + total, get - total, (LPDWORD)&read, NULL);
 
-		/* check it */
-		if (!status || read == 0)
+		/* FALSE + GetLastError() == ERROR_MORE_DATA is normal in message read
+		 * mode when the buffer is smaller than the pending message: the bytes
+		 * ARE transferred and the remainder stays queued for the next ReadFile
+		 * (https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile).
+		 * Treat anything but that documented partial-progress case as fatal so
+		 * a peer that coalesces its writes cannot end our cycle. */
+		if ((!status && GetLastError() != ERROR_MORE_DATA) || read == 0)
 			return -1;
-
-		/* NOTE: 
-		 * ReadFile can return FALSE and GetLastError() == ERROR_MORE_DATA when nNumberOfBytesToRead is < the overall message size.
-		 * This is a characteristic of named pipes in read message mode.
-		 * https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
-		 *
-		 * I'm not checking for the error as we always know the size of our frames and are reading a value that is greater than or
-		 * equal to the size of an individual write message. It's up for debate whether or not message mode is needed for our named
-		 * pipe C2. The choice to use message mode has survived since 2013 and I would not deviate without a lot of testing.
-		 */
 
 		/* increment our total */
 		total += read;

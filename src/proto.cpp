@@ -460,14 +460,20 @@ void process_payload(char * buffer, unsigned int length) {
 	unsigned int pos = 0;
 
 	while (pos < length) {
+		/* a trailing fragment smaller than a header is corruption (or a
+		 * truncated dump) - never read past the payload */
+		if ((length - pos) < sizeof(header))
+			return;
+
 		memcpy((void *)&h, buffer + pos, sizeof(header));
 
 		/* fix the endian values */
 		h.type = ntohl(h.type);
 		h.size = ntohl(h.size);
 
-		/* sanity check our data */
-		if ((pos + h.size + sizeof(header)) > length) {
+		/* sanity check our data (64-bit compare: pos + h.size + header can
+		 * wrap 32 bits on a corrupt h.size and would pass a 32-bit test) */
+		if (((unsigned long long)pos + h.size + sizeof(header)) > (unsigned long long)length) {
 			//dlog("Corrupt size: pos:%d size:%d len:%d\n", pos, h.size, length);
 			return;
 		}
