@@ -442,6 +442,20 @@ static char * bof_section_base(int id, char * text, char * rdata, char * data, c
 	}
 }
 
+/* length of the section a relocation claims to live in - used to keep the
+ * wire-supplied reloc->offset inside the actual section buffer */
+static int bof_section_length(int id, int code_len, int rdata_len, int data_len, int xdata_len, int pdata_len, int bss_len) {
+	switch (id) {
+	case SYMBOL_RDATA: return rdata_len;
+	case SYMBOL_DATA:  return data_len;
+	case SYMBOL_TEXT:  return code_len;
+	case SYMBOL_XDATA: return xdata_len;
+	case SYMBOL_PDATA: return pdata_len;
+	case SYMBOL_BSS:   return bss_len;
+	default:           return code_len;
+	}
+}
+
 static char * bof_alloc(SIZE_T total, int * how) {
 	DWORD perms = setting_short(SETTING_PROCINJ_PERMS_I);
 	int allocator = setting_short(SETTING_BOF_ALLOCATOR);
@@ -521,6 +535,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		return FALSE;
 	}
 
+	/* the entry offset is wire-supplied and is executed as code_dst + entry -
+	 * it must land inside the code section we actually extracted */
+	if (entry >= (DWORD)code.length) {
+		post_error_d(0x4d, (int)entry);
+		free(ftable);
+		return FALSE;
+	}
+
 	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
 		base = bof_cached;
 		how = bof_cached_how;
@@ -560,11 +582,25 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		char * src;
 		char * dst;
 		char * sym;
+		int width;
+		int seclen;
 		reloc = (OBJ_RELOC *)data_ptr(&relocsparser, sizeof(OBJ_RELOC));
 		if (reloc == NULL)
 			break;
 		if (reloc->symbol == SYMBOL_END) {
 			success = TRUE;
+			break;
+		}
+		/* bounds: the patch site must sit wholly inside its own section.
+		 * reloc->offset and the section sizes all come off the wire. */
+		width = 4;
+#if defined _M_X64
+		if (reloc->type == RELOC_ADDR64)
+			width = 8;
+#endif
+		seclen = bof_section_length(reloc->section, code.length, rdata.length, data.length, xdata.length, pdata.length, (int)bssSize);
+		if (reloc->offset < 0 || reloc->offset + width > seclen) {
+			post_error_d(0x4d, reloc->offset);
 			break;
 		}
 		src = bof_section_base(reloc->section, code.buffer, rdata.buffer, data.buffer, xdata.buffer, pdata.buffer, bss_dst);

@@ -471,14 +471,13 @@ void command_loginuser(char * buffer, int length, void(*callback)(char * buffer,
 	data_init(&parser, buffer, length);
 
 	/* extract our parameters */
-	if (!data_string(&parser, domain, 1024))
+	if (!data_string(&parser, domain, 1024) ||
+	    !data_string(&parser, user, 1024) ||
+	    !data_string(&parser, pass, 1024)) {
+		/* malformed task - do not leak the 3KB blob on the early exit */
+		data_free(blob);
 		return;
-
-	if (!data_string(&parser, user, 1024))
-		return;
-
-	if (!data_string(&parser, pass, 1024))
-		return;
+	}
 
 	/* do some login user magic? */
 		/* NOTE: I re-use the user buffer and assume it's 1024 bytes */

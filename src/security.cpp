@@ -120,15 +120,19 @@ int security_decrypt(char * ciphertext, int length) {
 
 	/* extract and use our length */
 	len = data_int(&data);
-	if (len <= 0 || len > length) {
-		exit(0);
+	if (len == 0 || len > (unsigned int)length) {
+		/* corrupt-but-authenticated frame (only reachable on a bug or a
+		 * desync). Drop the frame instead of exit(0) - a hard exit here
+		 * skips safe_exit/track_memory cleanup and silently kills the
+		 * session over a recoverable protocol error. */
+		free(plaintext);
 		return 0;
 	}
 
 	/* pull our data, we're going to use it in a moment */
 	dptr = data_ptr(&data, len);
 	if (dptr == NULL) {
-		exit(0);
+		free(plaintext);
 		return 0;
 	}
 

@@ -299,7 +299,9 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	}
 
 	while (read < (unsigned int)max) {
-		if (!WinHttpReadData(request, buffer + read, 4096, &downloaded))
+		/* same tail guard as the WinINet side: clamp the request to the
+		 * space left so a chatty server cannot push us past 'max' */
+		if (!WinHttpReadData(request, buffer + read, (unsigned int)max - read, &downloaded))
 			break;
 		if (downloaded == 0)
 			break;

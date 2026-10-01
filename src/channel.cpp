@@ -336,7 +336,10 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 
 	/* 现在...下载内容 */
 	while (read < max) {
-		if (!InternetReadFile(request, buffer + read, 4096, &downloaded))
+		/* never ask for more than the buffer has left - a fixed 4096 request
+		 * on the final iteration can write up to 4095 bytes past 'max' when
+		 * the server keeps sending. */
+		if (!InternetReadFile(request, buffer + read, max - read, &downloaded))
 			break;
 
 		if (downloaded == 0)

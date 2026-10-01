@@ -81,7 +81,11 @@ void hostprof_reload(void) {
 	if (blob == NULL) {
 		return;
 	}
-	blen = 1024;
+	/* walk the blob with its real allocation size - the old fixed 1024
+	 * over-read the heap whenever the setting carried less than that */
+	blen = setting_length(SETTING_HOST_PROFILES);
+	if (blen == 0)
+		return;
 	data_init(&parser, blob, (int)blen);
 	while (parser.length >= 4) {
 		unsigned short type = data_short(&parser);

