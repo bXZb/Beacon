@@ -15,6 +15,10 @@ extern unsigned int sleep_time;
 
 static HANDLE pipe;
 
+/* defined per-variant in the including .cpp (they differ per binary) */
+LCHANNEL lchannel_smb_gargle(HANDLE pipe);
+BOOL smb_init();
+
 BOOL GarglePipeWait(HANDLE pipe);
 void GargleBlockPipe(HANDLE pipe);
 
