@@ -246,3 +246,30 @@ cna：`extc2_listener_create <名> <端口> <管道名>`（pipename 选项；默
 - `tests`：宿主机单测（`BEACON_TEST_ENABLE_KEYGEN`）
 
 推送与套筒步骤见 `docs/LIVE-OPS.md`。C1 已结案后的下一会话：`docs/NEXT-HANDOFF.md`（mimikatz、WinHTTP 未重复项、dnsb）。
+
+## 8. 加固批次 1–21 + own-table 回归缺陷（2026-10-02 晨，HEAD 2050a30，CI 36897836605）
+
+### 8.1 代码批次（全部 CI 绿）
+
+| 批次 | 内容 | commit |
+|---|---|---|
+| A | 线缆/解析缺陷 ×10：pivot listen 未初始化 parser、DNS UAF、GET 末块越界、loginuser/hotbeef 泄漏、BOF entry/reloc 边界、dns 尾写、hostprof 越读（新 `setting_length`）、recv_all 前进序、security 丢帧代替 exit | 95fb5c3 |
+| B | 掩码覆盖：`TRACK_MEMORY_STATIC` 类型；security 密钥/IV/密钥表入掩码；strategy/client/pivot/link/gargle/extc2/pivot-beacon 缓冲注册；metadata 栈密钥即用即清 | f69a96f |
+| C | RWX 收敛：syscall 桩移出 .data（独立页 RW→RX，永不 RWX）；BOF 映射 RW + 缓存页闲置 RW；apcthread/wow64/inlineexec RW→RX 拆分 + 错误路径释放 | c1afdf6 |
+| D | 收敛：`client_smb_common.h`（SMB/extc2 共体）、`channel_http_common.h`（malleable 组装公共化）、own-table 下沉 gargleint、`GARGLE_TRAMPOLINE_STUB` 宏、use_tokenzz 委托、MAX_GET 括号、死代码（tcp.c/interfaces.c/kerberos.c/registry.c/水印族 ~580 行） | 1d87bb1 |
+| 修复 | **own-table 回归缺陷**：conv==1 把 info.sections（官方表）赋回 gparms 后没有重推 own 表 → 掩码窗口 fail-fast（beacon_b2.exe 实测死亡）。`gargle_own_sections` 改公开并在赋值后重跑 | 2050a30 |
+
+教训：beacon.h 曾无 include guard（公共头引入后 sessdata 重定义）；track_memory.h 曾不自含 Windows.h。
+
+### 8.2 回归（套筒=36897836605，client 三处 + TS 六槽全 MATCH）
+
+**r2_nosm（掩码关）六通道全绿**：x64 WI 裁定 21/21（针=明文+8，脚本 needle 已按新尺寸修正）、x86 11/11、pivot SMB/TCP（b1pipe/4451）、extc2（B1ExtC2，秒级 3 任务）、dnsb（bootstrap 39s + shell 60s）。WinHTTP phase2 矩阵 9/9 任务全过（needle 旧值 FAIL 不计）。
+
+**掩码开（sm true）——关键实验记录**：
+
+- **B3 轮（01:23–01:36，r2_hostprof）**：修复后构建 3 实例全健康——wininet 父 5+ 掩码周期（pwd 过）、**x86 子 6+ 周期（x86 own-table 首测过线）**、**SMB pivot 子掩码首测过线**（GarglePipeWait 路径，历史从未测过）。
+- **01:42 后（r2_winhttp_sm / 复位回 r2_hostprof / 干净重试）**：所有**新启动**实例在第一次掩码睡眠窗口消失或卡死（INITIAL 后无联系；b5 系进程消失、b3 系进程存活但零通信；无 WER dump = fail-fast 形态）。同文件 beacon_b3.exe：B3 轮实例（3016）跨多次 TS 重启持续健康、新实例必死。
+- **未解**：同代码同 stage，健康（01:23–01:36）与必死（01:42+）之间无已知变量。静态推理已穷尽（own 表在 .bss 被自掩、mask 随机数、heap_records 扩张、ASLR 均无法同时解释两轮结果）。**下一步**：x64dbg GUI 附加新实例，断 gargle BOF 恢复路径（`beacon_sleep_mask_set_exec` 区间 + info.mask 联动），或对 #11/#13/#19 三改动做 bisect 构建。
+- 期间发现：老 pivot 链（601008948+1310891412）在多次 TS 重启后重连并继续工作，pivot 链路本身健壮。
+
+测试后全部进程/监听器清理，TS 复位 r2_nosm，WER LocalDumps 临时键已删。原始日志 `ci-artifacts/regr3_*.log`。
