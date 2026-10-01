@@ -182,12 +182,6 @@ void client_process() {
 
 		client_flush();
 
-		/* emit a zero-length frame AFTER the output frames so the reply
-		 * order is deterministic: [outputs...][heartbeat]. A controller
-		 * drains outputs until the heartbeat; putting the heartbeat first
-		 * wedges queued outputs behind it. */
-		LCHANNEL_WRITE_FRAME(server, (char *)"", 0);
-
 		if (sleep_time == 0)
 			return;
 	}
