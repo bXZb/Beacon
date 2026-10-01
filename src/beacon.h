@@ -1,3 +1,4 @@
+#pragma once
 void beacon(void * lpReserved);
 void process_payload(char * buffer, unsigned int length);
 void command_shell_callback(char * buffer, int length, int type);
