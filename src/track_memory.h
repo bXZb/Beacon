@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Windows.h>
+
 #define TRACK_MEMORY_MALLOC 1
 #define TRACK_MEMORY_VALLOC 2
 #define TRACK_MEMORY_CLEANUP_FUNC 3
