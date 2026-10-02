@@ -37,6 +37,9 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 void post_error_na(int error) { (void)error; }
 void post_error_d(int error, int arg) { (void)error; (void)arg; }
 void post_error(int error, char * fmt, ...) { (void)error; (void)fmt; }
+/* security.cpp 的 sanity 宏现在走 safe_exit（真身在 thread.cpp，不进测试
+ * 构建）；宿主测试里加密失败应当显式失败而不是静默退出。 */
+void safe_exit() { throw TestFailure("safe_exit reached in host tests"); }
 
 static void put_u16(unsigned char * p, unsigned int v) {
 	p[0] = (unsigned char)(v >> 8);
