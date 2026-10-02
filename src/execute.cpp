@@ -3,6 +3,7 @@
 #include <windows.h>
 #include "beacon.h"
 #include "commands.h"
+#include "functions.h"
 #include "parse.h"
 #include "argue.h"
 #include "process.h"
