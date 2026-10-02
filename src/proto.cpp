@@ -15,7 +15,11 @@
 #define COMMAND_CD             0x05
 #define COMMAND_KEYLOG_START   0x06
 #define COMMAND_KEYLOG_STOP    0x07
-#define COMMAND_KEYLOG_DUMP    0x08
+/* 0x08 is CHECKIN on the wire (TaskBeacon.Checkin); keylog moved to TS-side jobs ago.
+ * Official semantics: "basically a no-op" for HTTP beacons; for DNS beacons the TS
+ * flips the session to check-in-required itself and we answer via the idlemask signal,
+ * so accepting and dropping the task matches official behavior. */
+#define COMMAND_CHECKIN        0x08
 #define COMMAND_INJECT_PID     0x09
 #define COMMAND_UPLOAD         0x0A
 #define COMMAND_DOWNLOAD       0x0B
@@ -143,6 +147,9 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_CD:
 		command_cd(buffer, length);
+		break;
+	case COMMAND_CHECKIN:
+		/* no-op by design (see the define above) */
 		break;
 	case COMMAND_KEYLOG_START:
 		/* deprecated */
