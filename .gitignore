@@ -33,3 +33,8 @@ tests/_build/
 thirdparty/_src/
 thirdparty/out/
 ci-artifacts/
+
+# evasion-lab: scanner binaries and scan dumps stay local
+evasion-lab/tools/*.exe
+evasion-lab/results/pe-sieve-*/
+

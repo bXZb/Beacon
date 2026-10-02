@@ -1,0 +1,94 @@
+# 前沿规避研究路线（evasion-research 分支）
+
+创建：2026-10-03，基线 = `4.9.1` 分支 `08e2eef`（六通道全绿 + 二轮加固后的树）。
+本分支只做规避研究与实验；合入 `4.9.1` 的门槛 = 六通道回归 + 本路线 Phase 0 矩阵双绿。
+
+来源：2026-10-03 联网调研（见 §6 借码清单）+ 2026-09-13/19 既有定论（自定义 beacon
+主线、gate 按 4.12 形状期权、社区借码不借约）。
+
+---
+
+## 0. 总原则
+
+1. **源码全控是代际优势**：kit 用户只能改模板（16KB sleepmask blob 槽、UDRL 5KB 限制），
+   我们改本体。所有自研项写进 beacon 源码，槽/kit 路径保留为兼容回退。
+2. **检测重心已在内核遥测**（ETWti/回调+用户态栈走查），用户态钩子战争结束。beacon 侧
+   对内核遥测只能**降敏**，不能摘除（BYOVD 摘遥测属于工具侧，不进 beacon）。
+3. **每个 Phase 用 Phase 0 矩阵回归验收**；掩码类改动必须过 mini_sm 行为取证（tier-104
+   教训：等价性验证从 git 程序化解析，活测兜底）。
+4. 约束：本机无编译器（CI 为准）；x86 明文余量仅 ~512B —— Phase 1/2 的自研件 x64 先行，
+   x86 走官方 blob 回退或 jar-only。
+
+## 1. 六层现状（2026-10-03 基线自评）
+
+| 层 | 现状 | 缺口 |
+|---|---|---|
+| L5 睡眠 | 真掩码过线（XOR + track_memory 全覆盖 + own-table） | Gen2：权限翻转遥测可见；无强加密；无栈伪装 |
+| 调用栈 | 无 | **全空白（2026 最热方向）** |
+| L4 syscall | 3 syscall + Halo's Gate + direct/indirect 运行时切换 | 面窄；无 RA 欺骗；无 DR 防御 |
+| BOF 窗口 | cmd 116 unmask→run→remask 先例；缓存页 RW 闲置 | inline-execute 全路径裸露 |
+| L3/L4 内存形态 | 自研反射加载器 | beacon 在 unbacked RX；module stomping 空白 |
+| L3 加载器 | ReflectiveLoader 自研（5k/50k/100k） | 无 UDRL 外置链（loader 在 payload 外侧，不占 x86 余量） |
+
+## 2. Phase 0 —— 基线与度量（先行）
+
+- [ ] 扫描器矩阵（`evasion-lab/tools/`，二进制不入库）：PE-sieve（aggressive）、Moneta；
+      可选加 BeaconEye / Hunt-Sleeping-Beacons（无编译器，有 release 才加）。
+- [ ] 基线协议：artifact 生成 EXE（走 client CWD 影子=当期构建）→ 本地起进程 → 矩阵扫描
+      → 记录命中（`evasion-lab/EVASION-BASELINE.md`）。
+- [ ] 两个基线点：r2_nosm（掩码关，现状 worst/best 对照）与 mini_sm（掩码开）。
+- [ ] ETWti 采样：睡眠周期内权限翻转/线程事件计数（工具待选，允许降级为
+      ETWEventTrace 脚本级）。
+- 产出：六层可见性清单 = 后续所有 Phase 的验收尺。
+
+## 3. Phase 1 —— Gen3 睡眠链（x64 先行，最大缺口）
+
+全部在 `GargleSleep` 家族内实现，与官方 GARGLE blob 双路径共存（profile 开关切换，
+防掩码打架重演 tier-104 类静默故障）。
+
+- **1a 强加密睡眠**：APC（NtQueueApcThread，Foliage 式）或 TpAllocWait（Zilean 式）自掩码
+  + RC4（SystemFunction032），key 每周期旋转。参考 doublepulsar-rs 的三式实现（Rust 借算法）。
+- **1b 调用栈伪装（性价比最高）**：移植 Cobalt-Strike/CallStackMasker 进睡眠窗口——
+  static（spoolsv 模板）起步，dynamic（克隆 WaitForSingleObjectEx 线程）为进阶。
+  与 1a 同一个睡眠窗口合并交付。
+- **1c 免权限翻转（Bouncing）**：自释放→重分配 + 句柄表重定位；公开无实现，自研机会，
+  排最后。
+- 验收：Phase 0 矩阵命中数显著下降 + mini_sm 行为取证（存活+掩码态+任务响应）+
+  六通道回归（掩码路径改动必跑 pivot/extc2）。
+
+## 4. Phase 2 —— gate 扩容 + 反遥测
+
+- syscall 面 3 → 注入/内存全路径（SysWhispers4 形状：direct + indirect，return address
+  落 ntdll `syscall;ret`）。
+- 三热点 RA 欺骗（AceLdr 配方：InternetConnectA/NtWaitForSingleObject/RtlAllocateHeap）。
+- **DR 防御（2026 新增）**：GetThreadContext 周期自检 DR0-3 + 清零/VEH 恢复——对抗 EDR
+  硬件断点钩子（Blindside/LayeredSyscall 类趋势的反面）。
+- gate 枢纽形状保持 4.12 FUNCTION_CALL 期权（TS 升级时重估）。
+
+## 5. Phase 3/4/5 —— BOF 掩蔽、加载器、行为
+
+- **Phase 3**：cmd 116 的 unmask→run→remask 推广到 inline-execute 全路径 + BOF 缓冲隔离
+  + 闲置页掩码。验收：BOF 窗口内 PE-sieve/Moneta 无命中。
+- **Phase 4（条件启动）**：module stomping 为验收目标（Moneta/PE-sieve 全绿 = 消除
+  unbacked RX）；doublepulsar-rs 直接作外置 UDRL 或 C 移植其算法；loader 在 payload 外侧
+  不占 x86 余量。
+- **Phase 5**：行为降敏（jitter、拆分稀释、流量硬化）——内核 ETW 行为关联的唯一现实应对。
+
+## 6. 借码清单（收割顺序）
+
+| 优先级 | 来源 | 用途 | 许可注意 |
+|---|---|---|---|
+| 1 | Cobalt-Strike/CallStackMasker | 1b 主料（C，直接移植） | 官方 PoC |
+| 2 | memN0ps/doublepulsar-rs | Ekko/Foliage/Zilean 算法 + 堆隔离 + IAT 钩子 | Rust，借思路 |
+| 3 | Cracked5pider/Ekko、WithSecureLabs CallStackSpoofer/TickTock | 栈伪装/睡眠底层件 | — |
+| 4 | TheD1rkMtr/ShellcodeFluctuation | 睡眠加密+栈伪装组合先例 | — |
+| 5 | naksyn 系列文章 + "Don't Be So Primitive" | Phase 4 module stomping 配方 | 文章 |
+| 6 | 0xdbgman EDR Tradecraft | 检测视角对照表 | 文章 |
+
+参考源码镜像到 `evasion-lab/reference/`（保留原许可与出处注释）。
+
+## 7. 诚实边界
+
+- ETWti/内核回调只能降敏；开源矩阵全绿 ≠ 一线 EDR 全绿（真机 EDR 实验室为独立预算项）。
+- LACUNA Ghost Frames 无公开 PoC，方向性参考。
+- 掩码双路径（自研 vs 官方 blob）必须开关隔离 + 双验收。
