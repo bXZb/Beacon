@@ -319,3 +319,38 @@ FILE_MAP_EXECUTE（视图 RX）。修复：finalize 会跳过时自己翻 PAGE_E
   找出阻断键）；修复后这两条 profile 才能用于掩码回归。
 - restart_ts 建议加 kill 后 `kill -0` 断言 + 启动后 profile 名回读（patch_ts.py 待改）。
 - 套筒现状：client 三处 + TS 六槽 = 8c1e5b7（36947703091），TS 复位 r2_nosm。
+
+## 10. 第二轮加固 A+B + 六通道全量回归（2026-10-02 晚，HEAD 53d593d，CI 36969540988）
+
+### 10.1 A+B 批次（第二轮复查产物，commit 9f94746 + 测试桩 53d593d）
+
+| 批 | 内容 |
+|---|---|
+| A | 线缆负长度族：`data_ptr` 拒负长度（一处收口全家）；`link_register` 帧须 ≥4B + `bformat_copy` 拒 `length<=0`（TCP pivot 监听器网络预认证可触发的 memcpy 巨长崩溃）；inject_ping/六处 4B 字段命令补最小长度前置；boff reloc 检查改免回绕减法式 + 拒负 symbol；elevate 三连（INVALID_HANDLE_VALUE 判据/ConnectNamedPipe 自旋退出/管道单方收尾）；inject_mirror 远端 VirtualFree→VirtualFreeEx；strategy tokens[200] 界 + rand()%0 + URI 槽钳；profile apply/recover + link_frame_header 钳真实 TLV 长度（hostprof 同族越读），frame header 调用方判 NULL |
+| B | `threadcount` → `volatile long` + Interlocked 四处 + CreateThread 失败回滚；inject_hinted 挂起线程句柄全路径关闭；webserver serveit 线程句柄即取即关；execjob/job_spawn CreatePipe 检查 + 预置 INVALID + 早退关双句柄；security sanity 宏与 WSAStartup 失败改走 `safe_exit`（宿主测试桩 = loud-fail）；safe_exit 的 ExitProcess 线程建不起来时兜底 |
+| 复核改判 | dns_put 4B 尾块**不改**：调用方缓冲是 1MB 通道缓冲（非精确分配），≤3B 读在分配内，且与官方逐字节同源，改了反而偏离线缆行为 |
+
+中途事故：python 补丁读文件未保 CRLF，五个文件整文件行尾改写——`git ls-files --eol` 诊断后 HEAD 恢复 + 二进制重放（`_re/replay_ab.py`）。教训：**python 改 C++ 源必须 `open(rb)`/`open(wb)` 全二进制**。
+
+### 10.2 回归（套筒=53d593d，client 三处 + TS 六槽全 MATCH，TS=r2_nosm→r2_winhttp→mini_sm→复位 r2_nosm）
+
+| 通道 | 驱动输出 | 裁定 | 关键证据 |
+|---|---|---|---|
+| x64 WinINet（http） | 19/21 | **21/21 过** | upload 静默→download 47B 回环；steal `Impersonated`+rev2self 静默（四坑同前）；needle 294408 命中 |
+| x64 WinHTTP（http_wh2，r2_winhttp） | 9/10 | **10/10 过** | needle 裁定：父交付 293408B = **新编码套筒精确尺寸**（公式应为编码尺寸非明文+8）；任务 9/9 全过 |
+| x86 WinINet（http） | 11/11 | **11/11 过** | hashdump `Administrator:500:`、mimikatz `Privilege '20' OK`、双 `grok-ea-117`；needle 247304 命中 |
+| pivot SMB bind（smb_r4/regr4smb） | 10/10 | **过** | 双向 link + pwd + shell `regr4-pivot-smb` |
+| pivot TCP bind（tcp_r4:4451） | 10/10 | **过** | 同一轮驱动；shell `regr4-pivot-tcp` |
+| extc2（ext_r4:2222/B1ExtC2） | 5/5 | **过** | INITIAL 亚秒 + pwd/shell `regr4-extc2-ok`/getuid；首轮 shell FAIL 是驱动脚本 bug（命令发成了 `cmd`），修正后 5/5 |
+| dnsb（dns_go/go.regr.test） | 3/4 | **4/4 过** | 空会话全字段空白（**含 listener=**，匹配勿按 listener 过滤）；pwd 输出先于 INITIAL 0.3s 到达（pos 竞态，原始日志两度出现 `Current directory`）；shell `regr4-dnsb-ok` + 下一周期存活 |
+| 掩码 sanity（mini_sm） | — | **过** | `artifact` 新建父 EXE（328704B，CWD 影子=新套筒）→ INITIAL `472895650` → 2 掩码窗口存活 → pwd 过。B1 动了 threadcount（gargle 门控变量），此 sanity 钉死掩码未被破坏 |
+
+### 10.3 工具沉淀与坑
+
+- `verify_all_slots.py` p[3]/p[4] 比较对象写反（tailzero 恒假阴性）——已修，现在 `VERIFY_SLOTS_OK` 可信。
+- WH 通道 spawn 交付尺寸 = **编码套筒尺寸**（293408），WI/x86 = 明文+8——needle 公式按通道区分。
+- dnsb 空会话 dump 行所有字段空白（`pid= user= listener=`），识别法 = spawn 后 beacon_count 增量 + bid 集合差。
+- x86 明文余量仅剩 **512B**（247296/247808）——D 批收敛（dns_put 梯子表驱动等）是恢复余量的必经路。
+- 原始日志 `ci-artifacts/regr4_*.log`；驱动脚本 `pivot_regr4.py`/`extc2_regr4.py`/`dnsb_regr4.py`/`dnsb_regr4b.py`/`mask_sanity_r4.py`。
+
+测试后：本轮监听器（smb_r4/tcp_r4/ext_r4）已删、子会话已 exit、Headless 已关、TS 复位 r2_nosm（ps 硬验证）。旧父 beacon_b4.exe（今晨 mini_sm 轮产物）在 mini_sm 下静默之谜未查（TS profile 不应影响已烘焙配置的运行中 beacon）——记录在案，不影响本轮结论。
