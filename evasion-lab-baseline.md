@@ -65,3 +65,53 @@ MSYS_NO_PATHCONV=1 ./tools/Moneta64.exe -m ioc -p <PID>
 ```
 
 原始输出：`results/pe-sieve-out/`（EXE 形态）、`results/pe-sieve-spawn/`（spawn 形态）。
+
+
+---
+
+# 第二轮（2026-10-03 下午）：整改验证 + 掩码开对照
+
+## 1. profile 整改验证（r2_evbase：process-inject startrwx/userwx false）
+
+TS 侧语义（反编译 ProcessInject.apply 确认）：`setting43(PERMS_I) = startrwx ? 64 : 4`；
+`setting44(PERMS) = userwx ? 64 : 32`。
+
+| 轮次 | profile | Moneta（spawn 子进程） |
+|---|---|---|
+| 基线 | r2_nosm（无块） | 镜像 **RWX** + 副本 RWX + 尾页 RWX |
+| evbase-1 | + startrwx false | **无变化（全 RWX）** —— 43=4 但 userwx 默认 true → 44=64，翻转照做但翻到 RWX（RW→RWX） |
+| evbase-2 | + startrwx + **userwx "false"** | **镜像 RWX→RX ✓**；副本块仍 RWX |
+
+结论：**零代码整改生效**——运营 profile 必须同时配 `startrwx "false"` 与 `userwx "false"`
+（只配前者反而把 RW 起步翻成 RWX）。默认全 true = 注入内存永久 RWX。
+
+## 2. 遗留工程项：注入副本块（0x64000，MZ+ARU 头）为何仍 RWX
+
+消费链（inject_mirror）在写完副本后 `VirtualProtectEx(PERMS)`，44=32 应翻 RX。实测仍
+RWX，且副本尾部（0x60000+）含运行时指针表（与 payload 同一区域）。候选假设：翻转时
+序、loader 执行前窗口、区域合并显示。**归 Phase 2 工程分析**（Phase 0 只记录）。
+
+## 3. 掩码开对照（mini_sm，ev4 EXE pid 8844）
+
+- **三节全密文实证**（与磁盘明文逐字节比对）：.text/.rdata/.data mem≠disk 全部成立；
+  3 分钟 18 采样点密文恒定（同 key 同位置的确定性 XOR）——**掩码全程有效，覆盖面
+  包含 .text**（own-table 0f5490a 修复后的真实覆盖，此前从未对 .text 单独验证过）。
+- 采样器教训：第一版分类器把稳定密文误判为 "plaintext"（字节和启发式），后改用
+  与磁盘明文比对才闭环——**掩码态判定必须与磁盘原文比对，不能用启发式**。
+- Moneta（掩码开）：镜像 RX（mir0x48000）+ 副本 RWX + 尾页 + **新增 0x390000:0x1000
+  RX**（own-table 专用页，掩码基础设施自身的暴露点）。属性类命中（私有/RX/RWX）
+  掩码无法消除——Phase 4 module stomping 的靶子。
+
+## 4. Phase 0 剩余待办
+
+- [ ] ETWti 采样（权限翻转/线程事件计数）
+- [ ] 注入副本 RWX 时序分析（Phase 2 交接）
+- [ ] 真机 EDR 实验室（独立预算项）
+
+## 新增工具
+
+- `evasion-lab/spawn_and_scan.py`（spawn+双扫描一体）、`dump_procinj_settings.py`
+  （settings 表 dumper，TYPE_SHORT=1 注意）、`mask_window_scan.py`（掩码窗口采样，
+  判定用磁盘比对法）、`watch_exe.py`。
+- profile：`cs-agscript-mcp/scripts/r2_evbase.profile`（整改配方：startrwx+userwx
+  双 false）。
