@@ -354,3 +354,43 @@ FILE_MAP_EXECUTE（视图 RX）。修复：finalize 会跳过时自己翻 PAGE_E
 - 原始日志 `ci-artifacts/regr4_*.log`；驱动脚本 `pivot_regr4.py`/`extc2_regr4.py`/`dnsb_regr4.py`/`dnsb_regr4b.py`/`mask_sanity_r4.py`。
 
 测试后：本轮监听器（smb_r4/tcp_r4/ext_r4）已删、子会话已 exit、Headless 已关、TS 复位 r2_nosm（ps 硬验证）。旧父 beacon_b4.exe（今晨 mini_sm 轮产物）在 mini_sm 下静默之谜未查（TS profile 不应影响已烘焙配置的运行中 beacon）——记录在案，不影响本轮结论。
+
+## 11. D 批收敛 + tier-104 事故（2026-10-02 深夜，HEAD 805998c，CI 37003242690）
+
+### 11.1 收敛内容（eac12f9 + 310f861 + 805998c，净 -371 行）
+
+| 项 | 内容 | 尺寸效果 |
+|---|---|---|
+| dns_put 表驱动 | 12 档手写 `_snprintf` 梯子（~700B .rdata + 26 参调用）→ 档位表循环 | **dnsb −4608B** |
+| link 帧读写 | SMB/TCP 字节孪生 → `link_frame_read/write`（link.cpp）+ 各 8 行薄壳 | 每含 pivot 的 binary 收敛 |
+| beacon 入口 | beacon_pivot/extc2 逐字节相同前 83 行 → `beacon_link_common.h` | 源码维护（binary 0） |
+| STARTUPINFO ×7 → `startupinfo_hidden`；sysnative ×3 → `fold_sysnative`；file_copy/move、socket_bind/tcppivot、strategy tokenize 序言 ×2 | 各一小 helper | x86 收益被 512B 节对齐粒度吞掉（余量维持 512B） |
+| 死代码 | `setting_option`、`tasks.h`、11 个无定义原型、水印注释尸体 | — |
+
+**postmsgf 收敛主动跳过**：两版行为不同（精确 malloc vs 2048 截断）且调用约定不同。
+
+### 11.2 tier-104 事故（活测抓到、已修复 805998c）
+
+表驱动重写时 104B 档 label 布局误写为 `{8,9,9}`，真实布局是 **`{5,7,7,7}`**（tier 字符与 5 个 dword 同在 label1）。元数据上传是 128 字节 → 首块必是 104 档 → label 边界全错 → **TS 解码器静默丢弃全部上传**。活测症状：dns beacon 正常轮询、正常收到 check-in 信号、永不 INITIAL。
+**教训（已入流程）**：等价性验证必须从 git 历史里**程序化解析**原始格式串，不能手抄（本轮的 Python 检查器用了与改写相同的错误假设，自证清白失效）。
+
+### 11.3 回归（套筒=805998c，CI 37003242690，client 三处 + TS 六槽全 MATCH）
+
+805998c 重建后**六个 binary 哈希全变**（channel_tcp.cpp 编进所有工程）→ 全通道重测：
+
+| 通道 | 裁定 | 说明 |
+|---|---|---|
+| x64 WinINet | **21/21 过** | 三静默坑同前；交付 293944=encoded+24 |
+| x64 WinHTTP（r2_winhttp） | **10/10 过** | 交付 292944=winhttp encoded 族 |
+| x86 WinINet | **11/11 过** | 交付 247352=encoded+24；hashdump/mimikatz/双 EA |
+| pivot SMB+TCP | **10/10 过** | link 帧收敛后双链复测 |
+| extc2 | **5/5 过** | beacon_link_common 公共化复测 |
+| dnsb | **4/4 过** | **tier 修复实证**：INITIAL 1245181942 + 两轮 pwd ALT + `regr6-dnsb-ok` |
+
+**needle 口径三轮三样**（plain+8 / encoded / encoded+24）——判据统一改为"交付尺寸 ∈ 当轮构建已知尺寸族"（encoded 与 encoded+帧包装）。
+
+### 11.4 尺寸与遗留
+
+dnsb 286720 / x64 293888 / WH 292864 / extc2 281600 / pivot 283648 / x86 247296（余量 512B，未恢复——被对齐粒度吞掉，后续需更大收敛才有效）。
+
+工具沉淀：`_re/rewrite_dnsput.py`、`_re/dns_layout.json`（从 git 解析的档位表）、`_re/verify_dnsput_equiv.py`（改用解析版）。驱动：`pivot_regr4.py`/`extc2_regr4.py`/`dnsb_regr4*.py`。测试后 TS 复位 r2_nosm（ps 硬验证），监听器/子会话/Headless 已清。
