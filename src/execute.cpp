@@ -151,23 +151,8 @@ BOOL execute_program_with_creds(PROCESS_CONTEXT * ctx, wchar_t * wcmdline, wchar
 	 */
 	else if (GetLastError() == 3 && strlen(ctx->cbuffer) < 256) {
 		/* replace sysnative with system32. Really. */
-		char * foundp = strstr(ctx->cbuffer, "sysnative");
-		if (foundp != NULL) {
-			char rest[256];
-			memset(rest, 0, 256);
-
-			/* get rid of the sysnative nonsense */
-			memcpy(foundp, "system32", 8);
-			foundp += 9; /* move ahead by 9 bytes */
-
-			/* copy the rest of the data over to rest */
-			memcpy(rest, foundp, strlen(foundp));
-			foundp -= 1; /* move back by 1 byte */
-
-			/* now, copy the data back to cmdbuff */
-			memcpy(foundp, rest, strlen(rest) + 1);
-
-			/* why no infinite recursion? because we replaced sysnative with system32 */
+		if (strstr(ctx->cbuffer, "sysnative") != NULL) {
+			fold_sysnative(ctx->cbuffer);
 			return execute_program_with_token(ctx);
 		}
 	}
@@ -233,23 +218,8 @@ BOOL execute_program_with_token(PROCESS_CONTEXT * ctx) {
 	 */
 	else if (GetLastError() == 3 && strlen(ctx->cbuffer) < 256) {
 		/* replace sysnative with system32. Really. */
-		char * foundp = strstr(ctx->cbuffer, "sysnative");
-		if (foundp != NULL) {
-			char rest[256];
-			memset(rest, 0, 256);
-
-			/* get rid of the sysnative nonsense */
-			memcpy(foundp, "system32", 8);
-			foundp += 9; /* move ahead by 9 bytes */
-
-			/* copy the rest of the data over to rest */
-			memcpy(rest, foundp, strlen(foundp));
-			foundp -= 1; /* move back by 1 byte */
-
-			/* now, copy the data back to cmdbuff */
-			memcpy(foundp, rest, strlen(rest) + 1);
-
-			/* why no infinite recursion? because we replaced sysnative with system32 */
+		if (strstr(ctx->cbuffer, "sysnative") != NULL) {
+			fold_sysnative(ctx->cbuffer);
 			return execute_program_with_token(ctx);
 		}
 	}
@@ -343,12 +313,7 @@ BOOL runas(char * domain, char * user, char * pass, char * cmdline, DWORD flags,
 	ZeroMemory(piptr, sizeof(PROCESS_INFORMATION));
 
 	/* further process our startup info data structure */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = NULL;
-	si.hStdError = NULL;
-	si.hStdInput = NULL;
+	startupinfo_hidden(&si, NULL);
 	si.lpDesktop = NULL; /* we don't want to mess with this */
 
 	/* covert some parameters to their wide char vars */

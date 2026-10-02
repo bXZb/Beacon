@@ -36,6 +36,19 @@ void strategy_setup(strategy_info * si, int strategy, int rotation_timer, int fa
 /*
 * 主机/域名轮换的轮询策略实现
 */
+/* 主机列表 tokenize 序言（3 个策略共用）：调用方已 malloc/track hs。 */
+static int split_hosts(char * hosts, char * hs, char ** tokens) {
+	char * token;
+	int    tokenCount = 0;
+
+	token = strtok(hs, ",");
+	while (token != NULL && tokenCount < 200) {
+		tokens[tokenCount++] = token;
+		token = strtok(NULL, ",");
+	}
+	return tokenCount;
+}
+
 char * next_host_round_robin(char * hosts) {
 	static char * token = NULL;
 	char * ptr;
@@ -93,18 +106,11 @@ char * next_host_random(char * hosts) {
 	static int tokenCount;
 	static int tokenIndex;
 
-	char * token;
 
 	if (hs == NULL) {
 		hs = (char *)malloc(strlen(hosts) + 1);  /* freed by track_memory_cleanup */
-		strncpy(hs, hosts, strlen(hosts) + 1);
 		track_memory_add(hs, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
-
-		tokenCount = 0;
-		token = strtok(hs, ",");
-		while (token != NULL && tokenCount < 200) {			tokens[tokenCount++] = token;
-			token = strtok(NULL, ",");
-		}
+		tokenCount = split_hosts(hosts, hs, tokens);
 
 		// Set token index to random...
 		tokenIndex = -1;
@@ -155,7 +161,6 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 	static int max_fail_times = -1;
 	static time_t fail_window_start;
 
-	char * token;
 
 	BOOL expired = FALSE;
 	time_t now = time(NULL);
@@ -165,15 +170,8 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 		// dlog("strategy.next_host_priority_failover - lastCheckinFailed: %s rotation_timer: %d failover_timer: %d failover_maxfail: %d Hosts: %s \n", lastCheckinFailed ? "true" : "false", si->rotation_timer, si->failover_timer, si->failover_maxfail, hosts);
 
 		hs = (char *)malloc(strlen(hosts) + 1);  /* freed by track_memory_cleanup */
-		strncpy(hs, hosts, strlen(hosts) + 1);
 		track_memory_add(hs, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
-
-		tokenCount = 0;
-		token = strtok(hs, ",");
-		while (token != NULL && tokenCount < 200) {
-			tokens[tokenCount++] = token;
-			token = strtok(NULL, ",");
-		}
+		tokenCount = split_hosts(hosts, hs, tokens);
 
 		// After loading tokens array...
 		//   tokens[0]   = host1

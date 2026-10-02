@@ -87,22 +87,7 @@ void spawn_populate(BOOL x86, char * cmdbuff) {
 		spawnproc(cmdbuff, 256, x86);
 
 		/* replace sysnative with system32. Really. */
-		foundp = strstr(cmdbuff, "sysnative");
-		if (foundp != NULL) {
-			char rest[256];
-			memset(rest, 0, 256);
-
-			/* get rid of the sysnative nonsense */
-			memcpy(foundp, "system32", 8);
-			foundp += 9; /* move ahead by 9 bytes */
-
-			/* copy the rest of the data over to rest */
-			memcpy(rest, foundp, strlen(foundp));
-			foundp -= 1; /* move back by 1 byte */
-
-			/* now, copy the data back to cmdbuff */
-			memcpy(foundp, rest, strlen(rest) + 1);
-		}
+		fold_sysnative(cmdbuff);
 	}
 #elif defined _M_IX86
 	/* user wants to spawn an x64 process */

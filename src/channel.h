@@ -22,7 +22,6 @@ unsigned int dns_get(char * domain, char * buffer, int max);
 void dns_put(char * type, char * domain, char * buffer, int length);
 
 /* perform a checkin via DNS */
-void dns_checkin(char * domain, char * buffer, int length);
 
 /* function prototypes */
 int channel_lookup_retry_txt(char * domain, int retry, char * buffer, int max);

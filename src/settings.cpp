@@ -167,14 +167,6 @@ unsigned int setting_int(int field) {
 	return 0;
 }
 
-unsigned int setting_option(int field, unsigned short value) {
-	unsigned short flags = setting_short(field);
-	if ((flags & value) == value)
-		return TRUE;
-	else
-		return FALSE;
-}
-
 void * get_beacon_ptr() {
 	return beacon_ptr;
 }

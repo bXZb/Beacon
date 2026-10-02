@@ -267,3 +267,41 @@ char * link_frame_header(int type, int message, int * size) {
 
 	return val;
 }
+
+/* 共享帧读/写体：SMB 管道与 TCP 套接字只差传输原语和 frame-header
+ * setting 号（两对原语语义同构：读满 n 或 -1；写全 TRUE/FALSE）。 */
+int link_frame_read(int hsetting, int (*raw_read)(void *, char *, int), void * ctx, char * buffer, int max) {
+	char * frame;
+	int    flen, get;
+
+	/* read our length into a pro-forma frame */
+	frame = link_frame_header(hsetting, 0, &flen);
+	if (frame == NULL)
+		return -1;
+	if (raw_read(ctx, frame, flen) != flen)
+		return -1;
+
+	/* extract our length value... */
+	memcpy(&get, frame + flen - 4, 4);
+
+	/* sanity check our get value */
+	if (get > max || get < 0)
+		return -1;
+
+	return raw_read(ctx, buffer, get);
+}
+
+int link_frame_write(int hsetting, int (*raw_write)(void *, char *, int), void * ctx, char * buffer, int length) {
+	char * frame;
+	int    flen;
+
+	/* build and write our frame header */
+	frame = link_frame_header(hsetting, length, &flen);
+	if (frame == NULL)
+		return FALSE;
+	if (!raw_write(ctx, frame, flen))
+		return FALSE;
+
+	/* write the entire package */
+	return raw_write(ctx, buffer, length);
+}

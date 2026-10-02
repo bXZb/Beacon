@@ -79,7 +79,8 @@ void command_file_mkdir(char * buffer, int length) {
 	free(folder);
 }
 
-void command_file_copy(char * buffer, int length) {
+/* [src][dst] 两字符串路径 + 一个 Win32 文件操作：copy/move 公共体。 */
+static void file_two_path_op(char * buffer, int length, BOOL move) {
 	datap   parser;
 	datap * local;
 	char * src;
@@ -95,36 +96,26 @@ void command_file_copy(char * buffer, int length) {
 	data_string(&parser, src, 8192);
 	data_string(&parser, dst, 8192);
 
-	/* perform the copy, please */
-	if (!CopyFileA(src, dst, FALSE))
-		post_error_d(0xd, GetLastError());
+	/* perform the operation, please */
+	if (move) {
+		if (!MoveFileA(src, dst))
+			post_error_d(0xe, GetLastError());
+	}
+	else {
+		if (!CopyFileA(src, dst, FALSE))
+			post_error_d(0xd, GetLastError());
+	}
 
 	/* free our data */
 	data_free(local);
 }
 
+void command_file_copy(char * buffer, int length) {
+	file_two_path_op(buffer, length, FALSE);
+}
+
 void command_file_move(char * buffer, int length) {
-	datap   parser;
-	datap * local;
-	char * src;
-	char * dst;
-
-	/* allocate some data to work with */
-	local = data_alloc(16384);
-	src   = data_ptr(local, 8192);
-	dst   = data_ptr(local, 8192);
-
-	/* extract our arguments */
-	data_init(&parser, buffer, length);
-	data_string(&parser, src, 8192);
-	data_string(&parser, dst, 8192);
-
-	/* perform the copy, please */
-	if (!MoveFileA(src, dst))
-		post_error_d(0xe, GetLastError());
-
-	/* free our data */
-	data_free(local);
+	file_two_path_op(buffer, length, TRUE);
 }
 
 void command_file_list(char * buffer, int length, void(*callback)(char * buffer, int length, int type)) {

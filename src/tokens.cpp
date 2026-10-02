@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <tlhelp32.h>
 #include "tokens.h"
-#include "tasks.h"
 #include "commands.h"
 #include "beacon.h"
 #include "parse.h"

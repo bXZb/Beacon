@@ -23,5 +23,3 @@ typedef struct {
 BOOL execute_program(PROCESS_CONTEXT * ctx);
 BOOL runas(char * domain, char * user, char * pass, char * cmdline, DWORD flags, PROCESS_INFORMATION * pi);
 
-void spoof_ppid_teb_pre(DWORD *oldpid);
-void spoof_ppid_teb_post(DWORD oldpid);

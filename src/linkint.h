@@ -52,6 +52,9 @@ BOOL link_register(LCHANNEL channel, int hint, void(*callback)(char * buffer, in
 #define HINT_REVERSE    0x00010000
 #define HINT_FORWARD    0x00000000
 #define HINT_PROTO_PIPE 0x00000000
+int link_frame_read(int hsetting, int (*raw_read)(void *, char *, int), void * ctx, char * buffer, int max);
+int link_frame_write(int hsetting, int (*raw_write)(void *, char *, int), void * ctx, char * buffer, int length);
+
 #define HINT_PROTO_TCP  0x00100000
 
 #define CHANNEL_FORWARD_TCP(x)  (HINT_FORWARD | HINT_PROTO_TCP | x)

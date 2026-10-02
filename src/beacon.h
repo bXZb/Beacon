@@ -130,7 +130,6 @@ unsigned int   setting_int(int field);
 char *         setting_ptr(int field);
 unsigned int   setting_len(int field);      /* strlen semantics (ASCIIZ settings) */
 unsigned int   setting_length(int field);   /* malloc'd blob size (binary TLV settings) */
-unsigned int   setting_option(int field, unsigned short value);
 
 /* maintenance */
 void settings_init(void * bptr);

