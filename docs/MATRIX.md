@@ -273,3 +273,49 @@ cna：`extc2_listener_create <名> <端口> <管道名>`（pipename 选项；默
 - 期间发现：老 pivot 链（601008948+1310891412）在多次 TS 重启后重连并继续工作，pivot 链路本身健壮。
 
 测试后全部进程/监听器清理，TS 复位 r2_nosm，WER LocalDumps 临时键已删。原始日志 `ci-artifacts/regr3_*.log`。
+
+## 9. sm-true 之谜破案（2026-10-02，x64dbg + 内存取证，HEAD 8c1e5b7）
+
+§8 留下的"01:42 后新实例必死"已完全破案，共 **两个真实缺陷 + 三个验证陷阱**：
+
+### 9.1 缺陷一：own 表从未建成 —— SizeOfImage 读错 PE 偏移（0f5490a）
+
+`gargle_own_sections` 读 SizeOfImage 用 optional-header **+0x50**（PE32+ 是 DataDirectory[1]
+= Import Table RVA ≈0x1000），正确偏移是 **+0x38**。所有节被 `va >= imgsz` 过滤 → 表永远
+构建失败 → 回落官方布局表 → 掩码窗口罩我们 .pdata → fail-fast。**4.9.1 上 own 表从未成功
+过**；5c753e1 时代的"成功"同样是在错误的 imgsz 下构建（结果恰为头页-only 表）。
+
+### 9.2 缺陷二：BOF 在 RW 页执行 —— finalize 短路 + 批次 C 去掉映射 EXECUTE（8c1e5b7）
+
+`finalize_memory_permissions` 在 PERMS_I == PERMS（未配置：0==0）时**短路返回 TRUE 不翻保护**。
+批次 C 后 BOF 内存是纯 RW（映射视图无 FILE_MAP_EXECUTE / allocator0 VirtualAlloc RW）→
+跳进 BOF 入口即 **DEP fault**，死在第一个掩码窗口。9-30（5c753e1）能跑是因为当时映射带
+FILE_MAP_EXECUTE（视图 RX）。修复：finalize 会跳过时自己翻 PAGE_EXECUTE_READ（复用尾部
+已有翻回 RW）。
+
+### 9.3 验证陷阱（本轮全部踩过，记录防再踩）
+
+1. **restart_ts 静默失败**：08:26 输出 TS_ON_r2_hostprof，08:27 ps 显示仍在跑 r2_nosm。
+   每次 restart 后必须 `ps -o args=` 硬验证命令行里的 profile 名。
+2. **41=0 ≠ 掩码开启**：`settings[41]`（GARGLE_NOOK）是唯一的掩码开关。r2_hostprof 下
+   `option(".stage.sleep_mask")` 返回 false（原因未完全定位——同键 mini profile 却为 true，
+   疑与 stage 块内其他键/结构相关，待查）。**mini_sm.profile（stomppe false + sleep_mask
+   true + 最小 http 块）实证可启用掩码**。
+3. **stomppe 默认 true**：不写 `set stomppe "false"` 时 TS 抹 PE 头，gargle own-table 的
+   MZ 检查失败（且影响更广）。测试 profile 必须显式写 stomppe false。
+
+### 9.4 最终验证（HEAD 8c1e5b7，CI 36947703091，TS=mini_sm）
+
+- settings[41]=INT 1 生效：**gparms 槽读出 XOR 乱码值**（掩码中 .data 的直接证据）；
+- 父会话 **6+ 掩码周期存活**、pwd 正常往返（09:23 INITIAL → 09:29+ CHECKIN/ALT）；
+- 进程内 .data 段在掩码窗口不可读/XOR 态（ReadProcessMemory 失败/乱码交替）。
+
+**x64 真掩码（own 表 + DEP 修复后）首次完整过线。** own 表页内容因 .data/页保护时序未能
+在线 dump（读内存通道不稳定），以行为证据（存活+掩码态+任务响应）判定。
+
+### 9.5 环境遗留
+
+- `r2_hostprof` / `r2_winhttp_sm` 的 `option(".stage.sleep_mask")==false` 需排查（对比 mini_sm
+  找出阻断键）；修复后这两条 profile 才能用于掩码回归。
+- restart_ts 建议加 kill 后 `kill -0` 断言 + 启动后 profile 名回读（patch_ts.py 待改）。
+- 套筒现状：client 三处 + TS 六槽 = 8c1e5b7（36947703091），TS 复位 r2_nosm。
