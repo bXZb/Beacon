@@ -107,7 +107,10 @@ unsigned short data_short(datap * d) {
 char * data_ptr(datap * d, int length) {
 	char * ptr = d->buffer;
 
-	if (d->length < length)
+	/* 线缆长度字段按 int 读入可为负（如 0xFFFFFFFF）：负值会让解析器倒退、
+	   length 越加越大，并穿透所有 "<" 上界检查。负长度一律拒绝。
+	   data_string/data_extract/asciiz 全部经此函数，一处收口。 */
+	if (length < 0 || d->length < length)
 		return NULL;
 
 	d->buffer  = d->buffer + length;

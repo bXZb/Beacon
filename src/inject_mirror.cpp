@@ -93,14 +93,16 @@ char * remote_mirror_data_virtualallocex(HANDLE hProcess, DWORD pid, char * buff
 	while (total < length) {
 		if (!beacon_WriteProcessMemory(hProcess, (char *)ptr + total, buffer + total, length - total, &wrote)) {
 			post_error_d(0x10, GetLastError());
-			VirtualFree(ptr, 0, MEM_RELEASE);
+			/* ptr 是目标进程的地址：本地 VirtualFree 释放不了远端内存，
+			   反而可能误放本地同地址分配。必须用 VirtualFreeEx。 */
+			VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
 			return NULL;
 		}
 
 		total += wrote;
 
 		if (wrote == 0) {
-			VirtualFree(ptr, 0, MEM_RELEASE);
+			VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
 			return NULL;
 		}
 	}
@@ -111,7 +113,7 @@ char * remote_mirror_data_virtualallocex(HANDLE hProcess, DWORD pid, char * buff
 	}
 	else if (!VirtualProtectEx(hProcess, ptr, allocsz, setting_short(SETTING_PROCINJ_PERMS), &old)) {
 		post_error_d(0x11, GetLastError());
-		VirtualFree(ptr, 0, MEM_RELEASE);
+		VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
 		return NULL;
 	}
 

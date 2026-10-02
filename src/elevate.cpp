@@ -13,7 +13,7 @@ static HANDLE hServerPipe    = INVALID_HANDLE_VALUE;
 static HANDLE systemToken    = INVALID_HANDLE_VALUE;
 static HANDLE hElevateThread = INVALID_HANDLE_VALUE;
 extern HANDLE atoken;
-extern int    threadcount;
+extern volatile long threadcount;
 
 /*
  * Worker thread for named pipe impersonation. Creates a named pipe and impersonates
@@ -22,12 +22,18 @@ extern int    threadcount;
 void elevate_thread() {
 	BYTE bMessage[128]          = {0};
 	DWORD dwBytes               = 0;
+	DWORD err;
 
 	/* wait for someone to connect to our named pipe */
 	while (!ConnectNamedPipe(hServerPipe, NULL)) {
-		if (GetLastError() == ERROR_PIPE_CONNECTED) {
+		err = GetLastError();
+		if (err == ERROR_PIPE_CONNECTED)
 			break;
-		}
+		/* 管道句柄失效/断裂时必须退出：command_elevate_post 15s 后关句柄
+		   触发的正是这些错误，原实现只认 ERROR_PIPE_CONNECTED，会以
+		   100% CPU 永久自旋且 threadcount 永不回落（掩码被永久禁用）。 */
+		if (err == ERROR_INVALID_HANDLE || err == ERROR_BROKEN_PIPE || err == ERROR_NO_DATA)
+			goto done;
 	}
 
 	/* we can't impersonate a client until we read data from the pipe */
@@ -42,15 +48,12 @@ void elevate_thread() {
 	if (!OpenThreadToken(GetCurrentThread(), TOKEN_ALL_ACCESS, FALSE, &systemToken))
 		goto done;
 
-	/* do some cleanup now */
-	if (hServerPipe) {
-		DisconnectNamedPipe(hServerPipe);
-		CloseHandle(hServerPipe);
-	}
+	/* 管道句柄由 command_elevate_post 独占收尾（所有路径都会关闭），
+	   线程这里不再 Close，避免二次关闭同一句柄值。 */
 
 done:
 	/* decrement our threadcount */
-	threadcount--;
+	InterlockedDecrement(&threadcount);
 }
 
 void getprivs(char * buffer, int length, HANDLE token, formatp * output) {
@@ -105,13 +108,24 @@ void command_elevate_pre(char * buffer, int length) {
 	cServicePipe[length] = '\0';
 
 	/* these should be set to reset our state */
-	systemToken    = INVALID_HANDLE_VALUE;
-	hServerPipe = INVALID_HANDLE_VALUE; /* 无论成败均由 command_elevate_post 收尾关闭 */
-	hElevateThread = INVALID_HANDLE_VALUE;
+	systemToken = INVALID_HANDLE_VALUE;
+
+	/* 上一轮未配对 post 的残留：先收掉旧线程句柄和旧管道。关旧管道会把
+	   仍阻塞在 ConnectNamedPipe 的旧线程以错误码路径安全送出。 */
+	if (hElevateThread != INVALID_HANDLE_VALUE) {
+		CloseHandle(hElevateThread);
+		hElevateThread = INVALID_HANDLE_VALUE;
+	}
+	if (hServerPipe != INVALID_HANDLE_VALUE) {
+		CloseHandle(hServerPipe);
+		hServerPipe = INVALID_HANDLE_VALUE;
+	}
 
 	/* create our pipe */
 	hServerPipe = CreateNamedPipe(cServicePipe, PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_WAIT, 2, 0, 0, 0, NULL);
-	if (!hServerPipe)
+	/* CreateNamedPipe 失败返回 INVALID_HANDLE_VALUE（非 NULL）：判 NULL 恒假，
+	   会让 worker 线程拿着失效句柄进 ConnectNamedPipe 永久失败。 */
+	if (hServerPipe == INVALID_HANDLE_VALUE)
 		return;
 
 	/* spawn a thread to wait for a connection to the pipe */

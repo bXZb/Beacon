@@ -237,6 +237,11 @@ void execjob_doit(char * runme, DWORD runme_length, DWORD flags) {
 	HANDLE newstdout, read_stdout;
 	DWORD total_read;
 
+	/* CreatePipe 失败时局部句柄是垃圾值：不预置 INVALID 的话，垃圾句柄会
+	   传给子进程 std 句柄和 psh_track */
+	newstdout = INVALID_HANDLE_VALUE;
+	read_stdout = INVALID_HANDLE_VALUE;
+
 	/* 重置一些内容 */
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
@@ -248,7 +253,9 @@ void execjob_doit(char * runme, DWORD runme_length, DWORD flags) {
 	sa.bInheritHandle = TRUE;
 
 	/* 我们只设置stdout管道 */
-	CreatePipe(&read_stdout, &newstdout, &sa, 1024 * 1024);
+	if (!CreatePipe(&read_stdout, &newstdout, &sa, 1024 * 1024)) {
+		return;
+	}
 
 	/* 进一步处理启动信息数据结构 */
 	GetStartupInfo(&si);
@@ -260,6 +267,8 @@ void execjob_doit(char * runme, DWORD runme_length, DWORD flags) {
 
 	/* 执行它 */
 	if (!execute_program_with_default_ppid(runme, runme_length, &si, &pi, CREATE_NEW_CONSOLE, FALSE)) {
+		CloseHandle(read_stdout);
+		CloseHandle(newstdout);
 		return;
 	}
 

@@ -66,6 +66,9 @@ char * next_host_round_robin(char * hosts) {
 * 在指定范围内生成随机数（基于可用主机数量）
 */
 int randomInRange(int min, int max) {
+	/* max<min（如空主机列表的 0,-1）会使模数变 0 → 整数除零崩溃 */
+	if (max < min)
+		return min;
 	return (rand() % (max - min + 1)) + min;
 }
 
@@ -99,7 +102,7 @@ char * next_host_random(char * hosts) {
 
 		tokenCount = 0;
 		token = strtok(hs, ",");
-		while (token != NULL) {			tokens[tokenCount++] = token;
+		while (token != NULL && tokenCount < 200) {			tokens[tokenCount++] = token;
 			token = strtok(NULL, ",");
 		}
 
@@ -109,6 +112,8 @@ char * next_host_random(char * hosts) {
 
 	// New token index number?
 	if (tokenIndex < 0 || tokenIndex >= tokenCount) {
+		if (tokenCount < 2)
+			return "";
 		tokenIndex = evenNumber(randomInRange(0, tokenCount - 1));
 		// dlog("strategy.next_host_random - Random Token Index: %d \n", tokenIndex);
 		// Hosts will be at even number index entries: tokens[0,2,4,6,8...]
@@ -119,7 +124,8 @@ char * next_host_random(char * hosts) {
 		int x = tokenIndex + 1;
 		tokenIndex = -1;
 		// dlog("strategy.next_host_random - URI Index: %d \n", x);
-		return tokens[x];
+		/* 奇数 token 数（畸形 host,uri 列表）时 x 可能==tokenCount */
+		return (x < tokenCount) ? tokens[x] : "";
 	}
 }
 
@@ -164,7 +170,7 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 
 		tokenCount = 0;
 		token = strtok(hs, ",");
-		while (token != NULL) {
+		while (token != NULL && tokenCount < 200) {
 			tokens[tokenCount++] = token;
 			token = strtok(NULL, ",");
 		}
@@ -280,17 +286,20 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 	if (uriOffset == 0) {
 		// Set the URI flag ON for the next invocation
 		uriOffset = 1;
-		// Return the host name at even array index: tokens[0,2,4,6,8,...]
+		// Return the host name at even array index: tokens[0,2,4,6,8...]
 		// dlog("strategy.next_host_priority_failover - Returning Index: %d Host: %s \n", tokenIndex, tokens[tokenIndex]);
-		return tokens[tokenIndex];
+		return (tokenIndex >= 0 && tokenIndex < tokenCount) ? tokens[tokenIndex] : "";
 	}
 
 	// Set the URI flag OFF for the next invocation
 	uriOffset = 0;
 
-	// Return the uri at odd number array index: tokens[1,3,5,7,9,...]
+	// Return the uri at odd number array index: tokens[1,3,5,7,9...]
 	// dlog("strategy.next_host_priority_failover - Returning Index: %d (+1) URI: %s \n", tokenIndex, tokens[tokenIndex + 1]);
-	return tokens[tokenIndex + 1];
+	{
+		int x = tokenIndex + 1;
+		return (x < tokenCount) ? tokens[x] : "";
+	}
 }
 
 /*

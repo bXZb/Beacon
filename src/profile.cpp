@@ -28,7 +28,7 @@
 /* define the size of any statically allocated vars where we will stuff data */
 #define STATIC_ALLOC_SIZE 8192
 
-void apply(char * program, profile * myprofile, char * arg1, int len1, char * arg2, int len2) {
+void apply(char * program, int plen, profile * myprofile, char * arg1, int len1, char * arg2, int len2) {
 	int x  = 0;
 	int sz = 0;
 	char arg[1024]   = {0};
@@ -42,7 +42,11 @@ void apply(char * program, profile * myprofile, char * arg1, int len1, char * ar
 	/* populate our host header, please */
 	hosth = setting_ptr(SETTING_HOST_HEADER);
 
-	data_init(&parser, program, 1024);
+	/* transform 程序是按 TLV 精确长度 malloc 的 setting 堆块：步走长度必须
+	   钳到真实长度（短程序否则会一路读进相邻堆数据直到碰巧遇到 0 字） */
+	if (plen > 1024)
+		plen = 1024;
+	data_init(&parser, program, plen);
 
 	while (1) {
 		next = data_int(&parser);
@@ -210,7 +214,7 @@ void apply(char * program, profile * myprofile, char * arg1, int len1, char * ar
 	}
 }
 
-int recover(char * program, char * buffer, int read, int max) {
+int recover(char * program, int plen, char * buffer, int read, int max) {
 	int sz = 0;
 	int tlen = max;
 	int status = 0;
@@ -224,7 +228,9 @@ int recover(char * program, char * buffer, int read, int max) {
 	if (temp == NULL)
 		return 0;
 
-	data_init(&parser, program, 1024);
+	if (plen > 1024)
+		plen = 1024;
+	data_init(&parser, program, plen);
 
 	while (1) {
 		next = data_int(&parser);

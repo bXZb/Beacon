@@ -36,7 +36,9 @@ void bformat_int(formatp * buffer, int value) {
 
 /* copy some value into our buffer */
 void bformat_copy(formatp * buffer, char * src, int length) {
-	if (length >= (buffer->size - buffer->length) || length == 0)
+	/* 负长度来自上游 size-4 之类的差值：既穿透上界比较又会以 (size_t)负数
+	   传入 memcpy，这里统一拒绝。 */
+	if (length <= 0 || length >= (buffer->size - buffer->length))
 		return;
 
 	memcpy(buffer->self, src, length);

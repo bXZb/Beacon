@@ -5,7 +5,10 @@
 
 char * local_mirror_data(char * buffer, int length);
 
-int threadcount = 0;
+/* volatile long：主线程 ++ 与 worker 线程 -- 跨线程并发，gargle 在主循环读它
+ * 决定是否掩码——非原子更新可能丢增量（掩码永久跳过）或提前归零（在工作
+ * 线程还活着时掩它的堆）。全部访问走 Interlocked。 */
+volatile long threadcount = 0;
 
 typedef struct {
 	void (*function)(void *);
@@ -55,6 +58,8 @@ HANDLE _run_thread_start(void (*function)(void *), LPVOID args) {
 
 	/* allocate our argz bundle */
 	SAFE_THREAD_ARGS * argz = (SAFE_THREAD_ARGS *)VirtualAlloc(NULL, sizeof(SAFE_THREAD_ARGS), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (argz == NULL)
+		return INVALID_HANDLE_VALUE;
 
 	/* initialize these key members */
 	argz->function   = function;
@@ -68,6 +73,13 @@ HANDLE _run_thread_start(void (*function)(void *), LPVOID args) {
 	if (trampoline != NULL)
 		hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)trampoline, (LPVOID)argz, 0, NULL);
 
+	/* CreateThread 失败（返回 NULL）：归还 bundle，让 run_thread_start
+	   统一回滚 threadcount */
+	if (hThread == NULL) {
+		VirtualFree(argz, 0, MEM_RELEASE);
+		hThread = INVALID_HANDLE_VALUE;
+	}
+
 	return hThread;
 }
 
@@ -75,14 +87,23 @@ HANDLE _run_thread_start(void (*function)(void *), LPVOID args) {
  * Determine if we need to be cautious of/work around Control Flow Guard. If true, then use a trampoline for our new thread targets.
  */
 HANDLE run_thread_start(void(*function)(void *), LPVOID args) {
-	threadcount++;
+	HANDLE hThread;
+
+	InterlockedIncrement(&threadcount);
 
 	if (setting_short(SETTING_CFG_CAUTION) == 1) {
-		return _run_thread_start(function, args);
+		hThread = _run_thread_start(function, args);
 	}
 	else {
-		return CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)function, (LPVOID)args, 0, NULL);
+		hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)function, (LPVOID)args, 0, NULL);
 	}
+
+	/* 线程没起来就必须回滚计数：否则 threadcount 永不归零，睡眠掩码被
+	   永久禁用（gargle 以 threadcount>0 为"有活跃 worker"信号） */
+	if (hThread == NULL || hThread == INVALID_HANDLE_VALUE)
+		InterlockedDecrement(&threadcount);
+
+	return hThread;
 }
 
 /*
@@ -109,7 +130,13 @@ void safe_exit() {
 	else {
 		if (cfg_caution == 1) {
 			// dlog("safe_exit..EXIT_FUNK_PROCESS...CFG CAUTION...WaitForSingleObject INFINITE");
-			WaitForSingleObject(CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ExitProcess, NULL, 0, NULL), INFINITE);
+			HANDLE hExit = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ExitProcess, NULL, 0, NULL);
+			/* CreateThread 失败时 WaitForSingleObject(NULL) 立即返回、safe_exit
+			   静默落空——最后手段直接退出（track_memory_cleanup 已完成） */
+			if (hExit == NULL) {
+				ExitProcess(0);
+			}
+			WaitForSingleObject(hExit, INFINITE);
 			// dlog("safe_exit..EXIT_FUNK_PROCESS...CFG CAUTION...WaitForSingleObject DONE!!!");
 		}
 		else {

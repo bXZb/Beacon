@@ -195,6 +195,9 @@ void command_download_stop(char * buffer, int length) {
 	unsigned int fid;
 	file_entry * entry = download_list;
 
+	if (length < 4)
+		return;
+
 	/* 将4字节复制到我们的文件ID */
 	memcpy(&fid, buffer, 4);
 	fid = ntohl(fid);

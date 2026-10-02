@@ -14,7 +14,7 @@ extern void    * gtrampoline;
 extern GARGLEP * gparms;
 
 /* thread count? */
-extern int threadcount;
+extern volatile long threadcount;
 
 void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon);
 void gargle_trampoline(void * end, void * begin);

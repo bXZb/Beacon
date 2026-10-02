@@ -9,7 +9,7 @@
 #include "jobs.h"
 #include "parse.h"
 
-extern int threadcount;
+extern volatile long threadcount;
 
 typedef struct {
 	SOCKET socket;
@@ -81,7 +81,7 @@ void serveit_thread(void * data) {
 
 	if (ClientSock == INVALID_SOCKET) {
 		serverdata_cleanup(sdata);
-		threadcount--;
+		InterlockedDecrement(&threadcount);
 		return;
 	}
 
@@ -99,7 +99,7 @@ void serveit_thread(void * data) {
 	closesocket(ClientSock);
 
 	/* decrement our threadcount */
-	threadcount--;
+	InterlockedDecrement(&threadcount);
 }
 
 void serveit(unsigned short port, char * data, int length) {
@@ -140,7 +140,8 @@ void serveit(unsigned short port, char * data, int length) {
 	/* make our serverdata object */
 	sdata = serverdata_build(ServerSock, data, length);
 
-	run_thread_start(&serveit_thread, (LPVOID)sdata);  /* TODO: this handle that is returned is not Closed */
+	/* 立即关掉自己的句柄副本（不影响线程运行）：否则每条 web 命令泄漏一个 */
+	CloseHandle(run_thread_start(&serveit_thread, (LPVOID)sdata));
 }
 
 void command_webserver_local(char * buffer, int length) {

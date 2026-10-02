@@ -27,7 +27,7 @@ static void http_assemble_request(profile * myprofile, char * myuri, const char 
 
 	profile_setup(myprofile, plen);
 	_snprintf(myprofile->uri, 1024, "%s", hook);
-	apply(setting_ptr(transform_setting), myprofile, data, dlen, postbuf, postlen);
+	apply(setting_ptr(transform_setting), (int)setting_length(transform_setting), myprofile, data, dlen, postbuf, postlen);
 	hostprof_apply(http_current_host, myprofile, is_post);
 
 	if (strlen(myprofile->parameters) == 0)

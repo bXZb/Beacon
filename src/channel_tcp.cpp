@@ -1,4 +1,5 @@
 #include "channel.h"
+#include "commands.h" /* safe_exit */
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,7 +40,7 @@ void channel_winsock_init() {
 	if (WSAStartup(wVersionRequested, &wsaData) < 0) {
 		//dlog("ws2_32.dll is out of date.\n");
 		WSACleanup();
-		exit(1);
+		safe_exit();
 	}
 
 	is_winsock_initialized = 1;

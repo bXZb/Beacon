@@ -366,6 +366,8 @@ void command_send(char * buffer, int length) {
 	unsigned int status = 0;
 
 	/* [id : 4 bytes][data : the rest] */
+	if (length < (int)sizeof(int))
+		return;
 
 	/* parse our id value */
 	memcpy((void *)&id, buffer, sizeof(int));
@@ -392,6 +394,9 @@ void command_send(char * buffer, int length) {
 void command_close(char * buffer, int length) {
 	socket_entry * temp = pivot_list;
 	int              id = 0;
+
+	if (length < (int)sizeof(int))
+		return;
 
 	/* parse our id value */
 	memcpy((void *)&id, buffer, sizeof(int));

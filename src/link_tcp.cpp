@@ -101,6 +101,8 @@ int link_channel_tcp_read(void * thisp, char * buffer, int max) {
 
 	/* read our length into a pro-forma frame */
 	frame = link_frame_header(SETTING_TCP_FRAME_HEADER, 0, &flen);
+	if (frame == NULL)
+		return -1;
 	rlen = recv_frame(inst->socket, frame, flen);
 	if (rlen == -1 || rlen != flen)
 		return -1;
@@ -122,6 +124,8 @@ int link_channel_tcp_write(void * thisp, char * buffer, int length) {
 
 	/* build and write our frame header */
 	frame = link_frame_header(SETTING_TCP_FRAME_HEADER, length, &flen);
+	if (frame == NULL)
+		return FALSE;
 	if (!send_frame(inst->socket, frame, flen))
 		return FALSE;
 

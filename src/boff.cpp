@@ -551,7 +551,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			width = 8;
 #endif
 		seclen = bof_section_length(reloc->section, code.length, rdata.length, data.length, xdata.length, pdata.length, (int)bssSize);
-		if (reloc->offset < 0 || reloc->offset + width > seclen) {
+		/* 用减法形式避免 offset+width 的有符号回绕（offset 接近 INT_MAX 时
+		   加法回绕为负、上界比较恒假）。 */
+		if (reloc->offset < 0 || seclen < width || reloc->offset > seclen - width) {
 			post_error_d(0x4d, reloc->offset);
 			break;
 		}
@@ -583,7 +585,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base))
 				break;
 		}
-		else if (reloc->symbol < 1024) {
+		else if (reloc->symbol >= 0 && reloc->symbol < 1024) {
 			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
 				break;
 		}

@@ -45,7 +45,9 @@ BOOL link_register(LCHANNEL channel, int hint, void(*callback)(char * buffer, in
 
 	/* read agentid from the pipe */
 	status = LCHANNEL_READ_FRAME(channel, response, 256);
-	if (status < 0)
+	/* 帧至少要有 4 字节 agentid。TCP pivot 监听器面向网络：任何人都能
+	   发 0-3 字节帧，status-4 为负会穿透下游拷贝。 */
+	if (status < 4)
 		return FALSE;
 
 	memcpy(&agentid, response, 4);
@@ -90,6 +92,9 @@ void command_link_reopen(char * buffer, int length, void (*callback)(char * buff
 	unsigned int agentid = 0;
 	int x = 0;
 
+	if (length < (int)sizeof(unsigned int))
+		return;
+
 	/* parse out the agentid */
 	memcpy(&agentid, buffer, sizeof(unsigned int));
 	agentid = ntohl(agentid);
@@ -113,6 +118,9 @@ void command_link_route(char * buffer, int length, void (*callback)(char * buffe
 	unsigned int agentidN = 0; /* network byte-order agent ID */
 	int x = 0;
 	int status = 0, wrote = 0, read = 0, rlen = 0;
+
+	if (length < 4)
+		return;
 
 	if (link_read_buffer == NULL) {
 		link_read_buffer = (char *)malloc(MAX_GET);
@@ -201,7 +209,10 @@ void link_poll(void (*callback)(char * buffer, int length, int type)) {
 void command_link_stop(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
 	unsigned int agentid = 0;
 
-	/* parse out the agent id */
+	if (length < (int)sizeof(unsigned int))
+		return;
+
+	/* parse out the agentid */
 	memcpy(&agentid, buffer, sizeof(unsigned int));
 	agentid = ntohl(agentid);
 	link_stop(agentid, callback);
@@ -235,17 +246,24 @@ char * link_frame_header(int type, int message, int * size) {
 	char * ptr = setting_ptr(type);
 	char * val = NULL;
 
-	/* init our parser */
-	data_init(&parser, ptr, 128);
+	/* setting 缺失（无该块的 profile / guardrails fail-close 清空表）时
+	   ptr 为 NULL，绝不能进解析器 */
+	if (ptr == NULL)
+		return NULL;
+
+	/* init our parser（钳到真实 TLV 长度，防止短块越读） */
+	data_init(&parser, ptr, (int)setting_length(type) < 128 ? (int)setting_length(type) : 128);
 
 	/* read our length */
 	*size = data_short(&parser);
 
 	/* get our frame pointer */
 	val   = data_ptr(&parser, *size);
+	if (val == NULL || *size < 4)
+		return NULL;
 
 	/* set our frame value in this pointer, please */
-	memcpy(val + *size + -4, &message, 4);
+	memcpy(val + *size - 4, &message, 4);
 
 	return val;
 }

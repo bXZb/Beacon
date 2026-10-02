@@ -8,6 +8,7 @@
 #include <wininet.h>
 
 #include "parse.h"
+#include "commands.h" /* safe_exit */
 #include "beacon.h"
 #include "track_memory.h"
 
@@ -35,8 +36,10 @@ static symmetric_CBC in_state;
 static symmetric_key the_key;
 static unsigned int lastcounter = 0;
 
-/* swallow the first argument (a string); so it doesn't show up in our binary anymore */
-#define sanity(a, b) if (b != CRYPT_OK) { exit(1); }
+/* swallow the first argument (a string); so it doesn't show up in our binary anymore.
+ * exit(1) 会绕过 safe_exit（掩码清单不注销、CRT atexit 拖进反射 DLL），
+ * 统一走 safe_exit。 */
+#define sanity(a, b) if (b != CRYPT_OK) { safe_exit(); }
 
 /* decrypt the specified stuff */
 int security_decrypt(char * ciphertext, int length) {
@@ -101,7 +104,7 @@ int security_decrypt(char * ciphertext, int length) {
 		memcpy(plaintext, ciphertext, length);
 	}
 	else {
-		exit(1);
+		safe_exit();
 	}
 
 	/* initialize our data parser */
@@ -179,7 +182,7 @@ int security_encrypt(char * ciphertext, int length) {
 		/* do nothing, apparently */
 	}
 	else {
-		exit(1);
+		safe_exit();
 	}
 
 	/* calculate hmac for the buffer */
