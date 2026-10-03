@@ -92,3 +92,20 @@
 - ETWti/内核回调只能降敏；开源矩阵全绿 ≠ 一线 EDR 全绿（真机 EDR 实验室为独立预算项）。
 - LACUNA Ghost Frames 无公开 PoC，方向性参考。
 - 掩码双路径（自研 vs 官方 blob）必须开关隔离 + 双验收。
+
+## 8. Phase 1 施工日志（2026-10-03）
+
+- 实现：`src/sleepmask_gen3.cpp`（1a RC4/SystemFunction032 + 块计数派生 key；1b CallStackMasker
+  移植=timer ROP NtContinue x4 + spoolsv 静态形状 + 帧尺寸从 unwind 实算）。集成在 GargleSleep
+  官方 BOF 之前，失败自动回退。x64-only（x86 编空）。
+- 预验证抓到：UNW_FLAG_CHAININFO 宏值应为 0x4（误写 0x2 = UHANDLER，会把异常 handler 指针当
+  链式 RF 走）。Python 复刻算法对真实系统 DLL 四帧全解（160/64/48/128，总 408B）。
+- **bisect 矩阵**（mini_sm 活体，构建 a0ce43f/212640a/5ed3b0d/99f9a96）：
+  - A：RC4 全范围 + Sleep → **死**（<20s，.text in-place 加密毁掉自身返回路径——官方 BOF 能掩
+    .text 是因为它整体在掩码范围外的映射里执行）
+  - B：RC4 剔 .text + ROP → **死**（<20s）
+  - C：无 RC4 + ROP → **活 4+ 窗口**，但 .text 为官方 XOR 密文 → 疑似 init 失败回退官方路径
+  - 矛盾：同代码 A/B 的 init 应与 C 同成败——待文件探针（g3_log，C:\Users\Public\gen3_trace.txt）
+    揭示 init 失败点/路径选择
+- 结构性结论（已定）：**掩码引擎必须在掩码范围外执行**。.text 全覆盖的正解 = 引擎拷贝到私有 RX
+  页（syscalls 桩先例）——列为 1a' 后续。
