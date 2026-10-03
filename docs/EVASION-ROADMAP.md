@@ -281,3 +281,52 @@ ev32(dns) 已清；TS 仍 mini_sm 待矩阵重跑后复位。
   （VirtualFree+重捕获+句柄表重定位），排 Phase 1 收尾后的独立轮（§12）。
 - 验收矩阵：内容级面清零（PE-sieve 自证密文）；分配级保留（Phase 4）；六通道
   A/B 绿、E 拆雷待重跑、F 待重跑、C=独立 x86 轮、D=环境。
+
+## 12. Round 17：CFG 会战收官（2026-10-04，626dd01→1d9d397）
+
+spawn 注入形态（rundll32）在 1b ROP 下首窗口死亡——两次同点 c0000409
+（ntdll+0xa2920=int 29h）。mini_dbg2（first-chance 栈走查）+ IDA 符号化 ntdll 定谳：
+
+**RtlpTpTimerCallback → ZwContinue → LdrpHandleInvalidUserCallTarget →
+RtlpHandleInvalidUserCallTarget → int 29h**
+
+= **镜像级 CFG 进程里 NtContinue 校验伪造 RIP，ntdll!memcpy/SetEvent 不是合法间接目标**。
+第一版修复（GetProcessMitigationPolicy 查进程策略位→降级）无效——策略位不反映镜像级
+CFG（rundll32 PE 头带 CFG 元数据），父会话照样死。**终版修复（1d9d397，Ekko 式）**：
+SetProcessValidCallTargets 把两个 beat 目标（memcpy/SetEvent）按页加入合法位图；API
+失败才降级 1a。注意该调用有遥测可见性（Phase 2 换 CFG-valid 拷贝原语，见下）。
+
+**终局活测（1d9d397，TS mini_sm）**：
+- EXE 形态（ev34）：INITIAL+sleep 5+ps 全表 ✓（白名单对 CFG-off 进程无害）。
+- **spawn 注入形态（rundll32 498127652）：INITIAL 后 4+ 分钟存活、lastf 恒 2s、
+  mini_dbg2 全程零异常**——gen3 在 CFG 宿主注入形态下首次过线。
+- 残留：smb_link 的 link 子 spawn 在 mini_sm 下未出 INITIAL（父活、任务可达；
+  r2_nosm 下该链历史全绿→掩码 profile 特有 wrinkle，留专轮）。E extc2 按日志判定
+  PASS（INITIAL+ps 0.15s 返回，驱动脚本自身赛跑 bug 误报 FAIL）。
+
+### Phase 1 最终收口（2026-10-04）
+
+| 项 | 状态 |
+|---|---|
+| 1a RC4 旋转掩码 | **过线**（§10：40 窗 1183 块审计 0 违规+外部密文采样） |
+| 1b 调用栈伪装 | **过线**（§11：chain-exact 2/2+帧距逐一吻合+96 窗 0 违规） |
+| 1c Bouncing | 未实现（公开无实现；依赖窗口框架扩展，独立轮） |
+| 验收-行为取证 | 存活/掩码态/任务响应/外部采样 全绿 |
+| 验收-扫描矩阵 | 内容级面清零（PE-sieve 自 dump 纯密文、IAT hooks 0）；分配级保留=Phase 4 靶（0x800000 明文 MZARU loader 区为新增明确靶标） |
+| 验收-六通道 | A http ✓ B winhttp ✓ E extc2 ✓ S 无探针烟雾 ✓；F pivot 父链 ✓/link 子留专轮；C x86=官方路径预存崩（从未测过 x86+掩码，独立轮）；D dns=TUN 环境阻断 |
+
+**本轮沉淀的预存缺陷清单（非 gen3、非本分支引入，全部因首次掩码 profile 全通道
+测试而现形）**：①4.5 等待掩码蹦床=INT3 占位（已拆除→无掩码降级；真修复=gen3
+wait-window 变体）；②x86 官方 sleepmask BOF 路径崩溃；③smb_link 子 spawn 掩码下
+wriggle；④官方 XOR 路径映像内堆块重叠=明文洞（C-batch）。
+
+**Phase 2 入口（按序）**：
+1. gen3 wait-window 变体（掩码包住 pipe/TCP 任意长等待，替代 ①的降级）。
+2. CFG 隐蔽原语：换掉 SetProcessValidCallTargets（CFG-valid 拷贝函数或 DR+VEH 路
+   线），消掉遥测可见性。
+3. gate 扩容（syscalls.cpp 种子→~25 SSN+RA 欺骗三热点）。
+4. 1c Bouncing（自释放→重分配+句柄表重定位）。
+5. 1a'：掩码引擎拷私有 RX 页覆盖 .text（官方 blob 式，消掉 .text 明文残留）。
+6. x86 官方路径修复轮（②）+ link 子 wrinkle（③）。
+分支 HEAD 1d9d397；六槽=1d9d397 构建（37157889360）；TS 已复位 r2_nosm（pgrep 硬验证）；
+全部测试进程已清；生产 4.9.1 分支与 r2_nosm 姿态不受影响。
