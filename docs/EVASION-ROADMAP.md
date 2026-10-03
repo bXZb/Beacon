@@ -212,3 +212,72 @@ ThreadWaitReason=4（DelayExecution）=在 Sleep 里，不是挂死。
 2. 验收证据：evidence_gen3.py 栈走查（spoolsv 四帧链，掩码态抓 2 次）+ 1a 全套
    （round-trip/轮换/通信/任务/外部采样）复跑。
 3. 过线后：清探针 → Moneta 对比 → 六通道回归（本分支 sleeve 全链 gen3）。
+
+## 11. Round 15-16：1b 过线 + 六通道首扫三雷（2026-10-04，e9bdf45/c38ad2f/bacec11）
+
+### 1b（ROP 调用栈伪装）活测过线（ev29，sleep 5，96+ 窗口）
+
+两个掩码态窗口洞修掉后 ROP 链直接工作（bisect-C 的机制从未坏——当时死因就是 554 行
+g3_log 走密文 IAT 与 SetEvent 桩地址两类问题）：
+1. **`(DWORD64)SetEvent` 取的是 .text IAT thunk 桩地址**——SetEvent 拍在掩码态触发时
+   `jmp [rip+X]` 读密文 .rdata 槽→跳垃圾。修=GetProcAddress 真地址。
+2. **teardown（DeleteTimerQueueEx/CloseHandle）在 pwait 返回后、unmask 前执行**——同走
+   密文 IAT。修=预解析局部指针。
+3. 短窗守卫：time<700ms 时 timer 拍（150/300 固定）会与 time+600 唤醒乱序→退回
+   指针化 Sleep 窗口。
+
+| 证据 | 结果 |
+|---|---|
+| round-trip | 2639 块审计 **0 违规**（96+ 完整窗口，VIOLATIONS=0） |
+| **spoolsv 链（外部栈走查）** | **chain-exact 2/2**：主线程（UserRequest 等待）栈上 slot0=`kernelbase!WaitForSingleObjectEx+0x8e`（0x1b620+0x8e=0x1b6ae ✓）、slot20=`localspl!InitializePrintMonitor2+0xb7a`（=模块+0x400AA ✓）、slot28=`kernel32!BaseThreadInitThunk+0x14`、slot34=`ntdll!RtlUserThreadStart+0x21`；**帧间距 160/64/48B 与自解 unwind 尺寸逐一吻合**——从 RSP 起整个可见窗口都是伪装帧 |
+| 等待原因 | 主线程 ThreadWaitReason 6（UserRequest）≠1a 的 4（DelayExecution）——行为指纹层也换掉了 |
+| 其余 | 轮换 PASS、外部采样 20s=6 值（明文→新明文→4 窗互异密文）、掩码运行中 ps/ls 正常、lastf 恒秒级 |
+
+**验收工具三连修**（此前"no localspl observed"全是工具 bug，从未抓到过真栈）：
+①Toolhelp 线程快照全系统失效（Thread32First err 24）→ NtQuerySystemInformation 枚举
+（nqsi_threads.py）；②x64 CONTEXT flags=0x100010 是**无效值**——API 返回 TRUE 但一字节
+不写（金丝雀实锤）→ CONTEXT_FULL=0x10000B + 0x4F0 原始缓冲；③evidence_gen3 旧代码把
+Rip(+0xF8) 当 Rsp(+0x98) 读、链校验用函数相对偏移比对模块相对走查值——重写为正确配方
+（栈走查深度须 >25 槽才能越过 ntdll 等待帧到达 planted 链）。
+
+### 扫描矩阵对比（掩码窗口内，vs Phase 0 基线）
+
+- **PE-sieve**：Implanted=2（0x800000 PE + 0xD50000 shc）结构性命中；**IAT Hooks=0**；
+  **自 dump 的执行镜像 d50000.shc 首字节即纯密文**——扫描器自己抓到了掩码态。
+- **Moneta**：4 处全为分配级 IOC（未签名载体/0x800000 RX/0xD50000 RWX/尾页）。
+- **诚实结论**：Phase 1 消灭的是**内容级**检测面（签名/YARA/内存扫描类）；分配级 IOC
+  （unbacked RX/RWX/unsigned）原样保留=Phase 4 加载器链靶子。**新靶标：0x800000 loader
+  区明文 `MZARUH` 永驻**（反射加载器头+staging，用后不抹）。
+- x86+gen3 不适用（编译空）；x86 走官方路径——见下。
+
+### 六通道首扫三雷（e9bdf45 构建，TS mini_sm）
+
+| 通道 | 首扫 | 判定 |
+|---|---|---|
+| A http(gen3) | LS/PS 正常、lastf 秒级 | **PASS**（=ev29） |
+| B winhttp(gen3) | INITIAL+LS 字节 | **PASS**（ev30） |
+| C x86 http(官方路径) | **c0000005 崩溃**（首 checkin 后数秒，偏移 0x3c3003b unknown） | 预存缺陷：**x86+sleep_mask 从未活测过**（历史 sm-true 全是 x64）；非本分支引入（x86 无 gen3 改动）；待专轮修 |
+| D dns(gen3) | 进程活、无 INITIAL | **环境阻断**：本机出站 UDP:53 被 singbox TUN 吞（已知，需用户关 TUN） |
+| E extc2 | 载荷 DllMain 后宿主进程静默死 | **INT3 蹦床雷，已定位+拆除**：`GarglePipeWait` nook≠0 时执行 `_gargle_it` 模板桩（extc2 专属 map 定位 RVA 0x13C84，mini_dbg 抓到 6 连 INT3）——**4.5 等待掩码蹦床在本代码库从未实现**（INT3 占位），nook=0 时无害返回、掩码 profile 一开即死。r2_nosm 回归绿是因 nook=0 |
+| F pivot SMB/TCP | spawn 发给了已死的 ev31=连坐 | 待 bacec11 构建重跑 |
+
+**拆雷（bacec11）**：GarglePipeWait/GargleBlockPipe/GargleWaitTCP/GargleAccept 与
+GargleSleep 尾部兜底，全部退化为已验证的无掩码姿态（plan-B ConnectNamedPipe/裸
+accept/裸 Sleep）——与 gargle_own_sections "空表=降级不崩溃"同一原则。**真修复=
+gen3 wait-window 变体**（掩码窗口包住任意长等待，见 §12 入口）。
+
+**六通道驱动坑**：wait_for 正则必须 re.MULTILINE（chunk 从任意字节起）；`spawn` 发给
+死会话只排队无效——先验目标存活。
+
+分支状态：本地 c38ad2f（探针门控 G3_TRACE，默认零开销）+ bacec11（拆雷）**待推**
+（GitHub 直连+代理双断，重试循环中）；部署 sleeve=e9bdf45；ev29/ev30 留作重跑父会话；
+ev32(dns) 已清；TS 仍 mini_sm 待矩阵重跑后复位。
+
+### Phase 1 收口状态
+
+- **1a（RC4 旋转掩码）：过线**（§10，40 窗 0 违规）。
+- **1b（调用栈伪装）：过线**（本节，链铁证+96 窗 0 违规）。
+- **1c（Bouncing 免权限翻转）：未实现**——公开无实现、自研项，依赖 1b 的窗口框架扩展
+  （VirtualFree+重捕获+句柄表重定位），排 Phase 1 收尾后的独立轮（§12）。
+- 验收矩阵：内容级面清零（PE-sieve 自证密文）；分配级保留（Phase 4）；六通道
+  A/B 绿、E 拆雷待重跑、F 待重跑、C=独立 x86 轮、D=环境。
