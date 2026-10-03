@@ -33,7 +33,7 @@ typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key); /* advapi32 
 
 
 /* ---- temporary bisect probe (remove after diagnosis) ---- */
-static void g3_log(const char * msg, long v)
+void g3_log(const char * msg, long v)
 {
 	HANDLE f = CreateFileA("C:\\Users\\Public\\gen3_trace.txt", FILE_APPEND_DATA, 0, NULL,
 	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
