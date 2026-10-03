@@ -109,3 +109,40 @@
     揭示 init 失败点/路径选择
 - 结构性结论（已定）：**掩码引擎必须在掩码范围外执行**。.text 全覆盖的正解 = 引擎拷贝到私有 RX
   页（syscalls 桩先例）——列为 1a' 后续。
+
+## 9. Phase 1 bisect 战报（2026-10-03，构建 a0ce43f..4d45c1b 共 11 轮）
+
+gen3（RC4 掩码 + CallStackMasker ROP）在 mini_sm 活体上经历了 11 轮构建-部署-取证循环。
+已修复并各自实证的真缺陷（按发现顺序）：
+
+1. **UNW_FLAG_CHAININFO=0x4 不是 0x2**（UHANDLER）——Python 对真实系统 DLL 复刻算法预验证
+   抓到；四帧尺寸 160/64/48/128 全解。
+2. **掩码引擎不得掩自身代码**——RC4 in-place 加密 .text 即毁掉 enc 循环自己的返回路径
+   （官方 BOF 活着是因为整体在掩码范围外的映射里执行）。修正=snapshot 解析自身 PE 头把
+   .text 从掩码范围剔除（头页保留）。.text 全覆盖的正解=引擎拷贝私有 RX 页（后续 1a'）。
+3. **c1e608.. “.text 密文”是取证伪影**——掩码全关对照仍读到同值：那是 Loader.Beacon 区
+   +0x1010 的固有字节。**Phase 0 的“三节全密文”证据同理作废**（采样对象错位）；镜像定位
+   必须区分 loader 区/blob 副本/执行镜像三个 MZ。
+4. **gparms 在 gen3 路径上是 NULL**——gargle_setup_parms 只被官方 BOF 路径/蹦床惰性调用，
+   都在 gen3 之后；`*gparms` 即崩。修正=gen3_sleep 自行初始化（无排除区间）。
+5. **窗口时序=官方 BOF 契约**：掩码开始到解密完成之间零 API 调用（掩 .rdata=掩 IAT）。
+   修正=一切解析/armed 前置 + 窗口内仅经预解析指针睡眠。
+6. **G3_ROP_OFF 曾仍 armed 四个 timer**——300ms spoof 拍踩坏 kernel32!Sleep 中线程的栈，
+   60s 醒来走假链 fail-fast。修正=ROP_OFF 分支彻底不建 timer。
+7. **SystemFunction032 指针是 .data 静态**——掩码回调与 unmask 都必须用掩码前缓存的指针
+   （mctx.fn），读密态 g_sf032=调密文地址。
+
+**当前卡点（第 7 层）**：1a-only 窗口（RC4 + 预解析 Sleep）在窗口结束后死亡——mini_dbg
+（自研 DEBUG_EVENT 调试器，evasion-lab/mini_dbg.py）抓到终局异常：**beacon .text 的
+IAT thunk `call [rip+0x1c220]` 槽值=-1，tid=主线程**=醒来后 checkin 调 WinINet import
+即死——**mask/unmask 在 .rdata 上不对称**（某块只加密未恢复，或恢复用了不同密钥流）。
+下一轮动作：g3_log 全指针化（CreateFileA/WriteFile/CloseHandle 预解析进 mctx）+ unmask
+逐块打点（掩码期打点合法化的唯一途径），或 x64dbg 断 unmask 循环比对块数/密钥。
+
+**方法论沉淀**：①掩码引擎的一切状态（代码/IAT/静态指针/打点 IO）必须在掩码范围外或
+预先捕获到栈；②“密文”判定必须与磁盘原文比对且确认采样对象；③DEBUG_EVENT 的 union
+在 x64 有 4 字节对齐 padding（ctypes 复刻要加）；④无 WER dump=典型 fail-fast，用
+mini_dbg 抓 first/second chance 才有崩点。
+
+分支状态：HEAD 4d45c1b（G3_ROP_OFF 开启=1a-only 形态；ROP 实现在位待时序轮）；探针
+g3_log 仍在（验证过线后清除）；TS 已复位 r2_nosm；全部 ev* 测试进程已清。
