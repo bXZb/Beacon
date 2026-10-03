@@ -142,7 +142,7 @@ typedef struct {
 #define G3_UWOP_SAVE_XMM128     8
 #define G3_UWOP_SAVE_XMM128_FAR 9
 #define G3_UWOP_PUSH_MACHFRAME  10
-#define G3_UNW_FLAG_CHAININFO   0x2 /* in the flags nibble */
+#define G3_UNW_FLAG_CHAININFO   0x4 /* flags nibble; E/UHANDLER (0x1/0x2) only add a handler pointer we ignore */
 
 typedef PRUNTIME_FUNCTION(WINAPI *G3_LOOKUP)(DWORD64, PDWORD64, void *);
 static G3_LOOKUP g_lookup;
