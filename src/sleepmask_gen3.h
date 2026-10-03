@@ -1,5 +1,7 @@
 #pragma once
 
+#include <windows.h>
+
 /* Phase 1 Gen3 sleep chain (evasion-research branch).
  *
  * gen3_sleep(time) replaces the sleep window with:
