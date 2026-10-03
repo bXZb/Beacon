@@ -493,11 +493,13 @@ BOOL gen3_sleep(DWORD time)
 	g3_log("sleep: init ok, stack bytes", (long)g_stack_bytes);
 
 	/* per-cycle key, kept on the stack (never masked) */
+	g3_log("sleep: pre-key", 0x7fffffff);
 	{
 		unsigned int * k = (unsigned int *)key;
 		for (i = 0; i < 4; i++)
 			k[i] = bigger_rand();
 	}
+	g3_log("sleep: post-key", 0x7fffffff);
 
 	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
 	g3_log("sleep: nblocks", nblocks);
