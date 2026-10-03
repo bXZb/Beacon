@@ -486,6 +486,12 @@ BOOL gen3_sleep(DWORD time)
 	int i;
 
 	g3_log("sleep: enter", 0x7fffffff);
+	/* gparms is initialized lazily by the official BOF path (boff.cpp) or
+	 * the trampoline - both run AFTER gen3 in GargleSleep. Without this
+	 * the snapshot dereferences a NULL gparms. No exclusion span: .text
+	 * is already excluded explicitly in g3_snapshot_blocks. */
+	if (gparms == NULL)
+		gargle_setup_parms(NULL, NULL, 0);
 	if (!g_inited && !g3_init()) {
 		g3_log("sleep: init failed -> caller falls back", 0x7fffffff);
 		return FALSE;
