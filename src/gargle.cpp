@@ -42,6 +42,7 @@ void GargleSleep(DWORD time) {
 	 * any init failure falls through to the official sleepmask BOF. */
 	if (gen3_sleep(time))
 		return;
+	g3_log("gargle: gen3 fell back to official path", 0x7fffffff);
 #endif
 
 	decoded = (char *)malloc(16384);
