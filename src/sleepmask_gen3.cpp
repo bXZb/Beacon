@@ -99,6 +99,14 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 	int n = 0;
 	DWORD text_va = 0, text_end = 0;
 
+	g3_log("snap: beacon_ptr", (long)(long long)parms.beacon_ptr);
+	g3_log("snap: sections", (long)(long long)parms.sections);
+	g3_log("snap: hr", (long)(long long)hr);
+	{
+		DWORD lf = *(DWORD *)((unsigned char *)parms.beacon_ptr + 0x3C);
+		g3_log("snap: lfanew", (long)lf);
+	}
+
 	/* The mask engine (this code) lives in beacon .text: an in-place
 	 * encrypt of .text would encrypt our own return path mid-call. The
 	 * official sleepmask BOF survives masking .text only because the BOF
@@ -124,6 +132,8 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 		}
 	}
 
+	g3_log("snap: text_va", (long)text_va);
+	g3_log("snap: text_end", (long)text_end);
 	sec = (DWORD *)parms.sections;
 	if (sec != NULL) {
 		while (n + 1 < max) {
