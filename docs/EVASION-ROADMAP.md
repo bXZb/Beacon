@@ -146,3 +146,69 @@ mini_dbg 抓 first/second chance 才有崩点。
 
 分支状态：HEAD 4d45c1b（G3_ROP_OFF 开启=1a-only 形态；ROP 实现在位待时序轮）；探针
 g3_log 仍在（验证过线后清除）；TS 已复位 r2_nosm；全部 ev* 测试进程已清。
+
+## 10. Round 12-14：1a 破案定谳 + 过线（2026-10-03，e6c6c2f/eb7fafa）
+
+### Round 12 破案：上一轮"不对称"理论被推翻，真凶两连环
+
+**第一凶（打点非法）——纯桌面证据钉死，零构建**：
+- 上一轮崩溃留下的 gen3_trace.txt 显示：每个进程的日志都止步于 `nblocks`，
+  `ROP window served`/`unmasked` 从未出现；beacon_ptr 每窗不同=每轮都是新进程。
+- 用崩溃地址 0xd350ca 对 trace 里的 6 个 beacon 基址逐一验证（`_re/base_candidates.py`）：
+  base=0xD20000 时 RVA 0x150CA 处恰为 `ff 15 20 c2 01 00`，目标槽 RVA 0x312F0
+  = **KERNEL32!CreateFileA**——全镜像唯一调用者就是 g3_log。
+- 即：**gen3_sleep 第 554 行 `g3_log("ROP window served")` 在 mask 之后、unmask 之前
+  执行，CreateFileA 走的还是密文 IAT**。编译级核查（`_re/window_path_thunks.py`）：
+  窗口路径上仅 g3_log 含 3 处 thunk 调用，g3_rc4 零调用（memcpy/memset 全内联）。
+- "槽值=-1"的精确来源仍开放（RC4 密文≠全 FF），但不影响定性。
+- 修复（e6c6c2f）：G3_IO（CreateFileA/WriteFile/CloseHandle+路径，init 时一次解析，
+  走 mctx 栈副本）+ 数值化 g3_log_n（行内容纯栈构造，掩码期合法）+ 四相 FNV 逐块
+  校验（C=掩码前明文 / m=掩码后 / u=unmask 入口 / U=unmask 后）+ g3_rc4 去 CRT 循环。
+
+**第二凶（块表重叠）——活测抓到**：修复后首测（ev26）：进程活过窗口但 lastf 增长
+（通信死）、窗口照转（mctx 全栈缓存扛住 .data 损坏）。trace 判定（trace_verdict.py）：
+块 27-32 u!=m 却 U==C（数学上 U==C⟺u==m，矛盾=**重叠双掩码指纹**），块 2（.data）
+两窗一致 U!=C。B 表+mem_census.py 定谳：**EXE 载具把整个映像一次 VirtualAlloc 成
+单块 PRIVATE RWX（0x720000 起），六个被跟踪的堆分配（0x769E70-0x76D1A0）落在
+.data/.bss 段内部**——段块与堆块重叠 → 逐块密钥的 RC4 双重加密不满足交换律 →
+后序块 unmask 对重叠区多 XOR 一遍 → .data 永久损坏。
+- 修复（eb7fafa）：快照时按 SizeOfImage（lfanew+24+0x38，注意 PE32+ 偏移坑）剔除
+  映像 span 内的堆记录（段块已覆盖；部分跨界只保留界外尾巴）。
+- 连带发现：**官方 XOR 路径同样存在该重叠**——同 mask 双 XOR=恒等 → 那六个块在官方
+  掩码下一直保持明文（覆盖洞，非损坏）。列入 C-batch 加固清单。
+
+### Round 13-14：1a 过线（ev28，sleep 5，~40 窗口）
+
+| 证据 | 结果 |
+|---|---|
+| 逐块 round-trip | **C=1183 m=1183，VIOLATIONS=0**（每窗 29 块全 U==C、m≠C、u==m） |
+| 密钥轮换 | 窗间 29/29 块密文校验和互异（PASS） |
+| 通信活性 | lastf 恒 4s，checkin 每窗一次 |
+| 掩码态功能任务 | 窗口循环中下发 ps → 完整进程表返回 |
+| 外部视角采样 | 25s 内 .data 定点 7 个值：明文→任务后新明文→**5 窗各不相同的密文**（mask_sampler.py，扫描器视角坐实真加密+轮换） |
+| 崩溃 | mini_dbg 全程仅 1 条良性线程启动断点（80000003 first-chance） |
+
+**测试工具链沉淀**（evasion-lab/）：trace_verdict.py（四相判定+旋转）、
+mask_sampler.py（外部密文采样）、mem_census.py（区域普查）、thread_where.py +
+WMI Win32_Thread（线程等待原因定位"卡死"）、ev_round.py（inbox 驱动，ack 时间戳
+变化等待，防单文件 inbox 覆盖丢命令）。
+
+**驱动层坑**：headless 的 `sleep` 命令 a1 单位是**秒**——`sleep 5000`=5000 秒
+（DelayExecution 等待 83 分钟，看似挂死）；正确用 `sleep 5`。诊断法：WMI
+ThreadWaitReason=4（DelayExecution）=在 Sleep 里，不是挂死。
+
+**patch_ts.restart_ts 会把 start_ts.sh 覆写回 r2_nosm**（已知断言坑）：mini_sm 测试
+用 scripts/restart_ts_minism.py（每次 patch 六槽后必须重跑）。
+
+分支状态：HEAD eb7fafa；探针（g3_log/g3_log_n/trace 落盘）保留至 1b 验收后统一清除；
+六槽 sleeve=eb7fafa 构建（37126064985）；TS 已复位 r2_nosm（pgrep 硬验证）；ev26-28
+进程已清；round12/round14 证据存 evasion-lab/round1*_*.txt。
+
+### 下一步（1b：ROP 时序轮）
+
+1. 关 G3_ROP_OFF，恢复四 timer ROP 链；修复点：restore 拍必须严格早于唤醒拍
+   （time+590 SetEvent time+600 曾在掩码态下死），spoof 拍与 `time` 的相对时序
+   在 5s 窗口下重新标定（300ms 绝对偏移沿用即可，beats 都相对 time）。
+2. 验收证据：evidence_gen3.py 栈走查（spoolsv 四帧链，掩码态抓 2 次）+ 1a 全套
+   （round-trip/轮换/通信/任务/外部采样）复跑。
+3. 过线后：清探针 → Moneta 对比 → 六通道回归（本分支 sleeve 全链 gen3）。
