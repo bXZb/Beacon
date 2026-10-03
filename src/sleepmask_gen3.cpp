@@ -27,7 +27,7 @@ typedef struct _G3_USTRING {
 	PUCHAR Buffer;
 } G3_USTRING;
 
-typedef NTSTATUS(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key);
+typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key); /* advapi32 SystemFunction032 = RtlEncryptDecryptRC4, returns NTSTATUS (LONG) */
 
 static G3_SF032 g_sf032;
 
