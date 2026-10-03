@@ -17,3 +17,6 @@
  * back to the official sleepmask-BOF path. x64 only; x86 compiles empty.
  */
 BOOL gen3_sleep(DWORD time);
+
+/* temporary bisect probe */
+void g3_log(const char * msg, long v);
