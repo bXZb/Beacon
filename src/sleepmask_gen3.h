@@ -18,5 +18,10 @@
  */
 BOOL gen3_sleep(DWORD time);
 
-/* temporary bisect probe */
+/* bisect/acceptance tracing (rounds 12-17): define G3_TRACE to compile the
+ * file-logging probes back in; production builds compile them out. */
+#if defined(G3_TRACE)
 void g3_log(const char * msg, long v);
+#else
+#define g3_log(msg, v) ((void)0)
+#endif
