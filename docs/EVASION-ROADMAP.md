@@ -330,3 +330,47 @@ wriggle；④官方 XOR 路径映像内堆块重叠=明文洞（C-batch）。
 6. x86 官方路径修复轮（②）+ link 子 wrinkle（③）。
 分支 HEAD 1d9d397；六槽=1d9d397 构建（37157889360）；TS 已复位 r2_nosm（pgrep 硬验证）；
 全部测试进程已清；生产 4.9.1 分支与 r2_nosm 姿态不受影响。
+
+## 13. Phase 2 开工（2026-10-04）
+
+### 13.1 wait-window 变体（§12 入口①，首项落地）
+
+补上 round 16 拆雷留下的无掩码等待（extc2/pivot 管道与 TCP 通道）。设计：
+
+- **服务端连接等待（ConnectNamedPipe）**：`gen3_wait_pipe` = 无 timer 的纯掩码窗口
+  （mask → 预解析指针阻塞等待 → unmask）。无 timer ⇒ 天然 CFG 免疫（无需白名单）、
+  天然支持无限时长等待。x86/引擎失败 → 返回 FALSE → 落回 plan-B 无掩码循环。
+- **空闲数据等待（pipe peek / TCP select / accept）**：`gen3_sleep(700)` 切片轮询——
+  每片都是完整 1a+1b 窗口（掩码+ROP 伪装；700ms 已知时长正好适配 beats），探测调用
+  （PeekNamedPipe/select 0 超时）是窗口间的微秒级 syscall。gen3_sleep 返回 FALSE
+  （x86/引擎未起）→ 裸 Sleep(700) 兜底，不热自旋。
+- 守卫语义不变：nook==0 或 threadcount>0（有兄弟线程的父会话）保持无掩码——掩码会
+  毁掉活跃线程对镜像的视图。
+- 接线：GarglePipeWait（smb_wait 服务端）、GargleBlockPipe（客户端读等待）、
+  GargleWaitTCP（recv 空闲）、GargleAccept（TCP 监听接受）。
+
+### 13.2 gate 架构（§12 入口③，设计定稿——2026-09-13 决策延续）
+
+**形状按 4.12 kit 的 FUNCTION_CALL/WinApi 枚举**（设计期近零成本，将来 20251100 kit
+mask 或 Crystal Mask 可直接插上）。种子=src/syscalls.cpp（SSN 直读+Halo's Gate 挂钩
+逃生+RX stub 页，已验证 3 函数：NtWrite/ReadVirtualMemory+NtDuplicateObject）：
+
+1. **SSN 扩容到 ~25 热点**：注入族（NtCreateSection/MapViewOfSection/WriteProcessMemory
+   族/QueueUserAPC/CreateRemoteThreadEx）、内存族（Allocate/VirtualProtect/VirtualFree/
+   FreeVirtualMemory）、令牌族（OpenProcess/OpenThread/DuplicateObject）、等待族
+   （NtWaitForSingleObject）、文件族（NtCreateFile/NtReadFile/NtWriteFile）。
+2. **执行期 RA 欺骗三热点**（AceLdr 配方）：InternetConnectA / NtWaitForSingleObject /
+   RtlAllocateHeap——indirect syscall 的 return address 落 ntdll `syscall;ret` gadget，
+   再在其上伪造调用方帧（synthetic frames 最小版）。
+3. **接入点**：inject_mirror/inject.cpp/execute.cpp/boff.cpp 的敏感调用改走 gate；
+   syscalls.cpp:98 旧静态 stub 裸 RWX 自伤修复（fresh RX 分配+销毁，早已完成）。
+4. **防御增补**（2026-10-03 联网复查结论）：DR 寄存器检测+周期清零（对抗 EDR 硬件
+   断点钩 syscall——Cymulate Blindside/Praetorian DR+ETWti 路线）。
+5. 验收：六通道回归 + ETWti/钩子检测器对照（用户态钩子场景 SSN 直读生效；无真机
+   EDR，诚实边界不变）。
+
+### 13.3 CFG 隐蔽原语（§12 入口②，研究中）
+
+SetProcessValidCallTargets 有遥测可见性。候选：CFG-valid 拷贝函数作 beat RIP
+（需实测 GFIDS 成员资格）、DR 寄存器+VEH 式 syscall 路线、或 CFG 宿主降级 1a（零
+遥测但无伪装）。排 wait-window 验收后。
