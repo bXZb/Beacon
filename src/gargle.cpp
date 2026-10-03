@@ -86,14 +86,15 @@ void GargleSleep(DWORD time) {
 	memset(decoded, 0, 16384);
 	free(decoded);
 
-#if defined(_M_IX86)
-	/* 4.5 trampoline body is INT3 placeholders. x86 must not execute it. */
+	/* The 4.5 trampoline body is an INT3 placeholder in this codebase (the
+	 * original comment said x86 must not execute it - x64 must not either):
+	 * gtrampoline points at the raw template stub, so this fallback branch
+	 * used to be a guaranteed INT3 storm whenever it was reached with
+	 * nook != 0 (no gen3, no decodable sleepmask BOF). Degrade to a plain
+	 * Sleep instead - unmasked, never a crash. A real wait-window variant
+	 * belongs to the gen3 family (follow-up entry in EVASION-ROADMAP). */
 	Sleep(time);
-	return;
-#else
-	setup_trampoline2();
-	func = (GARGLEF)gtrampoline;
-	gparms->heap_records = track_memory_get_heap_records_to_mask();
-	func(gparms, Sleep, time);
+#if defined(_M_X64)
+	(void)func;
 #endif
 }

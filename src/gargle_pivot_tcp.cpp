@@ -126,55 +126,14 @@ static void setup_trampoline2() {
 }
 
 void GargleWaitTCP(SOCKET s) {
-	GARGLE_TCP_ARGS args;
-	GARGLEF         func;
-	DWORD           start = GetTickCount();
-
-	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
-		return;
-	}
-	else {
-		/* create our trampoline, please */
-		setup_trampoline2();
-
-		/* setup our arguments */
-		args.action = GARGLE_TCP_ACTION_RECV;
-		args.in     = s;
-		args.recv   = (void(__stdcall*)(SOCKET, void*, int, int))recv;
-
-		/* get the heap sections to mask. */
-		gparms->heap_records = track_memory_get_heap_records_to_mask();
-
-		/* call our function */
-		func = (GARGLEF)gtrampoline;
-		func(gparms, &args);
-	}
+	/* INT3-placeholder trampoline (see gargle_pivot_smb.cpp): with a
+	 * mask-enabled profile this used to execute the template stub and
+	 * kill every TCP pivot listener. No-op = unmasked recv wait, the
+	 * proven nook == 0 posture. */
+	(void)s;
 }
 
 SOCKET GargleAccept(SOCKET s) {
-	GARGLE_TCP_ARGS args;
-	GARGLEF         func;
-
-	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
-		return accept(s, NULL, 0);
-	}
-	else {
-		/* create our trampoline, please */
-		setup_trampoline2();
-
-		/* setup our arguments */
-		args.action = GARGLE_TCP_ACTION_ACCEPT;
-		args.in     = s;
-		args.accept = accept;
-
-		/* get the heap sections to mask. */
-		gparms->heap_records = track_memory_get_heap_records_to_mask();
-
-		/* call our function */
-		func = (GARGLEF)gtrampoline;
-		func(gparms, &args);
-
-		/* return the out value from our struct */
-		return args.out;
-	}
+	/* Same trap: accept unmasked instead of executing the INT3 template. */
+	return accept(s, NULL, 0);
 }

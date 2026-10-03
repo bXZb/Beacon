@@ -31,56 +31,19 @@ static void setup_trampoline2() {
 }
 
 void GargleBlockPipe(HANDLE pipe) {
-	GARGLE_PIPE_ARGS args;
-	GARGLEF         func;
-
-	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
-		/* do nothing */
-	}
-	else {
-		/* create our trampoline, please */
-		setup_trampoline2();
-
-		/* setup our arguments */
-		args.action = GARGLE_ACTION_PIPE_PEEK;
-		args.pipe = pipe;
-		args.PeekNamedPipe = PeekNamedPipe;
-		args.Sleep = Sleep;
-
-		/* get the heap sections to mask. */
-		gparms->heap_records = track_memory_get_heap_records_to_mask();
-
-		/* call our function */
-		func = (GARGLEF)gtrampoline;
-		func(gparms, &args);
-	}
+	/* The 4.5 wait-mask trampoline body is an INT3 placeholder in this
+	 * codebase (see gargle.cpp): with a mask-enabled profile (nook != 0)
+	 * every extc2/pivot pipe beacon used to execute it and die here
+	 * (2026-10-04 extc2 regression, RVA-proven against the map). Until a
+	 * gen3 wait-window variant lands, degrade to the proven no-mask
+	 * posture - a no-op here - never a crash. */
+	(void)pipe;
 }
 
 BOOL GarglePipeWait(HANDLE pipe) {
-	GARGLE_PIPE_ARGS args;
-	GARGLEF         func;
-
-	if (setting_int(SETTING_GARGLE_NOOK) == 0 || threadcount > 0) {
-		return FALSE;
-	}
-	else {
-		/* create our trampoline, please */
-		setup_trampoline2();
-
-		/* setup our arguments */
-		args.action           = GARGLE_ACTION_PIPE_WAIT;
-		args.pipe             = pipe;
-		args.GetLastError     = GetLastError;
-		args.ConnectNamedPipe = ConnectNamedPipe;
-
-		/* get the heap sections to mask. */
-		gparms->heap_records = track_memory_get_heap_records_to_mask();
-
-		/* call our function */
-		func = (GARGLEF)gtrampoline;
-		func(gparms, &args);
-
-		/* return the out value from our struct */
-		return TRUE;
-	}
+	/* Same trap as GargleBlockPipe: the trampoline target is the INT3
+	 * template. FALSE makes smb_wait() take its plan-B ConnectNamedPipe
+	 * loop - identical to the long-proven nook == 0 behavior. */
+	(void)pipe;
+	return FALSE;
 }
