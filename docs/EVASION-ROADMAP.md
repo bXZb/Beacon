@@ -484,3 +484,27 @@ preferred base 的 VA，当 RVA 用=双重基址读垃圾）。修复后本机 n
 分支 HEAD 5dbbab18（CI 全绿）；六槽=37198777092 构建；TS 已复位 r2_nosm；测试进程全清。
 下一轮入口：①link-spawn 根因（G3_TRACE/日志构建）②x86 官方 BOF own-table 战役
 ③六通道补 B/D 全量 ④gate 接线扩至文件/令牌族调用点。
+
+### 13.6 Round 22：x86 解崩 + gate 扩文件/令牌族 + B 通道（07aa4b0）
+
+**x86 官方掩码路径修复**：官方 4.5 sleepmask BOF 在我们 x86 PE 布局的 WOW64 进程里
+崩在 blob+0x3b（round 18 钉死）。降级修复=GargleSleep x86 跳过 BOF 路径直接 Sleep
+（无崩溃+opsec 降级；x86 own-table 战役=正确修复，需分析官方 BOF 的段表假设 vs
+我们的 x86 PE 布局，同 x64 5c753e1 战役方法论）。
+
+**活测**：ev41 x86 INITIAL + sleep + ls ✓ 不再崩溃。
+
+**gate 接线扩容到文件/令牌族**：新包装 NtOpenProcess/NtOpenThread/NtClose/NtReadFile/
+NtWriteFile（NtCreateFile 留 API——路径转换非平凡且文件创建遥测低优先级）；接线
+17 处（hotbeef/ps×2/tokens/ppid/inject_apc/inject_hinted×4/files×7）。gate 现覆盖：
+- 注入族：alloc/protect/free/WPM/RPM/dup/CRT（原 7 处+13）
+- 文件族：ReadFile/WriteFile/CloseHandle
+- 令牌族：OpenProcess/OpenThread
+
+**winhttp B 通道**：ev42 INITIAL + sleep 5 + ls ✓ PASS。
+
+**link-spawn 根因记录**（不修，需日志构建）：TS beacon_link 发两条任务——spawn+inject
+（载荷=pivot sleeve）+ pipe connect。connect 到达并执行（回 ERROR_FILE_NOT_FOUND），
+spawn 侧零进程创建。方向=需 G3_TRACE 式日志构建追踪 spawn_patsy 内部。
+
+分支 HEAD 07aa4b0（CI 全绿）；六槽=37206734168；TS r2_nosm。
