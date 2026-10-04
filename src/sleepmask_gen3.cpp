@@ -9,6 +9,14 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
+#include <windows.h>
+#include <intrin.h>
+#include <string.h>
+#include <stdlib.h>
+#include "beacon.h"
+#include "gargleint.h"
+#include "track_memory.h"
+
 /* ================= shared gen3 primitives (both arches) ================= */
 
 typedef struct _G3_USTRING {
@@ -65,9 +73,6 @@ static BOOL g3_page_writable(void * p)
 #include <intrin.h>
 #include <string.h>
 #include <stdlib.h>
-#include "beacon.h"
-#include "gargleint.h"
-#include "track_memory.h"
 
 #if defined(G3_TRACE) /* trace IO layer: rounds 12-17, off in production */
 
