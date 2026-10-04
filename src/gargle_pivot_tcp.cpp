@@ -140,8 +140,8 @@ void GargleWaitTCP(SOCKET s) {
 		FD_ZERO(&rd);
 		FD_SET(s, &rd);
 		while (select(0, &rd, NULL, NULL, &tv) == 0) {
-			if (!gen3_sleep(700))
-				Sleep(700);
+			if (!gen3_sleep(150))
+				Sleep(150);
 			FD_ZERO(&rd);
 			FD_SET(s, &rd);
 		}
@@ -160,8 +160,8 @@ SOCKET GargleAccept(SOCKET s) {
 		FD_ZERO(&rd);
 		FD_SET(s, &rd);
 		while (select(0, &rd, NULL, NULL, &tv) == 0) {
-			if (!gen3_sleep(700))
-				Sleep(700);
+			if (!gen3_sleep(150))
+				Sleep(150);
 			FD_ZERO(&rd);
 			FD_SET(s, &rd);
 		}

