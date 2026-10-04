@@ -70,3 +70,45 @@ TEST(gate_wrappers_roundtrip_self) {
 		printf("  [gate] method=%d done\n", m); fflush(stdout);
 	}
 }
+
+extern void syscalls_test_indirect_mode(int);
+
+/* RA root-cause repro (round 20): re-enable the shelved indirect encodings
+ * for one alloc call under a vectored exception handler, so a hard AV on
+ * the runner reports code address, fault address and the stub bytes before
+ * the process dies. */
+static LONG WINAPI gate_veh(PEXCEPTION_POINTERS ep)
+{
+	if (ep->ExceptionRecord->ExceptionCode == 0xC0000005) {
+		printf("  [veh] AV code=%p fault=%p rip=%p rsp=%p
+",
+		       (void *)(size_t)ep->ExceptionRecord->ExceptionCode,
+		       (void *)ep->ExceptionRecord->ExceptionInformation[1],
+		       (void *)ep->ContextRecord->Rip,
+		       (void *)ep->ContextRecord->Rsp);
+		fflush(stdout);
+	}
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+TEST(gate_indirect_repro_alloc)
+{
+	void * h;
+	LPVOID p;
+
+	syscalls_resolve();
+	syscall_method_set(2);
+	syscalls_test_indirect_mode(1);
+	h = AddVectoredExceptionHandler(1, gate_veh);
+	printf("  [repro] forcing indirect alloc (v1-jmp path, arity 6)
+"); fflush(stdout);
+	p = beacon_VirtualAllocEx(GetCurrentProcess(), NULL, 0x1000,
+	                          MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	printf("  [repro] alloc returned %p (ntstatus path ok)
+", p); fflush(stdout);
+	if (p)
+		beacon_VirtualFreeEx(GetCurrentProcess(), p, 0, MEM_RELEASE);
+	syscalls_test_indirect_mode(0);
+	if (h) RemoveVectoredExceptionHandler(h);
+	syscall_method_set(1);
+}

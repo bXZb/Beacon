@@ -9,6 +9,7 @@
 void syscalls_resolve(void);
 int  syscalls_ssn_ntwrite(void);       /* test hook: 0 if unresolved */
 int  syscalls_gate_ready_count(void);  /* test hook: resolved table size */
+void syscalls_test_indirect_mode(int); /* test hook: bypass the indirect shelving */
 
 BOOL   beacon_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesWritten);
 BOOL   beacon_ReadProcessMemory(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesRead);

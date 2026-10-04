@@ -165,6 +165,12 @@ static void gate_dr_check(void) {
 }
 
 static DWORD gate_dispatch_count;
+static int sc_force_indirect; /* test-only: bypass the indirect shelving */
+
+void syscalls_test_indirect_mode(int on)
+{
+	sc_force_indirect = on;
+}
 
 static void * make_exec(sc_entry * e, int indirect) {
 	DWORD old = 0;
@@ -201,8 +207,11 @@ static void * make_exec(sc_entry * e, int indirect) {
 	 * 0F 05 C3, same SSN, same args) - something environmental about
 	 * re-entering a rewritten stub page. Until that is solved, method 2
 	 * aliases the direct stub: the RA-spoof design (13.2) stays in the
-	 * tree behind this switch. */
-	indirect = 0;
+	 * tree behind this switch. syscalls_test_indirect_mode() re-enables
+	 * the encodings for the instrumented repro test only. */
+	indirect = indirect && (e->gadget != NULL);
+	if (!sc_force_indirect)
+		indirect = 0;
 	if (indirect && e->arity > 4) {
 		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
 		 * under the kernel's nose, and the plain jmp-to-ntll-syscall
