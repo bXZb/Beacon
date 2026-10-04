@@ -508,3 +508,45 @@ NtWriteFile（NtCreateFile 留 API——路径转换非平凡且文件创建遥�
 spawn 侧零进程创建。方向=需 G3_TRACE 式日志构建追踪 spawn_patsy 内部。
 
 分支 HEAD 07aa4b0（CI 全绿）；六槽=37206734168；TS r2_nosm。
+
+### 13.7 Round 23：link-spawn 定谳 + x86 容量墙（56ad396→6f19159a）
+
+**spawn 路径追踪（spawn_trace）**：spawn_patsy/command_inject/link_start_explicit/
+inject_logic 四点打点（共享 sink 函数，x86 友好）。两次活测全链捕获：
+
+```
+inject: calling spawn_patsy x86=0
+patsy: cmd=C:\Windows\system32\rundll32.exe
+patsy: exec_ppid result=1
+inject: spawn_patsy ok pid=2136
+inject_logic: entry len=304128
+inject_logic: mirror ok / execute ok
+link_start_explicit: entry pipename=\.\pipe\reg11pipe
+link_start_explicit: returned（无第二次 spawn）
+```
+
+**定谳**：TS beacon_link 的 spawn+inject 任务全链成功（子 rundll32 起来并注入），
+**子会话成为 HTTP beacon 而非 SMB pivot**——INITIAL 来自 rundll32、child 从未创建
+`\.\pipe\reg11pipe`，故父的 0x44 connect 报 ERROR_FILE_NOT_FOUND。**根因在 TS 侧
+载荷选择**（beacon_link 复合任务把 http listener 载荷发给 spawn，而非 pivot sleeve；
+或 pivot sleeve 的 PIPENAME 设置未进 spawn 载荷），**beacon 侧行为全部正确**。修复
+方向：TS 复合任务构造（pivot.x64.dll + pipename setting），属 TS 侧改造，立项单测。
+
+**坑（第七次反斜杠）**：spawn_trace 路径字面量被 heredoc 吃成
+`C:UsersPublicspawn_trace.txt`（相对路径静默成功）→ 建文件名诡异的全局真相。修复=
+真双反斜杠（6f19159a）。
+
+**x86 容量墙（硬约束发现）**：gen3-1a x86 移植编译通过但 **x86 sleeve 249376B > 槽
+247840B（超 1536B）**——gen3-1a 成本 ~2.5KB > x86 余量 ~2KB。回退为设计决定：
+**x86 unmasked-by-design**（官方 BOF 本就 WOW64 崩），own-table x86 战役重新立项为
+"先解决尺寸预算"（候选：x86 裁 gate 包装 / 裁 spawn globals / 专属极简 masker）。
+trace 共享函数化后 x86 回落 247328B ≤ cap。
+
+**③ D dns**：环境项（TUN 吞出站 UDP:53），下次用户关 TUN 补测，不阻塞。
+**④ synthetic frames 设计（Phase 2+，未实现）**：全参 RA 欺骗的正确形态——
+   ROP/RA 链对 >4 参 syscall 数学不可行（ret-链弹栈与 [rsp+8..] 栈参数冲突）；正解
+   =在 gate wrapper 内构造完整假帧链（fake frame: [ret→ntdll][args...][ret→真调用
+   方]），syscall 由真实帧发出、内核走查见到的是合成链；参考 Ghost Frames/LACUNA
+   （0xmaz）方向，与 DR 清零共同构成 gate 的栈/寄存器双防御。
+
+分支 HEAD 6f19159a（CI 全绿）；六槽=6f19159a 构建待部署验证；TS mini_sm。
