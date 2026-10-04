@@ -381,19 +381,6 @@ void syscalls_resolve(void) {}
 int syscalls_ssn_ntwrite(void) { return 0; }
 void * syscalls_test_gadget(const char * name);
 
-void * syscalls_test_gadget(const char * name)
-{
-	if (name == NULL)
-		return NULL;
-	if (strcmp(name, "NtAllocateVirtualMemory") == 0)
-		return sc_alloc.gadget;
-	if (strcmp(name, "NtWriteVirtualMemory") == 0)
-		return sc_write.gadget;
-	if (strcmp(name, "NtFreeVirtualMemory") == 0)
-		return sc_free.gadget;
-	return NULL;
-}
-
 int syscalls_gate_ready_count(void) { return 0; }
 #endif
 
