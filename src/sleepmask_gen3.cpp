@@ -69,6 +69,8 @@ static BOOL g3_page_writable(void * p)
 #include "gargleint.h"
 #include "track_memory.h"
 
+typedef struct {
+	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
 	BOOL   (WINAPI *pCloseHandle)(HANDLE);
 	char   path[64];
