@@ -195,7 +195,14 @@ static void * make_exec(sc_entry * e, int indirect) {
 	p = e->stub;
 
 	memset(built, 0, sizeof(built));
-	indirect = indirect && (e->gadget != NULL); /* unverified gadget: plain direct */
+	/* The indirect encodings are shelved pending a dedicated root-cause
+	 * round: on live CI the method-2 first dispatch AVs even when it is
+	 * mechanically identical to the proven direct path (gadget verified
+	 * 0F 05 C3, same SSN, same args) - something environmental about
+	 * re-entering a rewritten stub page. Until that is solved, method 2
+	 * aliases the direct stub: the RA-spoof design (13.2) stays in the
+	 * tree behind this switch. */
+	indirect = 0;
 	if (indirect && e->arity > 4) {
 		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
 		 * under the kernel's nose, and the plain jmp-to-ntll-syscall
