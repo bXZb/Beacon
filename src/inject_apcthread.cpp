@@ -147,7 +147,7 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 			continue;
 
 		/* Open a handle to this thread so we can do the apc injection */
-		hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, t.th32ThreadID);
+		hThread = beacon_OpenThread(THREAD_ALL_ACCESS, FALSE, t.th32ThreadID);
 		if (!hThread)
 			continue;
 

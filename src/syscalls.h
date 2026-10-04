@@ -18,3 +18,12 @@ LPVOID beacon_VirtualAllocEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, D
 BOOL   beacon_VirtualProtectEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect);
 BOOL   beacon_VirtualFreeEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType);
 HANDLE beacon_CreateRemoteThread(HANDLE hProcess, LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD outId);
+
+/* file/token family (round 22): NtOpenProcess/NtOpenThread/NtClose/NtReadFile/
+ * NtWriteFile/NtCreateFile routed through the gate. Fallback = plain API. */
+HANDLE beacon_OpenProcess(DWORD access, BOOL inherit, DWORD pid);
+HANDLE beacon_OpenThread(DWORD access, BOOL inherit, DWORD tid);
+BOOL   beacon_CloseHandle(HANDLE h);
+BOOL   beacon_ReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD got, LPOVERLAPPED ov);
+BOOL   beacon_WriteFile(HANDLE h, LPCVOID buf, DWORD toWrite, LPDWORD wrote, LPOVERLAPPED ov);
+HANDLE beacon_CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disp, DWORD flags, HANDLE tmpl);

