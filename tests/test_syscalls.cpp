@@ -14,6 +14,25 @@
 #include "syscalls.h"
 #include "datastore.h"
 
+static LONG WINAPI gate_veh(PEXCEPTION_POINTERS ep)
+{
+	if (ep->ExceptionRecord->ExceptionCode == 0xC0000005) {
+		printf("  [veh] AV code=%p fault=%p rip=%p rsp=%p
+",
+		       (void *)(size_t)ep->ExceptionRecord->ExceptionCode,
+		       (void *)ep->ExceptionRecord->ExceptionInformation[1],
+		       (void *)ep->ContextRecord->Rip,
+		       (void *)ep->ContextRecord->Rsp);
+		fflush(stdout);
+	}
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+TEST(gate_install_veh)
+{
+	AddVectoredExceptionHandler(1, gate_veh);
+}
+
 TEST(gate_table_resolves) {
 	syscalls_resolve();
 	CHECK(syscalls_gate_ready_count() >= 20);
@@ -73,23 +92,6 @@ TEST(gate_wrappers_roundtrip_self) {
 
 extern void syscalls_test_indirect_mode(int);
 
-/* RA root-cause repro (round 20): re-enable the shelved indirect encodings
- * for one alloc call under a vectored exception handler, so a hard AV on
- * the runner reports code address, fault address and the stub bytes before
- * the process dies. */
-static LONG WINAPI gate_veh(PEXCEPTION_POINTERS ep)
-{
-	if (ep->ExceptionRecord->ExceptionCode == 0xC0000005) {
-		printf("  [veh] AV code=%p fault=%p rip=%p rsp=%p\n",
-		       (void *)(size_t)ep->ExceptionRecord->ExceptionCode,
-		       (void *)ep->ExceptionRecord->ExceptionInformation[1],
-		       (void *)ep->ContextRecord->Rip,
-		       (void *)ep->ContextRecord->Rsp);
-		fflush(stdout);
-	}
-	return EXCEPTION_CONTINUE_SEARCH;
-}
-
 TEST(gate_indirect_repro_alloc)
 {
 	void * h;
@@ -98,7 +100,7 @@ TEST(gate_indirect_repro_alloc)
 	syscalls_resolve();
 	syscall_method_set(2);
 	syscalls_test_indirect_mode(1);
-	h = AddVectoredExceptionHandler(1, gate_veh);
+	(void)h;
 	printf("  [repro] m=2 alloc (arity 6 -> direct stub; arity-0 bug used to crash here)\n"); fflush(stdout);
 	p = beacon_VirtualAllocEx(GetCurrentProcess(), NULL, 0x1000,
 	                          MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -109,6 +111,5 @@ TEST(gate_indirect_repro_alloc)
 		printf("  [repro] v2 RA-chain free survived - ntdll ret unwound correctly\n"); fflush(stdout);
 	}
 	syscalls_test_indirect_mode(0);
-	if (h) RemoveVectoredExceptionHandler(h);
 	syscall_method_set(1);
 }
