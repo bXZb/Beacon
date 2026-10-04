@@ -437,3 +437,50 @@ r2_nosm；测试进程全清。
 **Phase 2 状态**：核心交付（gate 表+接线+包装+DR 防御+测试+活证）**完成**；
 RA 欺骗 v1 形态待根因轮；CFG 原语待 XFG 解析。分支 HEAD 74786d0；六槽=37187577596
 构建；TS 已复位 r2_nosm；测试进程全清。
+
+## 14. Round 20-21：RA 根因双杀 + 三个专轮（2026-10-04，2b9ec65→5dbbab18）
+
+### RA 欺骗根因轮——两个真根因，全部修复实证（5dbbab18 CI 全绿）
+
+VEH 复现测试（全局安装+逐步 marker）交付决定性现场 `fault=0x2a0, rip∈ntdll`：
+
+1. **SC_PARSE 宏从未携带 arity 参数**——当初给 SC_LIST 各条目加 arity 的 heredoc 编辑
+   静默 no-op（SC_DECL/SC_COUNT 应用了，SC_PARSE 的匹配串没中且无 assert）。所有条目
+   arity 恒 0 → method-2 的全部分派都落进 v2 push 编码（不论参数数）→ 栈参数被 push
+   平移到内核眼皮底下。**"环境性崩溃"从未环境性；v1-jmp 分支从未真正执行过。**
+   修复=SC_PARSE 带 arity 且在 parse 之后赋值（parse 的 memset 会清掉先设的值）。
+2. **v2 编码字节序错误**：`mov eax,ssn` 之后再 `mov rax,gadget+2`——64 位 rax 装载
+   清零 eax，SSN 变成 ntdll 地址低双字 → 内核拿垃圾 syscall 号派发 → 写 0x2a0。
+   修复=先 `mov rax,imm64; push rax` 再 `mov eax,ssn` 再 jmp。
+
+**终局证据（CI）**：三方法 alloc/write/protect/read/free 全绿；复现测试显式输出
+"v2 RA-chain free survived - ntdll ret unwound correctly"——**RA 欺骗链（≤4 参
+syscall，planted ntdll ret 双弹栈）首次真实执行成功**。method 2 现为完整形态：
+≤4 参=v2 RA 链，>4 参=direct（synthetic frames 仍是全参 RA 的正解，留 Phase 2+）。
+
+### GFIDS/XFG 专轮——否定结果关闭
+
+"XFG 步长障碍"实为**VA/RVA 混用**（load config 的 GuardCFFunctionTable 是含
+preferred base 的 VA，当 RVA 用=双重基址读垃圾）。修复后本机 ntdll 解析出 1770 条
+合法目标：**memcpy/memmove/RtlCopyMemory/RtlMoveMemory/RtlFillMemory/memset 全部
+不在表内**（仅 RtlQueryPerformanceCounter 等零星函数在）——"换 CFG-valid 拷贝
+原语"路线在本平台不成立，**SetProcessValidCallTargets 保留为定论**（遥测可见性
+已记录，替代方向=DR+VEH 路线或 Ghost Frames，Phase 2+）。
+
+### 六通道回归（5dbbab18，TS mini_sm，日志判定）
+
+| 通道 | 结果 |
+|---|---|
+| A http（gen3+gate+RA 版） | **PASS**（INITIAL+sleep5+PS 全表；无探针构建） |
+| E extc2（wait-window+150ms 切片） | **PASS**（INITIAL+PS 0.3s 返回；驱动脚本自赛跑误报，日志为准） |
+| F pivot 父链（spawn 经 gate+RA 版注入） | **PASS**（rundll32 子 INITIAL+sleep） |
+| F link 子 | FAIL——**专轮定谳**：WMI 进程监视 60s 零子进程创建；父会话回 `Could not connect to pipe: ERROR_FILE_NOT_FOUND`（link 复合任务的 spawn 步骤静默失败；普通 spawn 同一注入路径成功）。根因方向=link-spawn 特定路径，需带日志构建深挖 |
+| C x86 官方掩码 | FAIL（预存）——**专轮崩点钉死**：mini_dbg2 首机会抓到 `rip=PRV(3B30000)+0x3b`（官方 4.5 sleepmask BOF 的 16KB blob 内部，WOW64 进程）=BOF 段表假设与我们 x86 PE 布局不匹配，同类 x64 own-table 战役（5c753e1）的 x86 版，需专项分析 |
+| B winhttp / D dns | 未重跑（本轮聚焦 RA/专轮；B 上轮同构建族 PASS，D=TUN 环境不变） |
+
+**方法学**：六通道判定永远信 r1.log 字节不信驱动进程返回（本轮 E 又被驱动误报）；
+`python -c` 里带 `\n` 的字符串经 bash 必被拆行（三次翻车），测试代码一律 Write 落盘。
+
+分支 HEAD 5dbbab18（CI 全绿）；六槽=37198777092 构建；TS 已复位 r2_nosm；测试进程全清。
+下一轮入口：①link-spawn 根因（G3_TRACE/日志构建）②x86 官方 BOF own-table 战役
+③六通道补 B/D 全量 ④gate 接线扩至文件/令牌族调用点。
