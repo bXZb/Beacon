@@ -99,12 +99,10 @@ TEST(gate_indirect_repro_alloc)
 	syscall_method_set(2);
 	syscalls_test_indirect_mode(1);
 	h = AddVectoredExceptionHandler(1, gate_veh);
-	printf("  [repro] forcing indirect alloc (v1-jmp path, arity 6)
-"); fflush(stdout);
+	printf("  [repro] forcing indirect alloc (v1-jmp path, arity 6)\n"); fflush(stdout);
 	p = beacon_VirtualAllocEx(GetCurrentProcess(), NULL, 0x1000,
 	                          MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	printf("  [repro] alloc returned %p (ntstatus path ok)
-", p); fflush(stdout);
+	printf("  [repro] alloc returned %p (ntstatus path ok)\n", p); fflush(stdout);
 	if (p)
 		beacon_VirtualFreeEx(GetCurrentProcess(), p, 0, MEM_RELEASE);
 	syscalls_test_indirect_mode(0);
