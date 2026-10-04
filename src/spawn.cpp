@@ -152,7 +152,7 @@ BOOL spawn_patsy_u(BOOL x86, BOOL ignoreToken, STARTUPINFO * si, PROCESS_INFORMA
 /* spawn-path trace sink (round 23): one copy, shared by all callers */
 void spawn_log(const char * msg, long v)
 {
-	HANDLE f = CreateFileA("C:\Users\Public\spawn_trace.txt", FILE_APPEND_DATA, 0, NULL,
+	HANDLE f = CreateFileA("C:\\Users\\Public\\spawn_trace.txt", FILE_APPEND_DATA, 0, NULL,
 	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	char buf[96];
 	int i = 0;
