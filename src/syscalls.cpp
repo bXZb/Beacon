@@ -154,8 +154,12 @@ static DWORD gate_dispatch_count;
 
 static void * make_exec(sc_entry * e, int indirect) {
 	DWORD old = 0;
-	BYTE built[32];
+	BYTE built[48]; /* v2 indirect stub is 33 bytes - keep headroom so the
+	                 * gadget qword never writes past the buffer (the first
+	                 * cut overflowed built[32] by one byte and fail-fasted
+	                 * the /GS cookie on CI) */
 	BYTE * p;
+	SIZE_T stub_size = 64;
 
 	if (!e->ready)
 		return NULL;
@@ -166,7 +170,7 @@ static void * make_exec(sc_entry * e, int indirect) {
 	 * stub its own page, build it locally, and only ever expose RW->RX
 	 * (never RWX). */
 	if (e->stub == NULL) {
-		e->stub = (BYTE *)VirtualAlloc(NULL, 32, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		e->stub = (BYTE *)VirtualAlloc(NULL, stub_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 		if (e->stub == NULL)
 			return NULL;
 	}
@@ -195,18 +199,18 @@ static void * make_exec(sc_entry * e, int indirect) {
 		}
 		built[18] = 0x50; /* push rax */
 		built[19] = 0xFF; built[20] = 0x25; /* jmp qword ptr [rip+0] */
-		memcpy(built + 25, &e->gadget, 8);
+		memcpy(built + 25, &e->gadget, 8); /* bytes 25..32: 33-byte stub */
 	}
 	else {
 		build_direct_stub(built, e->ssn);
 	}
 
-	if (!VirtualProtect(p, 32, PAGE_READWRITE, &old))
+	if (!VirtualProtect(p, stub_size, PAGE_READWRITE, &old))
 		return NULL;
-	memcpy(p, built, 32);
-	if (!VirtualProtect(p, 32, PAGE_EXECUTE_READ, &old))
+	memcpy(p, built, stub_size);
+	if (!VirtualProtect(p, stub_size, PAGE_EXECUTE_READ, &old))
 		return NULL;
-	FlushInstructionCache(GetCurrentProcess(), p, 32);
+	FlushInstructionCache(GetCurrentProcess(), p, stub_size);
 	return p;
 }
 
