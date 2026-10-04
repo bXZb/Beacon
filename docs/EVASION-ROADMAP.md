@@ -374,3 +374,29 @@ mask 或 Crystal Mask 可直接插上）。种子=src/syscalls.cpp（SSN 直读+
 SetProcessValidCallTargets 有遥测可见性。候选：CFG-valid 拷贝函数作 beat RIP
 （需实测 GFIDS 成员资格）、DR 寄存器+VEH 式 syscall 路线、或 CFG 宿主降级 1a（零
 遥测但无伪装）。排 wait-window 验收后。
+
+### 13.4 wait-window 验收（round 18，e1b3151→f52d46b）
+
+活测抓到并修复两个真缺陷：
+
+1. **LoadLibrary 只读头页 AV**：extc2 载荷经 LoadLibrary 加载进 python 控制器后，
+   PE 头页是只读映射——gen3 掩码块 0（头页）RC4 写入瞬间 AV 写镜像基址。同雷也埋在
+   extc2 的 sleep 路径（此前从未活到首个窗口）。修复=快照时 VirtualQuery 剔除不可写
+   块（段块+堆记录两处）；**不做权限翻转**——翻转正是 Gen1 遥测面（def09e1）。
+2. **extc2 严格交替协议死锁**：700ms 掩码切片让 beacon 的心跳应答错过控制器 0.4s
+   peek 窗→控制器转 90s ts_recv→beacon 卡死在 `client_flush→extc2_write→
+   FlushFileBuffers`（管道 flush 等对端读走才返回；线程栈实拍定位）。修复=轮询切片
+   700→150ms（应答延迟 ~200ms<400ms 窗口；切片走 time<700 无 timer 纯掩码路径=天然
+   CFG 免疫，无需白名单）（f52d46b）。
+
+**验收证据（f52d46b，TS mini_sm）**：
+- extc2（python 宿主，CFG 进程）：INITIAL ✓、ps 任务字节返回 ✓（死锁消除）、
+  **空闲管道等待处于掩码态**——30 秒外部采样出大量互异密文值+切片边界明文
+  （每片密钥不同，与睡眠窗口同一旋转语义）。
+- SMB spawn 子（rundll32，CFG 宿主）：INITIAL+ls 字节 ✓（掩码运行中）。
+- 残留：smb_link 的 link 子仍不 INITIAL（无崩溃事件=未起进程；Phase 1 收口已记录的
+  预存 wrinkle，非本轮回归，留专轮）；TCP 链路代码与 pipe 同族未单独活测。
+
+wait-window（§12 入口①）**落地**。§12 入口②（CFG 隐蔽原语）与③（gate 扩容，
+§13.2 已定形状）为后续主线；分支 HEAD f52d46b；六槽=37177141982 构建；TS 已复位
+r2_nosm；测试进程全清。
