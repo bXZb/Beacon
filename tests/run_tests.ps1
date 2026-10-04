@@ -21,6 +21,7 @@ $sources = @(
     'tests/test_settings.cpp',
     'tests/test_guardrails.cpp',
     'tests/test_datastore.cpp',
+    'tests/test_syscalls.cpp',
     'tests/test_s4.cpp',
     'tests/test_crypto.cpp',
     'tests/test_miniprintf.cpp',
