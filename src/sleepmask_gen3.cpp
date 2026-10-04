@@ -69,6 +69,8 @@ static BOOL g3_page_writable(void * p)
 #include "gargleint.h"
 #include "track_memory.h"
 
+#if defined(G3_TRACE) /* trace IO layer: rounds 12-17, off in production */
+
 typedef struct {
 	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
