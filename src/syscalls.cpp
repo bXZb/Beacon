@@ -198,14 +198,12 @@ static void * make_exec(sc_entry * e, int indirect) {
 	indirect = indirect && (e->gadget != NULL); /* unverified gadget: plain direct */
 	if (indirect && e->arity > 4) {
 		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
-		 * under the kernel's nose - fall back to the v1 plain indirect
-		 * jump (hides everything except the immediate stub frame).
-		 * Full RA spoof for these needs synthetic frames (13.2). */
-		built[0] = 0x4C; built[1] = 0x8B; built[2] = 0xD1;
-		built[3] = 0xB8;
-		memcpy(built + 4, &e->ssn, 4);
-		built[8] = 0xFF; built[9] = 0x25; /* jmp qword ptr [rip+0] */
-		memcpy(built + 14, &e->gadget, 8);
+		 * under the kernel's nose, and the plain jmp-to-ntll-syscall
+		 * gadget proved unstable on some builds (live CI: AV at the
+		 * first NtAllocateVirtualMemory with a verified 0F 05 C3
+		 * gadget) - serve them through the proven direct stub. Full
+		 * RA spoof for these needs synthetic frames (13.2). */
+		build_direct_stub(built, e->ssn);
 	}
 	else if (indirect && e->gadget) {
 		/* v2 RA spoof:
