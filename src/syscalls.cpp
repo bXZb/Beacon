@@ -201,17 +201,13 @@ static void * make_exec(sc_entry * e, int indirect) {
 	p = e->stub;
 
 	memset(built, 0, sizeof(built));
-	/* The indirect encodings are shelved pending a dedicated root-cause
-	 * round: on live CI the method-2 first dispatch AVs even when it is
-	 * mechanically identical to the proven direct path (gadget verified
-	 * 0F 05 C3, same SSN, same args) - something environmental about
-	 * re-entering a rewritten stub page. Until that is solved, method 2
-	 * aliases the direct stub: the RA-spoof design (13.2) stays in the
-	 * tree behind this switch. syscalls_test_indirect_mode() re-enables
-	 * the encodings for the instrumented repro test only. */
-	indirect = indirect && (e->gadget != NULL);
-	if (!sc_force_indirect)
-		indirect = 0;
+	/* Un-shelved (round 20): the "environmental" m=2 crashes were the
+	 * arity-0 bug above - the v2 push encoding ran for stack-argument
+	 * syscalls and shifted [rsp+8..] under the kernel. With arity parsed
+	 * correctly: method 2 = v2 RA chain (ntdll ret planted under the
+	 * syscall gadget) for <=4-arity syscalls, direct stub for the rest. */
+	indirect = indirect && (e->gadget != NULL); /* unverified gadget: plain direct */
+	(void)sc_force_indirect;
 	if (indirect && e->arity > 4) {
 		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
 		 * under the kernel's nose, and the plain jmp-to-ntll-syscall
@@ -259,9 +255,10 @@ void syscalls_resolve(void) {
 
 	if (ntdll == NULL)
 		return;
-#define SC_PARSE(id, name) do { \
+#define SC_PARSE(id, name, ar) do { \
 		BYTE * fn = (BYTE *)GetProcAddress(ntdll, name); \
 		sc_##id.ready = (fn != NULL) && parse_nt_stub(fn, &sc_##id); \
+		sc_##id.arity = ar; /* set AFTER parse: the entry memset inside zeroes it. Round-20 root cause: arity stayed 0, so every method-2 call fell into the v2 push encoding even for stack-argument syscalls, shifting [rsp+8..] under the kernel (live fault=0x2a0) */ \
 	} while (0);
 	SC_LIST(SC_PARSE)
 	sc_ready = sc_write.ready; /* legacy readiness = the write entry */

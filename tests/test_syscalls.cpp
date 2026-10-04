@@ -99,12 +99,15 @@ TEST(gate_indirect_repro_alloc)
 	syscall_method_set(2);
 	syscalls_test_indirect_mode(1);
 	h = AddVectoredExceptionHandler(1, gate_veh);
-	printf("  [repro] forcing indirect alloc (v1-jmp path, arity 6)\n"); fflush(stdout);
+	printf("  [repro] m=2 alloc (arity 6 -> direct stub; arity-0 bug used to crash here)\n"); fflush(stdout);
 	p = beacon_VirtualAllocEx(GetCurrentProcess(), NULL, 0x1000,
 	                          MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	printf("  [repro] alloc returned %p (ntstatus path ok)\n", p); fflush(stdout);
-	if (p)
-		beacon_VirtualFreeEx(GetCurrentProcess(), p, 0, MEM_RELEASE);
+	printf("  [repro] alloc returned %p\n", p); fflush(stdout);
+	if (p) {
+		printf("  [repro] m=2 free (arity 4 -> v2 RA chain, first real execution)\n"); fflush(stdout);
+		CHECK(beacon_VirtualFreeEx(GetCurrentProcess(), p, 0, MEM_RELEASE));
+		printf("  [repro] v2 RA-chain free survived - ntdll ret unwound correctly\n"); fflush(stdout);
+	}
 	syscalls_test_indirect_mode(0);
 	if (h) RemoveVectoredExceptionHandler(h);
 	syscall_method_set(1);
