@@ -20,6 +20,28 @@ TEST(gate_table_resolves) {
 	CHECK(syscalls_ssn_ntwrite() > 0);
 }
 
+extern void * syscalls_test_gadget(const char *);
+
+TEST(gate_gadget_diagnostics) {
+	/* diagnostics: what the runner's ntdll actually looks like at the
+	 * parsed gadgets - an unverified (non syscall;ret) gadget now means
+	 * method 2 transparently falls back to the direct stub */
+	syscalls_resolve();
+	const char * names[3] = { "NtAllocateVirtualMemory", "NtWriteVirtualMemory", "NtFreeVirtualMemory" };
+	for (int i = 0; i < 3; i++) {
+		BYTE * g = (BYTE *)syscalls_test_gadget(names[i]);
+		if (g == NULL) {
+			printf("  [gadget] %-24s UNVERIFIED (fallback to direct)
+", names[i]);
+		}
+		else {
+			printf("  [gadget] %-24s %p bytes %02X %02X %02X
+", names[i], g, g[0], g[1], g[2]);
+		}
+		fflush(stdout);
+	}
+}
+
 TEST(gate_wrappers_roundtrip_self) {
 	unsigned char marker[16];
 	unsigned char readback[16];

