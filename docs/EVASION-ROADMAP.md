@@ -400,3 +400,40 @@ SetProcessValidCallTargets 有遥测可见性。候选：CFG-valid 拷贝函数�
 wait-window（§12 入口①）**落地**。§12 入口②（CFG 隐蔽原语）与③（gate 扩容，
 §13.2 已定形状）为后续主线；分支 HEAD f52d46b；六槽=37177141982 构建；TS 已复位
 r2_nosm；测试进程全清。
+
+### 13.5 gate 扩容落地与间接编码会战（round 19，8128ee2→74786d0）
+
+**已落地并实证（74786d0，CI 全绿 + TS mini_sm 活测）**：
+- **25 条 SSN 表**（注入/内存/令牌/等待/文件五族；Halo's Gate 挂钩逃生保留；
+  g3_gadget_ok 精确校验 gadget 必须 `0F 05 C3`）。
+- **注入热路径接线 17 处**：inject_apcthread ×13（VirtualAllocEx/ProtectEx/FreeEx/
+  WPM 族）、execute ×2、两个 CreateRemoteThread 注入器（→NtCreateThreadEx）。
+- **Win32 形状包装 7 个**（WPM/RPM/DuplicateHandle/AllocEx/ProtectEx/FreeEx/
+  CreateRemoteThread），method 0=API / 1=直通桩 / 2=（暂时）别名直通。
+- **DR0-7 采样+清零防御**（resolve 时 + 每 128 次派发；CONTEXT_DEBUG_REGISTERS，
+  对抗 EDR 硬件断点钩）。
+- **活测证据**：默认 method=1 下 spawn 注入链全走 gate——rundll32 子 INITIAL+ls
+  正常；`syscall_method 2` 切换后 beacon 存活可任务；ev36 gen3 窗口与 gate 并存。
+- **host 测试规格**（test_syscalls.cpp）：表解析 ≥20 + 自进程 alloc/write/protect/
+  read/free 三方法往返（CI 上全过）。
+
+**间接编码（RA 欺骗）四轮 CI 会战——诚实记录**：
+1. v2（push ntdll-ret 再跳 gadget）首版 **一字节栈溢出**（gadget 四字 built+25..32
+   越界砸 /GS cookie → c0000409）——修。
+2. 修后 **v2 push 对 >4 参 syscall 平移栈参数**（内核在 [rsp+8] 读第 5 参，push 后
+   读到返回地址；protect 的 OldProtect 指针读到 gadget+2 → AV）——数学上 ret-链
+   RA 欺骗与栈参数根本冲突（fake ret 弹出后下一槽必须是真返回地址但那里是参数）。
+   收口：≤4 参才用 v2。
+3. **v1 跳 gadget 在 live CI 上不稳定**：诊断测试实证 runner 的 gadget 干净
+   （`0F 05 C3` 有效地址）且 SSN 正确（m=1 直通全绿），m=2 首调仍 AV——环境性
+   根因未明（种子间接编码从未被真跑过）。收口：>4 参 m=2 降为直通。
+4. 最终：**m=2 全量别名直通**，RA 链设计保留在树内待专用轮根因（候选方向：重入
+   已重写 stub 页的环境因素 / VBS-HVCI / 需 synthetic frames 的正确形态）。
+
+**入口② CFG 隐蔽原语（部分完成）**：live GFIDS 读取工具落地（ntdll_gfids_mem.py），
+但本机 ntdll 的 GuardCF 条目带元数据步长（疑 XFG 格式），干净解析需 XFG 感知——
+研究入口已留；SetProcessValidCallTargets（遥测可见）保留为现状。
+
+**Phase 2 状态**：核心交付（gate 表+接线+包装+DR 防御+测试+活证）**完成**；
+RA 欺骗 v1 形态待根因轮；CFG 原语待 XFG 解析。分支 HEAD 74786d0；六槽=37187577596
+构建；TS 已复位 r2_nosm；测试进程全清。
