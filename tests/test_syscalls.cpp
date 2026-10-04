@@ -31,12 +31,10 @@ TEST(gate_gadget_diagnostics) {
 	for (int i = 0; i < 3; i++) {
 		BYTE * g = (BYTE *)syscalls_test_gadget(names[i]);
 		if (g == NULL) {
-			printf("  [gadget] %-24s UNVERIFIED (fallback to direct)
-", names[i]);
+			printf("  [gadget] %-24s UNVERIFIED (fallback to direct)\n", names[i]);
 		}
 		else {
-			printf("  [gadget] %-24s %p bytes %02X %02X %02X
-", names[i], g, g[0], g[1], g[2]);
+			printf("  [gadget] %-24s %p bytes %02X %02X %02X\n", names[i], g, g[0], g[1], g[2]);
 		}
 		fflush(stdout);
 	}
