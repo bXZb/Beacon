@@ -67,6 +67,19 @@ static BOOL g3_page_writable(void * p)
 	                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
 }
 
+typedef struct {
+	G3_BLOCK * blocks;
+	int nblocks;
+	unsigned char key[16];
+	G3_SF032 fn;
+#if defined(G3_TRACE)
+	G3_IO io;
+#endif
+} G3_MASKCTX;
+
+static G3_SF032 g_sf032;
+
+
 #if defined(_M_X64)
 
 #include <windows.h>
@@ -190,18 +203,6 @@ static unsigned long long g3_chk(const unsigned char * p, unsigned long len)
 #define g3_chk(p, l) 0ULL
 
 #endif /* G3_TRACE */
-
-typedef struct {
-	G3_BLOCK * blocks;
-	int nblocks;
-	unsigned char key[16];
-	G3_SF032 fn;
-#if defined(G3_TRACE)
-	G3_IO io;
-#endif
-} G3_MASKCTX;
-
-static G3_SF032 g_sf032;
 
 /* Snapshot of the block list, taken before any region is touched: masking
  * .data corrupts gparms (which points into .data) and the heap_records
