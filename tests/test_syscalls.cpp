@@ -80,8 +80,7 @@ extern void syscalls_test_indirect_mode(int);
 static LONG WINAPI gate_veh(PEXCEPTION_POINTERS ep)
 {
 	if (ep->ExceptionRecord->ExceptionCode == 0xC0000005) {
-		printf("  [veh] AV code=%p fault=%p rip=%p rsp=%p
-",
+		printf("  [veh] AV code=%p fault=%p rip=%p rsp=%p\n",
 		       (void *)(size_t)ep->ExceptionRecord->ExceptionCode,
 		       (void *)ep->ExceptionRecord->ExceptionInformation[1],
 		       (void *)ep->ContextRecord->Rip,
