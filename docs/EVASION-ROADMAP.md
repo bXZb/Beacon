@@ -639,3 +639,54 @@ F 项至此 SMB+TCP link 子双绿。下一优先级=synthetic frames（§13.7 �
 
 分支 HEAD 5910dda+本轮（驱动/文档）；无 beacon 代码变更，六槽维持 37244647834；
 TS 已复位 r2_nosm（pgrep 硬验证）；headless/beacon 进程全清。
+
+### 13.10 Round 26：v3 合成帧 stub——注入族全参 RA 欺骗落地（943616f）
+
+**§13.7④ 设计的实现**。>4 参 syscall（write/read/alloc/protect/dup/threadex——
+ETWti 走查最盯的注入族）此前 m=2 下回退 direct stub，syscall 返回地址直落
+无主 gate 页；v2 push 链与栈参数数学冲突（ret 链会把 arg5 当返回目标弹掉）。
+
+**v3 形态（关键机制三件）**：
+1. **RA1 = ntdll `leave; ret`（C9 C3）**：stub 入口 `push rbp; mov rbp,rsp` 把
+   真栈锚放 rbp（内核不碰非易失寄存器，裸 syscall;ret gadget 也不碰）；
+   syscall 返回 → leave：`rsp=rbp` 回真栈 → `pop rbp` 还原调用方 → `ret`
+   落 wrapper 真返回地址。**全程不消费任何栈槽**——参数槽零冲突，v2 的
+   数学不可能性由寄存器锚定绕开。rax=NTSTATUS 全程无人碰。
+2. **栈参窗口 = [rsp+0x28+8k]**（不是 +0x08）：Win64 ABI arg5 在返回地址
+   +0x28（跳过 32B 影子空间）——live 直跑的 direct stub（MSVC 调用方布局）
+   一直是铁证。合成帧布局：`[rsp]=RA1 | 影子区 | arg5..N | 4×ntdll 假帧链
+   （纯观测 cosmetics，永不执行）`。首轮桌面推演曾在 +0x08 犯错，靠
+   既有 direct-stub 行为反推修正。
+3. **C9 C3 节感知扫描**（find_leave_gadget）：只扫 EXECUTE|READ 节（.data
+   命中=DEP 崩）。本机 19044 ntdll 实证存在（RVA 0xC194，≥2 处）；CI
+   runner 亦通过。找不到时安全回退 v2（≤4）/direct。
+
+**验证四层**：① capstone 桌面反汇编全 arity（4/5/6/7/11，evasion-lab/
+verify_v3_stub.py，108~171B ≤256B stub 页）；② **本机 ctypes 真执行**
+（live_v3_host.py：RWX 页放真字节，alloc(6)+write(5)+free(4) 全 status 0
+字节级回读，leave 回转+栈参窗口双实证）；③ CI form 断言（synth 非 direct，
+37252499261 绿）；④ **真 beacon 活测**（f26_v3_live.py，构建 943616f 六槽）：
+beacon ACK `Current syscall method: Indirect` → m=2 下 spawn 注入链
+（alloc6/write5/protect5/threadex11 全 v3）+ SMB link 孙链 + 父存活全绿；
+**内存实证**（scan_v3_live.py）：0x730000/0x740000 两个 RX 私有页头字节
+= `55 48 89 E5 48 81 EC 48/50`（v3 前导+synth 尺寸），页内嵌 leave gadget
+= `0x7FF87453C194` = ntdll+0xC194（与宿主扫描逐字节一致）。
+
+**部署链两个新陷阱（已沉淀进流程）**：
+1. **update_src.py 遗漏 = 假绿部署**：gh_latest_run 下载后必须 `update_src.py
+   <run_id>` 指 SRC，否则 encode_all 编上一轮的旧源——且 patch/verify 全链
+   "MATCH"（remote vs 本地旧编码自洽，非新鲜度校验！）。本轮靠内存取证
+   （stub 页呈 v2/direct 老形态）抓出。**新鲜度判据=encode 尺寸/sha 相对上轮
+   必须变化**（本轮 304160→305184，+1KB v3 代码）。
+2. **bsyscall_method 吃名字不是数字**：桥走 `BeaconSyscallMethod.getMethodNumber
+   ("None"/"Direct"/"Indirect")`，传 "2" 静默无任务（无 TASKED 行）。判活要认
+   beacon 的 ACK 输出 `Current syscall method: ...`。
+
+**x86**：v3 仅 x64（gate 本就 x64-only），x86 sleeve 零增量。
+
+**残留**：深帧（>4 帧后仍见 beacon 帧）与 ROP/合成帧的 ETWti 实机对抗留
+Phase 3+ 扫描矩阵轮；syscall 由 gate 页发出本身（RIP 落 ntdll gadget）已由
+indirect 覆盖。
+
+分支 HEAD 943616f（本轮）+ 49e5785（R25）；六槽=37252499261 构建（v3 版）；
+TS 已复位 r2_nosm（pgrep 硬验证）；headless/beacon 进程全清。
