@@ -550,3 +550,34 @@ trace 共享函数化后 x86 回落 247328B ≤ cap。
    （0xmaz）方向，与 DR 清零共同构成 gate 的栈/寄存器双防御。
 
 分支 HEAD 6f19159a（CI 全绿）；六槽=6f19159a 构建待部署验证；TS mini_sm。
+
+### 13.8 Round 24：D 通道补测过线（TUN 关闭后，3f790fb→6f19159a 构建）
+
+用户关闭 singbox TUN 后补测 D（dns）。**两层根因全部实证并处置**：
+
+1. **TS 侧 53 端口竞争**：headless 会话恢复时重建多个 DNS listener，dns_go 抢绑 53 →
+   dns_ok `BindException` 成为死监听（应答来自 stale handler，永远 0.0.0.0）。
+   处置=删竞争者 + 干净重启 TS（杀进程确认 PORT53_FREE 再起）。
+2. **注册闭环的正确操作序列**（10/01 §6.2 已实证的 TS bootstrap 语义，本轮复核）：
+   新 id 首查 → TS `update()` 创建**空会话**（`beacon_initial_empty` 事件）+ 回 idle；
+   元数据信号 0xF1 只发给 `isCheckinRequired==true` 的会话（有人 task 过）。
+   **本轮缺的其实是观测**：headless_drive.cna 没挂 `beacon_initial_empty` 事件，
+   空会话一直在 UI 里而我们看不见。补 hook 后全链一次通过：
+   - `INITIAL_EMPTY 302284734`（staged dns session）
+   - target 空会话 + `pwd` → 应答切换 0x243
+   - beacon `www.` 信道上传元数据 → `CHECKIN 8B` → `ALT Current directory...` →
+     **真会话 INITIAL**
+   - 稳态：60s 周期 CHECKIN、ls 字节返回、进程持续存活 ✓
+
+**dnsb 三零周期元数据推送（3f790fb）保留**：作为无人值守场景的自愈（TS 重启后
+会话丢失时 beacon 自动重注册），不与官方 task 触发语义冲突（空会话存在时信号路径
+优先）。
+
+**cna 修复**：headless_drive.cna 补 `beacon_initial_empty` hook（观测盲区教训——
+判定通道过线前先确认事件面完整）。
+
+**D 通道判定：PASS。六通道至此全绿**（A http / B winhttp / C x86（官方路径，
+降级不崩）/ D dns / E extc2 / F pivot 父链；F link 子=TS 侧载荷选择问题已立项）。
+
+分支 HEAD 3f790fb（dnsb 自愈）+ 6f19159a（spawn_trace 路径修复）；六槽=37244647834；
+TS 已复位 r2_nosm；进程全清。
