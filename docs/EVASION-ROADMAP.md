@@ -532,6 +532,10 @@ link_start_explicit: returned（无第二次 spawn）
 或 pivot sleeve 的 PIPENAME 设置未进 spawn 载荷），**beacon 侧行为全部正确**。修复
 方向：TS 复合任务构造（pivot.x64.dll + pipename setting），属 TS 侧改造，立项单测。
 
+> **【Round 25 修正】以上定谳已被推翻**（见 §13.9）：观察到的 HTTP 子是驱动自己
+> `spawn http x64` 起的 link 父；`beacon_link` 是 LINK-ONLY（cmd 68 连管），从没人
+> spawn bind 子，管道自然不存在。TS 与 beacon 双侧无错，销案。
+
 **坑（第七次反斜杠）**：spawn_trace 路径字面量被 heredoc 吃成
 `C:UsersPublicspawn_trace.txt`（相对路径静默成功）→ 建文件名诡异的全局真相。修复=
 真双反斜杠（6f19159a）。
@@ -581,3 +585,57 @@ trace 共享函数化后 x86 回落 247328B ≤ cap。
 
 分支 HEAD 3f790fb（dnsb 自愈）+ 6f19159a（spawn_trace 路径修复）；六槽=37244647834；
 TS 已复位 r2_nosm；进程全清。
+
+### 13.9 Round 25：F link 子过线——推翻 Round 23 定谳，根因=驱动误用 link-only 调用
+
+**本轮打的是上轮报告的第一优先级**（TS beacon_link 载荷选择）。逆向客户端/TS
+链路后**推翻了 §13.7 的定谳**：
+
+**正确链路（反编译实证，全部读源）**：
+- `link`（UI/console）→ `TaskBeacon.LinkExplicit` = **cmd 68（0x44
+  PIPE_OPEN_EXPLICIT）+ ASCIIZ 管道名——纯连接，不产任何子进程**
+- cna `beacon_link($bid,".",$listener)` → `linkToPayloadLocal` → 同样只有
+  cmd 68（bind_tcp 则 cmd 0x0E ConnectExplicit）
+- **官方"spawn+link"复合 = `bspawn($bid, $bind_listener, $arch)`** →
+  `TaskBeacon.Spawn(listener, arch)`：cmd 44 注入 `exportLocal(bind_listener)`
+  载荷（bind_pipe → `BeaconPayload.exportSMBStage` → `resources/pivot.x64.dll`
+  = 我们已替换的客户端 sleeve，管道名进 config）+ Pause(1s) +
+  `linkToPayloadLocal` 自动连管
+- beacon 侧 `link_start` 自带 **15s 重试环**（CreateFile 失败 Sleep(1000)），
+  cmd 68 早到无害；ERROR_FILE_NOT_FOUND = 15 秒内管道从未出现
+
+**旧 F 流程的真相**：驱动先 `spawn http x64`（**故意**起 HTTP 子当 link 父——
+round 23 看到的"HTTP beacon 子"就是它，与 TS 载荷选择无关），随后
+`smb_link`/`tcp_link` 只发连接任务——**从没有人 spawn bind 子**，管道/端口
+无人绑定，15 秒重试后 ERROR_FILE_NOT_FOUND。§13.7 的"TS 复合任务把 http
+listener 载荷发给 spawn"假设不成立：spawn_trace 里的 inject(len=304128) 就是
+驱动自己要的 http 子。**TS 与 beacon 双侧从头到尾都是对的。**
+
+**修复（零 beacon/TS 代码变更，纯测试侧）**：`evasion-lab/f_link_child.py`
+（已入仓库）用正确复合调用；six_reg.py / rerun_ef.py F 段同步换流程；
+headless_drive.cna 的 smb_link/tcp_link 注释改为 LINK-ONLY 并指向正确用法。
+
+**活测（mini_sm，构建 37244647834，两次运行可复现）**：
+
+| 步骤 | 证据（r1.log 字节） |
+|---|---|
+| P0 父 | INITIAL `beacon_f25.exe` + ALT pwd ✓ |
+| P1 http 子 | `spawn http_f25 x64` → INITIAL rundll32 ✓ |
+| P2 SMB link 子 | `TASKED spawn (x64) windows/beacon_bind_pipe (\.\pipe\f25pipe)` → **双向 `established link to child/parent`** → INITIAL `1634550460` → **LS 字节** ✓；管道实测 52.6s 出现（sleep+jitter 正常时延） |
+| P3 TCP link 子 | `TASKED spawn (x64) windows/beacon_bind_tcp (0.0.0.0:4451)` → 双向 established → INITIAL `1700494704` → LS ✓ |
+| 负面 | 全程 **0 条** "Could not connect to pipe"（旧失败签名消失） |
+
+三跳链路实证：TS ← HTTP 父 ← HTTP 子 ← SMB/TCP link 子（孙会话 LS 字节穿两级
+pivot 返回）。
+
+**方法论教训（第三次同型）**：wait_for 类观测函数从调用时刻起扫，**先于等待
+写盘的行会被跳过**（"established link"与 INITIAL 同秒写入，链接行在前）。本轮
+驱动两次假 FAIL 均由此来（管道轮询窗口 30s<53s 真实时延 + 链接行早于 INITIAL）。
+判定只认 r1.log 字节这条铁律再次救命——**驱动打印的 FAIL 不是证据，字节才是**。
+
+**遗留清账**：F link 子从"TS 侧改造立项"销案（无需动 TS Java）；六通道矩阵的
+F 项至此 SMB+TCP link 子双绿。下一优先级=synthetic frames（§13.7 ④ 设计已备）
+与 Phase 3（BOF 期掩蔽）。
+
+分支 HEAD 5910dda+本轮（驱动/文档）；无 beacon 代码变更，六槽维持 37244647834；
+TS 已复位 r2_nosm（pgrep 硬验证）；headless/beacon 进程全清。
