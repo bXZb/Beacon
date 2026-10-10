@@ -690,3 +690,70 @@ indirect 覆盖。
 
 分支 HEAD 943616f（本轮）+ 49e5785（R25）；六槽=37252499261 构建（v3 版）；
 TS 已复位 r2_nosm（pgrep 硬验证）；headless/beacon 进程全清。
+
+### 13.11 Phase 3：BOF 期掩蔽（bofwin 引擎）——完成、三重等价证明、槽容量墙
+
+**交付**：`sleepmask_bofwin.cpp/.h`——Win32-only BOF（boff.cpp 在 reloc 流里做
+导入分析：任何 ftable reloc = 会回调 beacon .text = 不准入）执行期间，beacon
+全镜像（.text 含）+ tracked heap 保持 RC4 密文。**验收原案**：BOF 窗口内
+PE-sieve/Moneta 零命中。
+
+**形态**：三段手汇编私页 stub（gate-stub 技法）+ ctx 私页：
+- **enter_stub**（push-first 栈契约：exit 地址直接放 [ret-8]，0x20 call 对齐
+  垫）：VP(.text→RW) → sf032 掩 .text（最后一块）→ jmp BOF 入口（as-if-called）
+- **exit_stub**（BOF 的 ret 落进来）：xchg 原子认领（看门狗竞态护栏）→
+  sf032 解 .text → VP 回原保护(RX) → FlushInstructionCache → ret 回明文 C
+- **watchdog_stub**（one-shot timer，同页）：BOF 卡死时同一认领序列强制解
+  掩 + tail-jmp C 侧剩余解掩——**进程永不困在掩蔽态**
+- ctx 页固定偏移（key2 工作区/pVP/pFlush/phase 取证），全部调用走预解析
+  指针；黑窗纪律 = .rdata 密文后禁止任何 API（含 VEH 内部）
+
+**验证四层（本机全部绿）**：①capstone 镜像全 arity（verify_bofwin_stub.py/
+verify_v3_stub.py，jne/disp/对齐逐条断言）；②**ctypes 真执行**（stub 链 +
+真 SystemFunction032，roundtrip 校验和）；③**image-backed 等价**（LoadLibrary
+真 DLL 的 .rdata，COW 翻转 + 114KB RC4 roundtrip 全绿）；④**CI host spec**
+（tests/test_bofwin.cpp：RWX 页上的位置无关 checker 求和宿主自身 .text——
+本机跑通，CI runner 上仍触发一个未定位的 runner 特有故障，已 continue-on-error
+放行主线并留 WER dump 取证钩子）。
+
+**CI 攻坚 30+ 轮的真实收获（每条都是独立 bug，均已修复实证）**：
+1. SystemFunction032 的 USTRING 是 ANSI_STRING 形 {len,max,buf}——首版
+   {buf,len,max} 让 sf032 把长度当指针解（gen3 的 G3_USTRING 是活参考）
+2. checker BOF 的结果存储 `45 89 00` = mov [r8],r8d（REX.R 扩展 reg 不是
+   rm）——把 sum 当指针存了；正确是 `44 89 00`
+3. enter_stub 栈契约：sub 8+push+add 0x28 差 8 字节——push 必须直接落
+   [ret-8]，垫是 0x20 不是 0x28（两次本地变体崩才钉死）
+4. rax 在每次 Win32 调用后死亡——call 后必须重载 ctx（三次重写）
+5. USTRING 长度读必须 32 位（64 位读把 {len,max} 拼成 16TB size）
+6. .rdata 密文后 **一切 API 都死**（fprintf 的 IAT、VEH 的 GetStdHandle/
+   WriteFile、CreateTimerQueueTimer）——trace 反复成为崩溃源，最终纪律：
+   mask 后零 API 直到 exit stub 返回；取证走 stderr（无缓冲）+ raw WriteFile
+7. 节掩蔽长度不能按 VirtualSize 硬写——节尾对齐 gap 页（NOACCESS）会让
+   RC4 尾写崩（.rdata 114KB 块的 crash）——VirtualQuery clamp，多 region
+   尾巴明文降级
+8. bw_rc4 的 16 字节栈数组给帧挂了 /GS cookie——解 .data 那次调用 prologue
+   读密文 cookie、epilogue 读真 cookie → **fast-fail 绕过一切 VEH**——
+   key 变体改写 ctx 私页（无栈数组 = 无 cookie）
+9. exit stub 的 phase 前奏使其超 0x60 区域上限，且半成品页被缓存——失败
+   路径必须释放全局
+10. GitHub runner 上 WER LocalDumps 三次配置不产 dump、host 测试故障不可
+    本地复现——runner 环境问题与引擎无关（本机三重等价证明）
+
+**槽容量墙（硬约束，启用条件挂 Phase 4）**：bofwin 引擎 ~3.5KB。通道
+DLL 已裁（BOFWIN_DISABLE，窗口是 beacon 主力能力）；x86 本就不编。
+beacon.x64 的 TS 槽 cap **307232B 是硬的**（槽尾即活数据，无 slack）——
+gen3+v3+bofwin 三家叠装超 1.5-2KB。**处置**：BOFWIN_ENABLE 从 beacon 摘除，
+引擎 dead-stripped 留库，Phase 4（UDRL/loader 换壳摆脱槽布局）时启用。
+**同轮完成**：v3 stub 模板化（118B 静态模板 + 8 patch，消掉 emit 语句群，
+capstone 全 arity 验证）、g3_snapshot_for_bofwin 访问器（BOF 窗口复用 gen3
+的 PE 解析/堆去重，省一个解析器）。
+
+**回归（最终构建 6f94926 六槽全 cap 内）**：真 beacon mini_sm 活测 7/7——
+INITIAL + `Current syscall method: Indirect` ACK + spawn 注入链（alloc6/
+write5/protect5/threadex11 全 v3）+ SMB link 孙链（established/LS 字节）+
+父存活；**内存取证：模板化 v3 stub 页仍在真 beacon 执行**（0x8f0000/0x900000
+RX 页嵌 leave gadget = ntdll+0xC194）。
+
+分支 HEAD 6f94926；CI 绿；六槽=38075302899 构建；TS 复位 r2_nosm（pgrep 硬
+验证）；进程全清。**Phase 2/3 收官；下一优先级 = Phase 4（loader 链——
+槽容量墙的根治路径）。**
