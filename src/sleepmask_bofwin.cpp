@@ -47,8 +47,10 @@
 #if defined(BW_TRACE_ENABLE)
 #include <stdio.h>
 #define BW_TRACE(msg) fprintf(stderr, "[bw] %s\n", msg)
+#define BW_TRACE2(msg, a, b, c) fprintf(stderr, "[bw] %s p=%p len=%lu idx=%d\n", msg, (void *)(a), (unsigned long)(b), (int)(c))
 #else
 #define BW_TRACE(msg) ((void)0)
+#define BW_TRACE2(msg, a, b, c) ((void)0)
 #endif
 #include "gargleint.h"
 #include "track_memory.h"
@@ -716,8 +718,10 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	}
 	BW_TRACE("blocks flipped RW");
 	for (i = 0; i < nblocks; i++) {
-		if (i != text_idx)
+		if (i != text_idx) {
+			BW_TRACE2("masking block", blocks[i].ptr, blocks[i].len, i);
 			bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
+		}
 	}
 	ctx->phase = 2; /* all but .text masked */
 	BW_TRACE("masked, entering stub");
