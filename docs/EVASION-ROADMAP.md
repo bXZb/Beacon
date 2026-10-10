@@ -757,3 +757,53 @@ RX 页嵌 leave gadget = ntdll+0xC194）。
 分支 HEAD 6f94926；CI 绿；六槽=38075302899 构建；TS 复位 r2_nosm（pgrep 硬
 验证）；进程全清。**Phase 2/3 收官；下一优先级 = Phase 4（loader 链——
 槽容量墙的根治路径）。**
+
+### 14. Phase 4 开工：loader 链（UDRL）——契约 RE 完成、image-backed loader 实现交付
+
+**RE（4.9.1 反编译 + udrl kit 官方参考）**：
+- **接入机制 = Aggressor hook，不是 API**：`BEACON_RDLL_GENERATE`（client
+  ScListener.java:373 触发，**仅 spawn 链的 exportLocal 调用**——EXE artifact 的
+  `export(arch)` 路径不带 hook）；kit 侧 `setup_reflective_loader(dll, loader)`
+  在 DLL 里找 **loader 占位区**（5120/51200/102400/1024000 四档——我们的 DLL
+  就是 5KB INT3 墙），**循环填充**（loader 短于区时重复铺），**DOS 头 patch**
+  （MZAR→x64）跳到 `findReflectiveLoader` 偏移 = **loader 入口**
+- **执行链**：spawn 和 EXE 两条路径都执行"墙里的 loader"（inject 执行 ptr+0 =
+  DOS stub → call loader 偏移；artifact 容器同构）——**墙内 loader 是真实执行体**
+- **smartinject 契约**（BeaconLoader.java）：`.stage.smartinject` 开启时 x64
+  载荷内 `AAAAAAAA`=GetModuleHandleA 代码落点、`BBBBBBBB`=GetProcAddress——
+  我们 loader 全自解析，profile 关闭即可
+- **kit loader（官方参考）= stephenfewer unbacked RWX**——正是 Phase 0 扫描的
+  unbacked-RX 命中源；**我们的 loader = image-backed AceLdr 形态替换**
+
+**实现（udrl/ReflectiveLoader.c，单文件 COFF，零 CRT 零导入）**：
+- PEB walk（gs:[0x60]→Ldr→InLoadOrderLinks）取 kernel32，直接 base+RVA 解析
+  导出（**已加载模块无 file-offset 平移**）
+- **module stomp**：LoadLibraryExW(牺牲系统 DLL, DONT_RESOLVE_DLL_REFERENCES)
+  → 候选列表（xpsservices/mfh263dec/prvdmofcomp/msoert2）→ 校验最大 committed
+  执行 region ≥ beacon SizeOfImage（beacon ~420KB << 候选 .text ~1MB）
+- region 翻 RW → 清零 → 镜像铺位（header@base、各节@自身 RVA）→ .reloc
+  DIR64 重定位 → IAT 填充（208 导入/4 DLL）→ 分节还原保护（RX code/R 头/
+  RW data，stage.userwx FALSE 对齐）→ **call DllMain(base, 4, param)**（永不
+  返回，容器 call 后代码只是错误路径）
+- **.text-only 纪律**：client 的 extract_reflective_loader 只拼接 .text 节——
+  牺牲品列表、全部字面量改为栈上 QWORD 立即数构造（四名字 4×qword LE 宽字
+  编码，python 解码验证逐个 OK）；/Gy- 防止 COMDAT 拆段；/GS- /Zl 防外部符号
+
+**接线**：CI 新 job `udrl-x64`（cl /c /GS- /Zl /Gy- → ReflectiveLoader.x64.o
+artifact）；headless_drive.cna 挂 `BEACON_RDLL_GENERATE` hook（读
+ci-artifacts/udrl-dist/ReflectiveLoader.x64.o → extract → setup → 返回
+patched DLL）。
+
+**cna/工具链两个新坑**：①headless_drive.cna 经 python 重写后带 UTF-8 BOM，
+Sleep 报 `Unknown expression at 1`（**BOM 字节被当 token**）——写 cna 必须
+无 BOM（wb+encode utf-8）；②Sleep 字符串里 `C:\udrl-dist` 的 `\u` 被解析为
+unicode 转义——路径反斜杠必须双写。
+
+**阻塞（非代码）**：GitHub Actions 账户计费失败（"recent account payments
+have failed or your spending limit needs to be increased"）——全部 job 不再
+启动，log 404。**UDRL loader 的编译+活测待 billing 恢复后执行**：栈名版
+loader 尚未经编译验证；活测流程已备（evasion-lab/udrl_live.py：EXE 经 hook
+生成 → 上线 → PE-sieve 验证 beacon 落牺牲 DLL 区域、unbacked RX 命中消失——
+对比 Phase 0 基线）。
+
+分支 HEAD 8ec1391+（UDRL 代码）；CI 状态=billing 阻塞；TS 已复位 r2_nosm。
