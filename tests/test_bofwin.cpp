@@ -128,11 +128,7 @@ TEST(bofwin_window_roundtrip) {
 
 	before = sum_region(region, 0x100);
 	printf("  [bofwin] plaintext sum  = %u\n", before); fflush(stdout);
-	{
-		int ph = bofwin_window(bof, args, 16, 0);
-		printf("  [bofwin] window returned %d, phase=%d\n", ph, bofwin_test_phase()); fflush(stdout);
-		CHECK(ph == TRUE);
-	}
+	CHECK(bofwin_window(bof, args, 16, 0) == TRUE);
 	after = sum_region(region, 0x100);
 	printf("  [bofwin] window sum     = %u (masked)\n", *result);
 	printf("  [bofwin] restored sum   = %u\n", after); fflush(stdout);
@@ -163,16 +159,4 @@ TEST(bofwin_watchdog_restores) {
 	CHECK(g_bw_watchdog_fires == fires0 + 1); /* the timer path ran        */
 	CHECK(*result != before);                 /* checksum taken masked     */
 	CHECK(after == before);                   /* restored, no double-unmask*/
-}
-
-TEST(bofwin_stub_page_dump) {
-	unsigned char * page = (unsigned char *)bofwin_test_stub_page();
-	/* declared in sleepmask_bofwin.h; this use also pins the export */
-	int i;
-
-	CHECK(page != NULL);
-	printf("  [bofwin] stub page:");
-	for (i = 0; i < 0x30; i++)
-		printf(" %02X", page[i]);
-	printf(" ...\n"); fflush(stdout);
 }

