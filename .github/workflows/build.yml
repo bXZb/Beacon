@@ -67,6 +67,40 @@ jobs:
             x64/Release/winhttpb.x64.dll
             x64/Release/winhttpb.x64.map
 
+  udrl-x64:
+    name: udrl x64 object (Phase 4 loader)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile UDRL object
+        shell: pwsh
+        # /GS- (no security cookie reference - the COFF must be free of
+        # external symbols for the client's extract_reflective_loader),
+        # /Zl (no default library record)
+        run: |
+          New-Item -ItemType Directory -Force -Path udrl\_build | Out-Null
+          & cl /nologo /W3 /O2 /GS- /Zl /c /Fo:udrl\_build\ReflectiveLoader.x64.o udrl\ReflectiveLoader.c
+          if ($LASTEXITCODE -ne 0) { throw "udrl build failed" }
+          Get-Item udrl\_build\ReflectiveLoader.x64.o | Select-Object Name,Length
+
+      - name: Report size
+        shell: pwsh
+        run: |
+          $o = Get-Item "udrl\_build\ReflectiveLoader.x64.o"
+          "udrl object = $($o.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: udrl-x64
+          path: udrl\_build\ReflectiveLoader.x64.o
+
   dll-x86:
     name: beacon x86 Release
     runs-on: windows-2022
