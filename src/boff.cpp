@@ -678,7 +678,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				    setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
 					if (gparms == NULL)
 						gargle_setup_parms(NULL, NULL, 0);
-					if (!bofwin_window(inlinefunc, args, alen, 0))
+					if (!bofwin_window((void (*)(void *, int))inlinefunc, args, alen, 0))
 						inlinefunc(args, alen);
 				}
 				else {
