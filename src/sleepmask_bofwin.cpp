@@ -246,10 +246,38 @@ static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 			text_end = va + span;
 			continue; /* appended after the loop */
 		}
-		if (bw_page_usable(pe + va, &out[n].orig_prot)) {
-			out[n].ptr = pe + va;
-			out[n].len = span;
-			n++;
+		/* expand the section across its ACTUAL committed regions: a section's
+		 * VirtualSize can end inside an alignment gap page (PAGE_NOACCESS),
+		 * and a single span covering the gap faults the RC4 write at the
+		 * tail (the .rdata crash, 114KB block). Each region keeps its own
+		 * recorded protection for the restore. */
+		{
+			DWORD off = va;
+			while (off < end && n + 3 < max) {
+				MEMORY_BASIC_INFORMATION mbi;
+				DWORD rstart, rlen;
+				if (!VirtualQuery(pe + off, &mbi, sizeof(mbi)))
+					break;
+				if (mbi.State != MEM_COMMIT)
+					break;
+				rstart = (DWORD)((unsigned char *)mbi.BaseAddress - pe);
+				rlen = (DWORD)mbi.RegionSize;
+				if (rstart < off) {
+					rlen -= (off - rstart);
+					rstart = off;
+				}
+				if (rstart + rlen > end)
+					rlen = end - rstart;
+				if (rlen == 0)
+					break;
+				if (mbi.Protect == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD))
+					break; /* gap: stop the expansion here, tail stays plaintext */
+				out[n].ptr = pe + rstart;
+				out[n].len = rlen;
+				out[n].orig_prot = mbi.Protect;
+				n++;
+				off = rstart + rlen;
+			}
 		}
 	}
 
@@ -269,11 +297,40 @@ static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 		}
 	}
 
-	if (text_va != 0 && bw_page_usable(pe + text_va, &out[n].orig_prot)) {
-		out[n].ptr = pe + text_va;
-		out[n].len = text_end - text_va;
-		*text_idx = n;
-		n++;
+	if (text_va != 0) {
+		/* same region expansion for .text (clamped to committed memory) */
+		int t_start = n;
+		DWORD off = text_va;
+		while (off < text_end && n + 2 < max) {
+			MEMORY_BASIC_INFORMATION mbi;
+			DWORD rstart, rlen;
+			if (!VirtualQuery(pe + off, &mbi, sizeof(mbi)))
+				break;
+			if (mbi.State != MEM_COMMIT)
+				break;
+			rstart = (DWORD)((unsigned char *)mbi.BaseAddress - pe);
+			rlen = (DWORD)mbi.RegionSize;
+			if (rstart < off) {
+				rlen -= (off - rstart);
+				rstart = off;
+			}
+			if (rstart + rlen > text_end)
+				rlen = text_end - rstart;
+			if (rlen == 0 || mbi.Protect == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD))
+				break;
+			out[n].ptr = pe + rstart;
+			out[n].len = rlen;
+			out[n].orig_prot = mbi.Protect;
+			n++;
+			off = rstart + rlen;
+			break; /* ONLY the first committed region is stub-masked: a
+			        * multi-region .text tail stays plaintext by design -
+			        * masking it would hit code C is executing */
+		}
+		if (n > t_start)
+			*text_idx = t_start;
+		else
+			return 0; /* no .text to protect -> no meaningful window */
 	}
 	else {
 		return 0; /* no .text to protect -> no meaningful window */
