@@ -21,12 +21,23 @@
 #include <stdio.h>
 #include <string.h>
 #include "beacon.h"   /* settings_init / setting_int declarations */
-#include "gargleint.h"
+#include "gargleint.h" /* GARGLEP layout; setup stubbed below */
 #include "sleepmask_bofwin.h"
 
-/* threadcount lives in thread.cpp in the beacon; the test binary provides
- * its own definition (nothing else in the test link defines it) */
+/* test-local stubs (test_datastore.cpp owns the shared gparms in this
+ * link; bofwin needs a working setup that points beacon_ptr at the module
+ * and an empty section table - the engine then snapshots the test exe's
+ * real PE layout through its own parser) */
 volatile long threadcount = 0;
+
+void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon) {
+	(void)begin; (void)end; (void)mask_fn_in_beacon;
+	if (gparms != NULL)
+		return;
+	gparms = (GARGLEP *)malloc(sizeof(GARGLEP));
+	memset(gparms, 0, sizeof(GARGLEP));
+	gparms->beacon_ptr = (char *)GetModuleHandleA(NULL);
+}
 
 /* checker blob: rcx = args { void *region; unsigned int *result; }
  *   sum = bytes of region[0..0x100); *result = sum; ret

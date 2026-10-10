@@ -37,8 +37,7 @@ $sources = @(
     'src/security.cpp',
     'src/crypto.cpp',
     'src/miniprintf.cpp',
-    'src/sleepmask_bofwin.cpp',
-    'src/gargleint.cpp'
+    'src/sleepmask_bofwin.cpp'
 )
 
 Push-Location $root
