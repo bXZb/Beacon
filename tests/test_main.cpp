@@ -38,14 +38,34 @@ int run_all_tests() {
 /* process-wide VEH: any AV in any test prints code/fault/rip/rsp before the
  * process dies - the CI log is the only debugger we have */
 static LONG WINAPI test_veh(PEXCEPTION_POINTERS ep) {
-	/* stderr is unbuffered: stdout loses everything written between the
-	 * last fflush and an in-test crash, which cost us the whole forensic
-	 * chain of round 27 */
-	fprintf(stderr, "[veh] code=%08X fault=%p rip=%p rsp=%p\n",
-	        (unsigned)ep->ExceptionRecord->ExceptionCode,
-	        (void *)(size_t)ep->ExceptionRecord->ExceptionInformation[1],
-	        (void *)ep->ContextRecord->Rip,
-	        (void *)ep->ContextRecord->Rsp);
+	/* raw WriteFile with manual hex formatting: a corrupted CRT/heap must
+	 * not take the VEH down with it (fprintf here dies twice and kills the
+	 * whole log - the round-27 lesson) */
+	char buf[192];
+	static const char hex[] = "0123456789ABCDEF";
+	unsigned code = (unsigned)ep->ExceptionRecord->ExceptionCode;
+	unsigned long long fault = (unsigned long long)ep->ExceptionRecord->ExceptionInformation[1];
+	unsigned long long rip = (unsigned long long)ep->ContextRecord->Rip;
+	unsigned long long rsp = (unsigned long long)ep->ContextRecord->Rsp;
+	int n = 0, i;
+	const char * pre = "[veh] code=";
+	for (i = 0; pre[i]; i++) buf[n++] = pre[i];
+	for (i = 28; i >= 0; i -= 4) buf[n++] = hex[(code >> i) & 0xF];
+	pre = " fault=";
+	for (i = 0; pre[i]; i++) buf[n++] = pre[i];
+	for (i = 60; i >= 0; i -= 4) buf[n++] = hex[(fault >> i) & 0xF];
+	pre = " rip=";
+	for (i = 0; pre[i]; i++) buf[n++] = pre[i];
+	for (i = 60; i >= 0; i -= 4) buf[n++] = hex[(rip >> i) & 0xF];
+	pre = " rsp=";
+	for (i = 0; pre[i]; i++) buf[n++] = pre[i];
+	for (i = 60; i >= 0; i -= 4) buf[n++] = hex[(rsp >> i) & 0xF];
+	buf[n++] = '\r';
+	buf[n++] = '\n';
+	{
+		DWORD written = 0;
+		WriteFile(GetStdHandle(STD_ERROR_HANDLE), buf, (DWORD)n, &written, NULL);
+	}
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 

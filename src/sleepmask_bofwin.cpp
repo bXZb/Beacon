@@ -704,6 +704,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	                           NULL, watchdog_ms, 0,
 	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION))
 		return FALSE; /* no watchdog -> no window (nothing masked yet) */
+	BW_TRACE("watchdog timer armed");
 
 	/* flip the non-.text blocks to RW, then mask them - plain RC4 loops,
 	 * .text stays plaintext and executable until enter_stub */
@@ -713,6 +714,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		ctx->state = BW_STATE_IDLE;
 		return FALSE;
 	}
+	BW_TRACE("blocks flipped RW");
 	for (i = 0; i < nblocks; i++) {
 		if (i != text_idx)
 			bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
