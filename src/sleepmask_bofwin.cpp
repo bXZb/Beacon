@@ -46,8 +46,7 @@
 
 #if defined(BW_TRACE_ENABLE)
 #include <stdio.h>
-#define BW_TRACE(msg) fprintf(stderr, "[bw] %s
-", msg)
+#define BW_TRACE(msg) fprintf(stderr, "[bw] %s\n", msg)
 #else
 #define BW_TRACE(msg) ((void)0)
 #endif
