@@ -198,7 +198,7 @@ static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 	 * non-.text sections, tracked heap with the in-image dedup rules) -
 	 * reuse it instead of a second parser */
 	(void)image;
-	n = g3_snapshot_for_bofwin(out, max, text_span);
+	n = g3_snapshot_for_bofwin((G3_HEADER_BLOCK *)out, max, text_span);
 	if (n <= 0)
 		return 0;
 	if (text_span[0] == 0 || text_span[1] <= text_span[0])

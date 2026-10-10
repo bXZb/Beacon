@@ -912,13 +912,11 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 /* snapshot accessor for the BOF-window engine (see sleepmask_bofwin.cpp):
  * the same block list gen3_sleep masks, plus the first .text section span
  * so the window can mask it separately. Runs before any region is touched. */
-int g3_snapshot_for_bofwin(G3_BLOCK * out, int max, DWORD * text_span)
+int g3_snapshot_for_bofwin(G3_HEADER_BLOCK * out, int max, DWORD * text_span)
 {
-	if (out == NULL || gparms == NULL)
-		return 0;
-	if (!g_inited && !g3_init())
-		return 0;
-	return g3_snapshot_blocks(out, max, text_span);
+	/* same layout as G3_BLOCK - the accessor exists so callers outside the
+	 * gen3 translation unit can reuse the snapshot without the private type */
+	return g3_snapshot_blocks((G3_BLOCK *)out, max, text_span);
 }
 
 #else /* !_M_X64: x86 gen3-1a REMOVED (round 23) - the slice compiles but the
