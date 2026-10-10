@@ -620,8 +620,8 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	if (crypto_rng_get_bytes(key, (unsigned long)sizeof(key)) == 0)
 		return FALSE;
 
-	pVP = (void (*)(void *, SIZE_T, DWORD, DWORD *))VirtualProtect;
-	pFlush = (void (*)(void *, const void *, SIZE_T))FlushInstructionCache;
+	pVP = VirtualProtect;
+	pFlush = FlushInstructionCache;
 
 	ctx->state = BW_STATE_OPEN;
 	ctx->rest_done = 0;
