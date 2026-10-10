@@ -54,7 +54,7 @@ static const unsigned char checker[] = {
 	0x41, 0xFF, 0xC9,                         /* dec r9d                   */
 	0x75, 0xF1,                               /* jne loop                  */
 	0x48, 0x8B, 0x41, 0x08,                   /* mov rax, [rcx+8]          */
-	0x45, 0x89, 0x00,                         /* mov [rax], r8d            */
+	0x44, 0x89, 0x00,                         /* mov [rax], r8d  (45 89 00 decoded as mov [r8],r8d - the store used the SUM as a pointer, the CI crash) */
 	0xC3,                                     /* ret                       */
 };
 
@@ -74,7 +74,7 @@ static const unsigned char checker_wd[] = {
 	0x49, 0xFF, 0xCB,                         /* dec r11                   */
 	0x75, 0xFD,                               /* jne spin                  */
 	0x48, 0x8B, 0x41, 0x08,                   /* mov rax, [rcx+8]          */
-	0x45, 0x89, 0x00,                         /* mov [rax], r8d            */
+	0x44, 0x89, 0x00,                         /* mov [rax], r8d            */
 	0xC3,
 };
 
