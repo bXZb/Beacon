@@ -210,96 +210,72 @@ static BYTE * find_leave_gadget(HMODULE m) {
 /* Emit helpers for the hand-assembled v3 stub (x64). disp8 addressing only:
  * max offset touched is RA1(0) + args(<=7*8) + fakes(4*8) < 0x80. */
 
-static int emit_imm64_reg(BYTE * p, unsigned long long v) {
-	/* mov rax, imm64 */
-	p[0] = 0x48; p[1] = 0xB8;
-	memcpy(p + 2, &v, 8);
-	return 10;
-}
+/* build_synth_stub: the v3 synthetic-frame stub for ANY arity, from a
+ * static template. The frame is laid out at the MAXIMUM arity (S=7) so the
+ * whole stub except the arg-copy pairs is constant:
+ *   [rsp+0x00]  RA1 = ntdll leave;ret (walk-visible return address)
+ *   [rsp+0x08]  32-byte shadow space
+ *   [rsp+0x28]  args 5..N (the kernel's stack-arg window: arg5 sits at
+ *               return-address+0x28, NOT at +0x08 - the live direct stub
+ *               proved that layout)
+ *   [rsp+0x60]  fake frame chain: 4 ntdll RAs, walk cosmetics, never
+ *               executed (RA1's leave pivots back before reaching them)
+ * SYNTH is the constant 0x98 bytes; shorter arities just clip arg-copy
+ * pairs (each pair is a 9-byte, instruction-aligned unit). Runtime work:
+ * two memcpy plus eight qword/dword patches, no emitter code. */
+static const unsigned char V3TMPL[] = {
+	0x55,                                               /* 0x00 push rbp */
+	0x48, 0x89, 0xE5,                                   /* 0x01 mov rbp,rsp */
+	0x48, 0x81, 0xEC, 0x98, 0x00, 0x00, 0x00,           /* 0x04 sub rsp,0x98 */
+	0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0,                 /* 0x0B movabs rax,leave (imm64 @0x0D) */
+	0x48, 0x89, 0x04, 0x24,                             /* 0x15 mov [rsp],rax */
+	/* 0x19: arg-copy pairs (S of 7): mov rax,[rbp+0x30+8k]; mov [rsp+0x28+8k],rax */
+	0x48, 0x8B, 0x45, 0x30, 0x48, 0x89, 0x44, 0x24, 0x28,
+	0x48, 0x8B, 0x45, 0x38, 0x48, 0x89, 0x44, 0x24, 0x30,
+	0x48, 0x8B, 0x45, 0x40, 0x48, 0x89, 0x44, 0x24, 0x38,
+	0x48, 0x8B, 0x45, 0x48, 0x48, 0x89, 0x44, 0x24, 0x40,
+	0x48, 0x8B, 0x45, 0x50, 0x48, 0x89, 0x44, 0x24, 0x48,
+	0x48, 0x8B, 0x45, 0x58, 0x48, 0x89, 0x44, 0x24, 0x50,
+	0x48, 0x8B, 0x45, 0x60, 0x48, 0x89, 0x44, 0x24, 0x58,   /* ends 0x58 */
+	/* 0x58: fakes (movabs rax,fake @+2; mov [rsp+0x60..0x78],rax) */
+	0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x60,
+	0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x68,
+	0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x70,
+	0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x78,   /* ends 0x94 */
+	0x4C, 0x8B, 0xD1,                                   /* 0x94 mov r10,rcx */
+	0xB8, 0, 0, 0, 0,                                   /* 0x97 mov eax,ssn (imm32 @0x98) */
+	0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,                 /* 0x9C jmp [rip+0] */
+	0, 0, 0, 0, 0, 0, 0, 0,                             /* 0xA2 gadget qword */
+};
 
-static int emit_store_rax_rsp(BYTE * p, int disp) {
-	/* mov [rsp+disp8], rax */
-	p[0] = 0x48; p[1] = 0x89; p[2] = 0x44; p[3] = 0x24; p[4] = (BYTE)disp;
-	return 5;
-}
-
-static int emit_load_rax_rbp(BYTE * p, int disp) {
-	/* mov rax, [rbp+disp8] */
-	p[0] = 0x48; p[1] = 0x8B; p[2] = 0x45; p[3] = (BYTE)disp;
-	return 4;
-}
-
-/* build_synth_stub: the v3 synthetic-frame stub for ANY arity.
- *
- * synth layout (rsp at the syscall):
- *   +0x00        RA1  = ntdll leave;ret   (walk-visible return address)
- *   +0x08..0x20  shadow space             (the 32-byte home the ABI puts
- *                                          between the return address and
- *                                          the stack args)
- *   +0x28..      args 5..N                (the kernel's stack-arg window:
- *                                          arg5 sits at return-address+0x28,
- *                                          exactly where a C caller places
- *                                          it for the live-proven direct
- *                                          stub - NOT at +0x08)
- *   +A           fake frame chain         (4 in-module RAs, walk cosmetics,
- *                                          never executed)
- * SYNTH = 0x28 + 8*S + 32; A = 0x28 + 8*S. */
 static int build_synth_stub(BYTE * dst, sc_entry * e) {
 	int s = e->arity > 4 ? e->arity - 4 : 0; /* stack-arg count */
-	int synth = 0x28 + 8 * s + 32;
-	int a_off = 0x28 + 8 * s;
-	int n = 0, k;
+	BYTE * t;
 	unsigned long long r;
+	int k;
 
 	if (s > 7)
 		return 0; /* longest NT signature we carry is 11 params */
 
-	/* push rbp; mov rbp, rsp; sub rsp, imm32 */
-	dst[n++] = 0x55;
-	dst[n++] = 0x48; dst[n++] = 0x89; dst[n++] = 0xE5;
-	dst[n++] = 0x48; dst[n++] = 0x81; dst[n++] = 0xEC;
-	memcpy(dst + n, &synth, 4); /* imm32 (values stay small - positive dwords) */
-	n += 4;
+	memcpy(dst, V3TMPL, 0x19);                       /* prologue + RA1 store */
+	memcpy(dst + 0x19, V3TMPL + 0x19, 9 * s);        /* clipped arg-copy pairs */
+	t = dst + 0x19 + 9 * s;
+	memcpy(t, V3TMPL + 0x58, sizeof(V3TMPL) - 0x58); /* fakes + dispatch */
 
-	/* [rsp] = RA1 (ntdll leave;ret) */
-	n += emit_imm64_reg(dst + n, (unsigned long long)g_leave_gadget);
-	n += emit_store_rax_rsp(dst + n, 0);
-
-	/* copy args 5..N from the real frame ([rbp+0x30+8k]: entry rsp+0x28
-	 * under the pushed rbp) into the synth frame ([rsp+0x28+8k]) - the
-	 * kernel's stack-argument window */
-	for (k = 0; k < s; k++) {
-		n += emit_load_rax_rbp(dst + n, 0x30 + 8 * k);
-		n += emit_store_rax_rsp(dst + n, 0x28 + 8 * k);
-	}
-
-	/* fake frame chain above the args: alternating in-module gadgets. The
-	 * walk sees ntdll addresses here; execution never reaches them (RA1's
-	 * leave pivots straight back to the real anchor). */
-	{
-		unsigned long long fakes[4];
-		fakes[0] = (unsigned long long)g_leave_gadget;
-		fakes[1] = (unsigned long long)e->gadget;        /* syscall;ret */
-		fakes[2] = (unsigned long long)g_leave_gadget;
-		fakes[3] = (unsigned long long)e->gadget;
-		for (k = 0; k < 4; k++) {
-			n += emit_imm64_reg(dst + n, fakes[k]);
-			n += emit_store_rax_rsp(dst + n, a_off + 8 * k);
-		}
-	}
-
-	/* mov r10, rcx; mov eax, SSN (AFTER every rax imm64 load - the 64-bit
-	 * load zeroes eax; shipping SSN first sent a garbage number, the old
-	 * v2 byte-order trap); jmp [rip+0] -> ntdll syscall;ret */
-	dst[n++] = 0x4C; dst[n++] = 0x8B; dst[n++] = 0xD1;
-	dst[n++] = 0xB8;
-	memcpy(dst + n, &e->ssn, 4);
-	n += 4;
-	dst[n++] = 0xFF; dst[n++] = 0x25; dst[n++] = 0x00; dst[n++] = 0x00; dst[n++] = 0x00; dst[n++] = 0x00;
+	r = (unsigned long long)g_leave_gadget;
+	memcpy(dst + 0x0D, &r, 8);                       /* RA1 */
+	memcpy(t + 0x02, &r, 8);                         /* fake[0] = leave */
 	r = (unsigned long long)e->gadget;
-	memcpy(dst + n, &r, 8);
-	n += 8;
-	return n;
+	memcpy(t + 0x11, &r, 8);                         /* fake[1] = syscall;ret */
+	r = (unsigned long long)g_leave_gadget;
+	memcpy(t + 0x20, &r, 8);                         /* fake[2] = leave */
+	r = (unsigned long long)e->gadget;
+	memcpy(t + 0x2F, &r, 8);                         /* fake[3] = syscall;ret */
+	memcpy(t + 0x40, &e->ssn, 4);                    /* mov eax,ssn */
+	r = (unsigned long long)e->gadget;
+	memcpy(t + 0x4A, &r, 8);                         /* jmp [rip+0] data */
+
+	return 0x19 + 9 * s + (int)(sizeof(V3TMPL) - 0x58);
 }
 
 /* ---- DR sampling / clearing (hardware-breakpoint hook defense) ---- */
