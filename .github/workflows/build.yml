@@ -131,7 +131,23 @@ jobs:
         with:
           arch: x64
 
+      - name: Enable WER LocalDumps
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path D:\_dumps | Out-Null
+          New-Item -ItemType Directory -Force -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps	ests.exe" | Out-Null
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps	ests.exe" -Name DumpFolder -Value "D:\_dumps" -Type ExpandString
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps	ests.exe" -Name DumpType -Value 2 -Type DWord
+
       - name: Build & run tests
         shell: pwsh
         # lib/ 现为自研精简重编库（1.18.2，keygen 健康），探针默认开启
         run: ./tests/run_tests.ps1 -ExtraDefines BEACON_TEST_ENABLE_KEYGEN
+
+      - name: Upload crash dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-crash-dumps
+          path: D:\_dumps\*
+          if-no-files-found: ignore
