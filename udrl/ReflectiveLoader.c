@@ -328,7 +328,7 @@ static const char * g_sacrifices[] = {
     NULL
 };
 
-DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
+__declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 {
     unsigned char * flat;              /* the flat file copy of our DLL */
     unsigned char * base;              /* where we will place the image */
