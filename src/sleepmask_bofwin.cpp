@@ -253,6 +253,7 @@ static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 		 * recorded protection for the restore. */
 		{
 			DWORD off = va;
+			DWORD end = va + span;
 			while (off < end && n + 3 < max) {
 				MEMORY_BASIC_INFORMATION mbi;
 				DWORD rstart, rlen;
