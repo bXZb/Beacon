@@ -134,10 +134,10 @@ jobs:
       - name: Enable WER LocalDumps
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path D:\_dumps | Out-Null
-          New-Item -ItemType Directory -Force -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps	ests.exe" | Out-Null
-          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps	ests.exe" -Name DumpFolder -Value "D:\_dumps" -Type ExpandString
-          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps	ests.exe" -Name DumpType -Value 2 -Type DWord
+          New-Item -ItemType Directory -Force -Path 'D:\a\_dumps' | Out-Null
+          New-Item -ItemType Directory -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' | Out-Null
+          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' -Name DumpFolder -Value 'D:\a\_dumps' -Type ExpandString
+          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' -Name DumpType -Value 2 -Type DWord
 
       - name: Build & run tests
         shell: pwsh
