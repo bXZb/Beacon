@@ -450,7 +450,7 @@ static BOOL bw_build_pages(void)
 	e += 3;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x89; e[1] = 0x48; e[2] = 0x88;                          /* mov [rax+0x88],ecx: VP ret */
+	e[0] = 0x89; e[1] = 0x40; e[2] = 0x88;                          /* mov [rax+0x88],eax: VP ret (eax, not ecx) */
 	e += 3;
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
