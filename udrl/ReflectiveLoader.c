@@ -35,6 +35,9 @@
 #include <windows.h>
 #include <intrin.h>          /* __readgsqword - header-only, no symbols */
 
+typedef unsigned long long BW_QWORD;
+#define QWORD BW_QWORD
+
 #pragma pack(push, 1)
 
 typedef struct {
