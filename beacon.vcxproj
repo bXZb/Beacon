@@ -50,6 +50,7 @@
     <ClCompile Include="src\gargle.cpp" />
     <ClCompile Include="src\gargleint.cpp" />
     <ClCompile Include="src\sleepmask_gen3.cpp" />
+    <ClCompile Include="src\sleepmask_bofwin.cpp" />
     <ClCompile Include="src\hotbeef.cpp" />
     <ClCompile Include="src\inject.cpp" />
     <ClCompile Include="src\inject_apcthread.cpp" />

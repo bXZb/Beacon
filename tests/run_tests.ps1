@@ -26,6 +26,7 @@ $sources = @(
     'tests/test_crypto.cpp',
     'tests/test_miniprintf.cpp',
     'tests/test_keygen.cpp',
+    'tests/test_bofwin.cpp',
     'src/parse.cpp',
     'src/bformat.cpp',
     'src/settings.cpp',
@@ -35,7 +36,9 @@ $sources = @(
     'src/track_memory.cpp',
     'src/security.cpp',
     'src/crypto.cpp',
-    'src/miniprintf.cpp'
+    'src/miniprintf.cpp',
+    'src/sleepmask_bofwin.cpp',
+    'src/gargleint.cpp'
 )
 
 Push-Location $root
