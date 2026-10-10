@@ -152,6 +152,7 @@ TEST(bofwin_watchdog_restores) {
 
 TEST(bofwin_stub_page_dump) {
 	unsigned char * page = (unsigned char *)bofwin_test_stub_page();
+	/* declared in sleepmask_bofwin.h; this use also pins the export */
 	int i;
 
 	CHECK(page != NULL);

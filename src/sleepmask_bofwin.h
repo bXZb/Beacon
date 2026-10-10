@@ -18,6 +18,10 @@
  * this before offering a BOF the masked window. */
 BOOL bofwin_supported(void);
 
+/* CI diagnostics: the built stub page (capstone-mirror verification), or
+ * NULL before the first bofwin_supported/window call. */
+void * bofwin_test_stub_page(void);
+
 /* Run entry(args, alen) inside the masked window. Returns FALSE when the
  * window cannot be served (engine unavailable, background threads active,
  * snapshot without .text, no watchdog) - the caller then runs the BOF

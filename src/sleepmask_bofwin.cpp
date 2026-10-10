@@ -64,6 +64,9 @@ typedef struct {
 	unsigned long   MaximumLength;
 } BW_USTRING;
 
+#ifndef NTSTATUS
+#define NTSTATUS LONG
+#endif
 typedef NTSTATUS(NTAPI *BW_SF032)(BW_USTRING * data, BW_USTRING * key);
 
 /* ctx page - FIXED OFFSETS addressed by the hand-asm stubs. Any field move
@@ -569,7 +572,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	if (watchdog_ms == 0)
 		watchdog_ms = BW_DEFAULT_WATCHDOG_MS;
 	if (!CreateTimerQueueTimer(&timer, NULL,
-	                           (WAIT_OR_TIMER_CALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
+	                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
 	                           NULL, watchdog_ms, 0,
 	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
 		/* no watchdog -> no window: undo the mask and run the BOF plainly */
