@@ -22,6 +22,10 @@ BOOL bofwin_supported(void);
  * NULL before the first bofwin_supported/window call. */
 void * bofwin_test_stub_page(void);
 
+/* CI diagnostics: last window phase (0 start / 1 VP done / 2 masked /
+ * 3 BOF returned / 4 exit returned) - survives a crash for the log. */
+int bofwin_test_phase(void);
+
 /* Run entry(args, alen) inside the masked window. Returns FALSE when the
  * window cannot be served (engine unavailable, background threads active,
  * snapshot without .text, no watchdog) - the caller then runs the BOF

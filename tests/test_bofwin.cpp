@@ -128,7 +128,11 @@ TEST(bofwin_window_roundtrip) {
 
 	before = sum_region(region, 0x100);
 	printf("  [bofwin] plaintext sum  = %u\n", before); fflush(stdout);
-	CHECK(bofwin_window(bof, args, 16, 0) == TRUE);
+	if (bofwin_window(bof, args, 16, 0) != TRUE) {
+		printf("  [bofwin] window FAILED (engine declined)
+"); fflush(stdout);
+		CHECK(0);
+	}
 	after = sum_region(region, 0x100);
 	printf("  [bofwin] window sum     = %u (masked)\n", *result);
 	printf("  [bofwin] restored sum   = %u\n", after); fflush(stdout);
