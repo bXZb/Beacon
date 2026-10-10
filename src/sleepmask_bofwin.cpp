@@ -43,6 +43,14 @@
 #include <windows.h>
 #include <string.h>
 #include "sleepmask_bofwin.h"
+
+#if defined(BW_TRACE_ENABLE)
+#include <stdio.h>
+#define BW_TRACE(msg) fprintf(stderr, "[bw] %s
+", msg)
+#else
+#define BW_TRACE(msg) ((void)0)
+#endif
 #include "gargleint.h"
 #include "track_memory.h"
 #include "crypto.h"
@@ -650,6 +658,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	fn = bw_sf032_resolve();
 	if (fn == NULL)
 		return FALSE;
+	BW_TRACE("resolved sf032");
 
 	/* capture every engine pointer BEFORE any masking: after the mask
 	 * loop, this function's only legal memory accesses are its own stack
@@ -661,6 +670,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		return FALSE;
 	if (crypto_rng_get_bytes(key, (unsigned long)sizeof(key)) == 0)
 		return FALSE;
+	BW_TRACE("snapshot+rng done");
 
 	pVP = VirtualProtect;
 	pFlush = FlushInstructionCache;
@@ -709,6 +719,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 			bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
 	}
 	ctx->phase = 2; /* all but .text masked */
+	BW_TRACE("masked, entering stub");
 
 	/* from here to the exit stub this thread may only touch: stack, ctx
 	 * page, stub page. enter_stub flips .text to RW, masks it (last block),
@@ -717,6 +728,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	enter = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
 	enter();
 	ctx->phase = 4; /* exit stub returned to this frame */
+	BW_TRACE("stub returned, resting");
 
 	/* .text is plaintext+RX again (exit_stub, or the watchdog won and
 	 * exit_stub saw state==CLOSED). The image except .text is still
@@ -730,6 +742,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	}
 	bw_blocks_restore(blocks, nblocks, text_idx);
 	DeleteTimerQueueTimer(NULL, timer, NULL);
+	BW_TRACE("window complete");
 
 	memset(key, 0, sizeof(key));
 	memset(ctx->key, 0, 16);

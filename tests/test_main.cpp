@@ -38,12 +38,14 @@ int run_all_tests() {
 /* process-wide VEH: any AV in any test prints code/fault/rip/rsp before the
  * process dies - the CI log is the only debugger we have */
 static LONG WINAPI test_veh(PEXCEPTION_POINTERS ep) {
-	printf("[veh] code=%08X fault=%p rip=%p rsp=%p\n",
-	       (unsigned)ep->ExceptionRecord->ExceptionCode,
-	       (void *)(size_t)ep->ExceptionRecord->ExceptionInformation[1],
-	       (void *)ep->ContextRecord->Rip,
-	       (void *)ep->ContextRecord->Rsp);
-	fflush(stdout);
+	/* stderr is unbuffered: stdout loses everything written between the
+	 * last fflush and an in-test crash, which cost us the whole forensic
+	 * chain of round 27 */
+	fprintf(stderr, "[veh] code=%08X fault=%p rip=%p rsp=%p\n",
+	        (unsigned)ep->ExceptionRecord->ExceptionCode,
+	        (void *)(size_t)ep->ExceptionRecord->ExceptionInformation[1],
+	        (void *)ep->ContextRecord->Rip,
+	        (void *)ep->ContextRecord->Rsp);
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 

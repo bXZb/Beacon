@@ -45,7 +45,7 @@ try {
     $outDir = Join-Path $root 'tests\_build'
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-    $defines = @('/D_CRT_SECURE_NO_WARNINGS', '/DWIN32_LEAN_AND_MEAN', '/DLTM_DESC', '/DUSE_LTM') +
+    $defines = @('/D_CRT_SECURE_NO_WARNINGS', '/DWIN32_LEAN_AND_MEAN', '/DLTM_DESC', '/DUSE_LTM', '/DBW_TRACE_ENABLE') +
                ($ExtraDefines | ForEach-Object { "/D$_" })
 
     & cl /nologo /W3 /EHsc /MT @defines `
