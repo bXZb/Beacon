@@ -593,8 +593,8 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	unsigned char key[16];
 	HANDLE timer = NULL;
 	void (*enter)(void);
-	void (*pVP)(void *, SIZE_T, DWORD, DWORD *);
-	void (*pFlush)(void *, const void *, SIZE_T);
+	BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *);
+	BOOL (*pFlush)(void *, const void *, SIZE_T);
 	unsigned int * k = (unsigned int *)key;
 
 	/* a background job thread could execute beacon code while the image is
