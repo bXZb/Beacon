@@ -138,11 +138,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' | Out-Null
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' -Name DumpFolder -Value 'D:\a\_dumps' -Type ExpandString
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' -Name DumpType -Value 2 -Type DWord
+          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' -Name DumpCount -Value 5 -Type DWord
+          Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name ConsentDefault -Value 1 -Type DWord -ErrorAction SilentlyContinue
 
       - name: Build & run tests
         shell: pwsh
         # lib/ 现为自研精简重编库（1.18.2，keygen 健康），探针默认开启
         run: ./tests/run_tests.ps1 -ExtraDefines BEACON_TEST_ENABLE_KEYGEN
+
+      - name: Collect crash dumps
+        if: failure()
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 25
+          Get-ChildItem 'D:\a\_dumps' -ErrorAction SilentlyContinue | Select-Object Name,Length
 
       - name: Upload crash dumps
         if: failure()
