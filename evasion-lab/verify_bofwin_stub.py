@@ -1,27 +1,17 @@
 # -*- coding: utf-8 -*-
-r"""verify_bofwin_stub.py - desk-verify the bofwin stub-page builder.
-
-Mirrors bw_build_pages byte-for-byte, disassembles all three stubs with
-capstone, and asserts the control flow: rip-relative disp32 lands on the
-ctx qword, jne displacements land exactly on the skip targets, and every
-sf032 call site is 16-byte aligned per its stub's entry alignment."""
+r"""verify_bofwin_stub.py - desk-verify the bofwin stub-page builder (v2:
+protect/flush-aware). Mirrors bw_build_pages byte-for-byte, disassembles
+all three stubs with capstone, and asserts: rip-relative disp32 lands on
+the ctx qword (0x110), jne targets land exactly on ret, the watchdog
+tail-jump data qword sits at the jmp's rip, and region bounds hold."""
 import struct
 
 import capstone
 
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
 
-PAGE = 0x1000
-CTXQ = 0x0C0
-ENTER, EXIT, WATCH = 0x000, 0x040, 0x080
-
-
-def put32(b, v):
-    return struct.pack("<i", v)
-
-
-def put64(v):
-    return struct.pack("<Q", v)
+CTXQ = 0x110
+ENTER, EXIT, WATCH = 0x000, 0x050, 0x0A0
 
 
 def disp(next_off, target):
@@ -31,137 +21,135 @@ def disp(next_off, target):
 def build():
     p = bytearray(0x1000)
 
-    # enter
+    def emit(off, bs):
+        p[off:off + len(bs)] = bs
+        return off + len(bs)
+
+    # ---- enter ----
     e = ENTER
-    p[e:e + 4] = bytes([0x48, 0x83, 0xEC, 0x08]); e += 4
-    p[e:e + 2] = bytes([0x49, 0xBB]); p[e + 2:e + 10] = put64(0x1000 + EXIT); e += 10
-    p[e:e + 2] = bytes([0x41, 0x53]); e += 2
-    p[e:e + 4] = bytes([0x48, 0x83, 0xEC, 0x28]); e += 4
-    p[e:e + 3] = bytes([0x48, 0x8B, 0x05]); p[e + 3:e + 7] = disp(e + 7, CTXQ); e += 7
-    p[e:e + 4] = bytes([0x48, 0x8D, 0x48, 0x50]); e += 4
-    p[e:e + 4] = bytes([0x48, 0x8D, 0x50, 0x60]); e += 4
-    p[e:e + 3] = bytes([0xFF, 0x50, 0x18]); e += 3
-    p[e:e + 4] = bytes([0x48, 0x83, 0xC4, 0x28]); e += 4
-    p[e:e + 4] = bytes([0x48, 0x8B, 0x48, 0x28]); e += 4
-    p[e:e + 3] = bytes([0x8B, 0x50, 0x30]); e += 3
-    p[e:e + 3] = bytes([0xFF, 0x60, 0x20]); e += 3
-    enter_len = e - ENTER
+    e = emit(e, bytes([0x48, 0x83, 0xEC, 0x08]))
+    e = emit(e, bytes([0x49, 0xBB]) + struct.pack("<Q", 0x1000 + EXIT))
+    e = emit(e, bytes([0x41, 0x53]))
+    e = emit(e, bytes([0x48, 0x83, 0xEC, 0x28]))
+    e = emit(e, bytes([0x48, 0x8B, 0x05]) + disp(e + 7, CTXQ))
+    e = emit(e, bytes([0x48, 0x8B, 0x48, 0x50]))
+    e = emit(e, bytes([0x48, 0x8B, 0x50, 0x58]))
+    e = emit(e, bytes([0x41, 0xB8, 0x04, 0x00, 0x00, 0x00]))
+    e = emit(e, bytes([0x4C, 0x8D, 0x48, 0x70]))
+    e = emit(e, bytes([0xFF, 0x50, 0x78]))
+    e = emit(e, bytes([0x48, 0x8D, 0x48, 0x50]))
+    e = emit(e, bytes([0x48, 0x8D, 0x50, 0x60]))
+    e = emit(e, bytes([0xFF, 0x50, 0x18]))
+    e = emit(e, bytes([0x48, 0x83, 0xC4, 0x28]))
+    e = emit(e, bytes([0x48, 0x8B, 0x48, 0x28]))
+    e = emit(e, bytes([0x8B, 0x50, 0x30]))
+    e = emit(e, bytes([0xFF, 0x60, 0x20]))
+    enter_end = e
 
-    # exit
+    # ---- exit ----
     e = EXIT
-    p[e:e + 3] = bytes([0x48, 0x8B, 0x05]); p[e + 3:e + 7] = disp(e + 7, CTXQ); e += 7
-    p[e:e + 5] = bytes([0xB9, 0x02, 0x00, 0x00, 0x00]); e += 5
-    p[e:e + 2] = bytes([0x87, 0x08]); e += 2
-    p[e:e + 3] = bytes([0x83, 0xF9, 0x01]); e += 3
-    jne_exit_at = e
-    p[e:e + 2] = bytes([0x75, 0x13]); e += 2
-    unmask_start = e
-    p[e:e + 4] = bytes([0x48, 0x83, 0xEC, 0x30]); e += 4
-    p[e:e + 4] = bytes([0x48, 0x8D, 0x48, 0x50]); e += 4
-    p[e:e + 4] = bytes([0x48, 0x8D, 0x50, 0x60]); e += 4
-    call_exit_at = e
-    p[e:e + 3] = bytes([0xFF, 0x50, 0x18]); e += 3
-    p[e:e + 4] = bytes([0x48, 0x83, 0xC4, 0x30]); e += 4
-    skip_at = e
-    p[e] = 0xC3; e += 1
-    exit_len = e - EXIT
+    e = emit(e, bytes([0x48, 0x8B, 0x05]) + disp(e + 7, CTXQ))
+    e = emit(e, bytes([0xB9, 0x02, 0x00, 0x00, 0x00]))
+    e = emit(e, bytes([0x87, 0x08]))
+    e = emit(e, bytes([0x83, 0xF9, 0x01]))
+    jne_e_at = e
+    e = emit(e, bytes([0x75, 0x36]))
+    e = emit(e, bytes([0x48, 0x8D, 0x48, 0x50]))
+    e = emit(e, bytes([0x48, 0x8D, 0x50, 0x60]))
+    e = emit(e, bytes([0xFF, 0x50, 0x18]))
+    e = emit(e, bytes([0x48, 0x8B, 0x48, 0x50]))
+    e = emit(e, bytes([0x48, 0x8B, 0x50, 0x58]))
+    e = emit(e, bytes([0x44, 0x8B, 0x80]) + struct.pack("<i", 0x74))
+    e = emit(e, bytes([0x4C, 0x8D, 0x48, 0x70]))
+    e = emit(e, bytes([0xFF, 0x50, 0x78]))
+    e = emit(e, bytes([0x48, 0xC7, 0xC1, 0xFF, 0xFF, 0xFF, 0xFF]))
+    e = emit(e, bytes([0x48, 0x8B, 0x50, 0x50]))
+    e = emit(e, bytes([0x4C, 0x8B, 0x50, 0x58]))
+    e = emit(e, bytes([0xFF, 0x90]) + struct.pack("<i", 0x80))
+    e = emit(e, bytes([0xC3]))
+    exit_end = e
+    exit_ret = exit_end - 1
 
-    # watchdog
+    # ---- watch ----
     e = WATCH
-    p[e:e + 3] = bytes([0x48, 0x8B, 0x05]); p[e + 3:e + 7] = disp(e + 7, CTXQ); e += 7
-    p[e:e + 5] = bytes([0xB9, 0x02, 0x00, 0x00, 0x00]); e += 5
-    p[e:e + 2] = bytes([0x87, 0x08]); e += 2
-    p[e:e + 3] = bytes([0x83, 0xF9, 0x01]); e += 3
-    p[e:e + 2] = bytes([0x75, 0x24]); e += 2
-    wd_body = e
-    p[e:e + 4] = bytes([0x48, 0x83, 0xEC, 0x28]); e += 4
-    p[e:e + 4] = bytes([0x48, 0x8D, 0x48, 0x50]); e += 4
-    p[e:e + 4] = bytes([0x48, 0x8D, 0x50, 0x60]); e += 4
-    call_wd_at = e
-    p[e:e + 3] = bytes([0xFF, 0x50, 0x18]); e += 3
-    p[e:e + 4] = bytes([0x48, 0x83, 0xC4, 0x28]); e += 4
-    p[e:e + 3] = bytes([0x48, 0x89, 0xC1]); e += 3
+    e = emit(e, bytes([0x48, 0x8B, 0x05]) + disp(e + 7, CTXQ))
+    e = emit(e, bytes([0xB9, 0x02, 0x00, 0x00, 0x00]))
+    e = emit(e, bytes([0x87, 0x08]))
+    e = emit(e, bytes([0x83, 0xF9, 0x01]))
+    jne_w_at = e
+    e = emit(e, bytes([0x75, 0x4F]))
+    e = emit(e, bytes([0x48, 0x83, 0xEC, 0x28]))
+    e = emit(e, bytes([0x48, 0x8D, 0x48, 0x50]))
+    e = emit(e, bytes([0x48, 0x8D, 0x50, 0x60]))
+    e = emit(e, bytes([0xFF, 0x50, 0x18]))
+    e = emit(e, bytes([0x48, 0x8B, 0x48, 0x50]))
+    e = emit(e, bytes([0x48, 0x8B, 0x50, 0x58]))
+    e = emit(e, bytes([0x44, 0x8B, 0x80]) + struct.pack("<i", 0x74))
+    e = emit(e, bytes([0x4C, 0x8D, 0x48, 0x70]))
+    e = emit(e, bytes([0xFF, 0x50, 0x78]))
+    e = emit(e, bytes([0x48, 0xC7, 0xC1, 0xFF, 0xFF, 0xFF, 0xFF]))
+    e = emit(e, bytes([0x48, 0x8B, 0x50, 0x50]))
+    e = emit(e, bytes([0x4C, 0x8B, 0x50, 0x58]))
+    e = emit(e, bytes([0xFF, 0x90]) + struct.pack("<i", 0x80))
+    e = emit(e, bytes([0x48, 0x83, 0xC4, 0x28]))
+    e = emit(e, bytes([0x48, 0x89, 0xC1]))
     jmp_at = e
-    p[e:e + 6] = bytes([0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]); e += 6
-    p[e:e + 8] = put64(0xDEADBEEFCAFE000)  # bw_watchdog_rest placeholder
-    e += 8
-    wd_ret = e
-    p[e] = 0xC3; e += 1
-    wd_len = e - WATCH
+    e = emit(e, bytes([0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]))
+    dataq = e
+    e = emit(e, struct.pack("<Q", 0xDEADBEEF))
+    e = emit(e, bytes([0xC3]))
+    watch_end = e
+    wd_ret = watch_end - 1
 
-    return bytes(p), dict(enter_len=enter_len, exit_len=exit_len, wd_len=wd_len,
-                          jne_exit_at=jne_exit_at, skip_at=skip_at,
-                          unmask_start=unmask_start, wd_body=wd_body, wd_ret=wd_ret,
-                          call_exit_at=call_exit_at, call_wd_at=call_wd_at,
-                          jmp_at=jmp_at)
+    return bytes(p), dict(enter_end=enter_end, exit_end=exit_end, watch_end=watch_end,
+                          jne_e_at=jne_e_at, exit_ret=exit_ret, jne_w_at=jne_w_at,
+                          wd_ret=wd_ret, dataq=dataq, jmp_at=jmp_at)
 
 
-def disasm_region(blob, start, length, base=0x1000):
-    out = []
-    for ins in md.disasm(blob[start:start + length], base + start):
-        out.append((ins.address - base, ins.mnemonic, ins.op_str, ins.size,
-                    ins.bytes.hex()))
-    return out
+def disasm(blob, start, length):
+    return [(ins.address - 0x1000, ins.mnemonic, ins.op_str, ins.size)
+            for ins in md.disasm(blob[start:start + length], 0x1000 + start)]
 
 
 def main():
     blob, meta = build()
     fails = []
 
-    if meta["enter_len"] > 0x40: fails.append("enter too big")
-    if meta["exit_len"] > 0x40: fails.append("exit too big")
-    if meta["wd_len"] > 0x3F: fails.append("watchdog too big")
+    if meta["enter_end"] - ENTER > 0x50: fails.append("enter >0x50")
+    if meta["exit_end"] - EXIT > 0x50: fails.append("exit >0x50")
+    if meta["watch_end"] - WATCH > 0x70: fails.append("watch >0x70")
+    if meta["dataq"] + 8 > CTXQ: fails.append("data qword overlaps ctx slot")
 
-    for name, off, ln in (("enter", ENTER, meta["enter_len"]),
-                          ("exit", EXIT, meta["exit_len"]),
-                          ("watch", WATCH, meta["wd_len"])):
-        print("== %s @ %#x (%d bytes)" % (name, off, ln))
-        for a, m, o, sz, hx in disasm_region(blob, off, ln):
-            print("   +%02x %-9s %s   ; %s" % (a - off, m, o, hx))
+    bounds = {"enter": meta["enter_end"], "exit": meta["exit_end"], "watch": meta["watch_end"]}
+    for name, off in (("enter", ENTER), ("exit", EXIT), ("watch", WATCH)):
+        print("== %s @ %#x (%d bytes)" % (name, off, bounds[name] - off))
+        for a, m, o, sz in disasm(blob, off, bounds[name] - off):
+            print("   +%02x %-9s %s" % (a - off, m, o))
 
-    # jne targets
-    def jne_target(at):
-        # find the insn at offset 'at' in disasm and compute target
-        for a, m, o, sz, hx in disasm_region(blob, at, 2):
-            tgt = a + sz + struct.unpack("<b", bytes([int(hx[2:4], 16)])[0:1])[0] if False else None
+    for tag, at, want in (("exit jne", meta["jne_e_at"], meta["exit_ret"]),
+                          ("watch jne", meta["jne_w_at"], meta["wd_ret"])):
         ins = next(md.disasm(blob[at:at + 2], 0x1000 + at))
-        # capstone gives the target directly for short jumps in op_str
-        return ins, int(ins.op_str, 16) - 0x1000 if ins.op_str.startswith("0x") else None
+        tgt = int(ins.op_str, 16) - 0x1000
+        print("%s -> %#x (want %#x)" % (tag, tgt, want))
+        if tgt != want:
+            fails.append("%s target %#x != %#x" % (tag, tgt, want))
 
-    ins, t = jne_target(meta["jne_exit_at"])
-    print("exit jne -> %#x (skip at %#x)" % (t, meta["skip_at"]))
-    if t != meta["skip_at"]:
-        fails.append("exit jne target %#x != skip %#x" % (t, meta["skip_at"]))
-
-    # watchdog jne (+0x24): compute target of the jne at WATCH+17
-    jne_wd_at = WATCH + 7 + 5 + 2 + 3  # after mov rax/mov ecx/xchg/cmp
-    ins2, t2 = jne_target(jne_wd_at)
-    print("watch jne -> %#x (wd_ret at %#x)" % (t2, meta["wd_ret"]))
-    if t2 != meta["wd_ret"]:
-        fails.append("watchdog jne target %#x != wd_ret %#x" % (t2, meta["wd_ret"]))
-
-    # rip-relative disp32 target = CTXQ
-    for name, off in (("enter", ENTER + 0x0C + 2), ("exit", EXIT), ("watch", WATCH)):
-        pass  # verified implicitly by capstone op_str above; assert explicitly:
-    for name, off, ln in (("enter", ENTER, meta["enter_len"]),
-                          ("exit", EXIT, meta["exit_len"]),
-                          ("watch", WATCH, meta["wd_len"])):
-        for a, m, o, sz, hx in disasm_region(blob, off, ln):
+    for name, off in (("enter", ENTER), ("exit", EXIT), ("watch", WATCH)):
+        for a, m, o, sz in disasm(blob, off, bounds[name] - off):
             if m == "mov" and o.startswith("rax, qword ptr [rip"):
-                tgt = int(o.split("rip + ")[1].split("]")[0] if "rip + " in o else o.split("rip - ")[1].split("]")[0], 16)
-                if " - " in o:
-                    tgt = -tgt
-                abs_t = (a + sz + tgt)
-                print("%s mov rax,[rip] -> %#x (want ctx %#x)" % (name, abs_t, CTXQ))
+                if "rip + " in o:
+                    t = int(o.split("rip + ")[1].rstrip("]"), 16)
+                else:
+                    t = -int(o.split("rip - ")[1].rstrip("]"), 16)
+                abs_t = a + sz + t
+                print("%s ctx load -> %#x (want %#x)" % (name, abs_t, CTXQ))
                 if abs_t != CTXQ:
-                    fails.append("%s ctx disp lands %#x" % (name, abs_t))
+                    fails.append("%s ctx disp %#x" % (name, abs_t))
 
-    # alignment: simulate rsp%16 at each sf032 call
-    # enter: entry rsp=8 -> sub8=0, push=8, sub0x28=0  -> call at 0 OK
-    # exit : entry rsp=0 -> sub0x30=0 -> call OK (after jne+2)
-    # watch: entry rsp=8 -> sub0x28=0 -> call OK
-    # (asserted by construction; printed for the record)
-    print("alignment: enter(8->sub8=0,push=8,sub28=0) exit(0->sub30=0) watch(8->sub28=0) OK")
+    jmp_insn = next(md.disasm(blob[meta["jmp_at"]:meta["jmp_at"] + 6], 0x1000 + meta["jmp_at"]))
+    print("watch jmp [rip] reads %#x (dataq at %#x)" % (jmp_insn.address + jmp_insn.size, meta["dataq"]))
+    if (jmp_insn.address + jmp_insn.size - 0x1000) != meta["dataq"]:
+        fails.append("tail-jump data qword misaligned")
 
     print("FAILURES:", fails if fails else "none")
     raise SystemExit(1 if fails else 0)

