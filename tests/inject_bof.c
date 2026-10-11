@@ -54,6 +54,8 @@ static char g_marker_path[] = "C:\\Users\\Public\\bw_inject_marker.txt";
 static char g_data_probe[] = "C:\\Users\\Public\\bw_probe_data.txt";
 static char g_msg_ok[] = "INJECT rc=0x2a (remote stub executed)";
 static char g_msg_fail[] = "INJECT FAIL";
+static char g_msg_data_ok[] = "data-ok";
+static char g_msg_stack_ok[] = "stack-ok";
 
 /* mov eax, 0x2A ; ret - the injected stub */
 static const unsigned char g_stub[6] = { 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
@@ -157,6 +159,7 @@ void go(char *args, int len)
 	BW_STARTUPINFOA si;
 	BW_PROCESS_INFORMATION pi;
 	char stack_path[40];
+	unsigned __int64 *sq = (unsigned __int64 *)stack_path;
 	void *remote;
 	SIZE_T written = 0;
 	HANDLE th = NULL;
@@ -181,19 +184,14 @@ void go(char *args, int len)
 		return;
 
 	/* probe A: .data path + .data message */
-	bw_put_msg(pCFA, pWF, pCH, g_data_probe, "data-ok");
-	/* probe B: stack-built path (immediates, zero .data dependency) */
-	for (i = 0; i < 40; i++) stack_path[i] = 0;
-	stack_path[0]='C'; stack_path[1]=':'; stack_path[2]='\\'; stack_path[3]='U';
-	stack_path[4]='s'; stack_path[5]='e'; stack_path[6]='r'; stack_path[7]='s';
-	stack_path[8]='\\'; stack_path[9]='P'; stack_path[10]='u'; stack_path[11]='b';
-	stack_path[12]='l'; stack_path[13]='i'; stack_path[14]='c'; stack_path[15]='\\';
-	stack_path[16]='b'; stack_path[17]='w'; stack_path[18]='_'; stack_path[19]='p';
-	stack_path[20]='r'; stack_path[21]='o'; stack_path[22]='b'; stack_path[23]='e';
-	stack_path[24]='_'; stack_path[25]='s'; stack_path[26]='t'; stack_path[27]='a';
-	stack_path[28]='c'; stack_path[29]='k'; stack_path[30]='.'; stack_path[31]='t';
-	stack_path[32]='x'; stack_path[33]='t'; stack_path[34]=0;
-	bw_put_msg(pCFA, pWF, pCH, stack_path, "stack-ok");
+	bw_put_msg(pCFA, pWF, pCH, g_data_probe, g_msg_data_ok);
+	/* probe B: stack path from QWORD immediates (no .data, no SSE consts) */
+	sq[0] = 0x73726573555C3A43ULL;
+	sq[1] = 0x5C63696C6275505CULL;
+	sq[2] = 0x65626F72705F7762ULL;
+	sq[3] = 0x742E6B636174735FULL;
+	sq[4] = 0x7878787878007478ULL;
+	bw_put_msg(pCFA, pWF, pCH, stack_path, g_msg_stack_ok);
 
 	si.cb = 0; si.lpReserved = 0; si.lpDesktop = 0; si.lpTitle = 0;
 	si.dwX = 0; si.dwY = 0; si.dwXSize = 0; si.dwYSize = 0;
