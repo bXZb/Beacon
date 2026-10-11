@@ -888,3 +888,47 @@ INITIAL 四次全绿（bid 1604300702 / 1050747370 / 1121572310 / 711809900）�
 非 UDRL、槽内默认 DLL 开 BOFWIN——那条路仍然被 1536B 余量挡住）。
 
 分支 HEAD b1640ed；CI 38120978647 全绿；TS 槽 MATCH 305696。
+
+### 14.2 BOFWIN 收口（2026-10-11 晚，44f5471 → 60c3b70 → 0e68593 → 8529030）
+
+**结果：窗口全绿 ×2**（无 .rdata：bid=1305540412；含 .rdata：bid=819018880，
+r1.log 字节级 "bofwin window served"，窗口后 lastf=36ms 心跳正常）。
+BOF 运行期间 beacon 全镜像（header/可写节/tracked heap/.rdata/.text）
+RC4 密文，.rdata（字符串/config/IAT）也进掩码表。
+
+**六崩一因（4/5）+ 编译器回敬（6）**：
+- 崩 4 真凶 = **BW_CTX 编译布局比 stub 常量从 u_text 起低 8 字节**
+  （text_idx@0x44 后 0x48 本就 8 对齐，编译器放 u_text@0x48；storage 起低
+  12B）。enter 给 sf032 传的 USTRING 全是错位读——CNG 导入"64B 密钥"的
+  垃圾 src 是我们喂的，cryptsp 无辜。崩 5（RIP=PRGA xor [rcx],
+  rcx=16=u_key.Length 当地址、rdx=0x80001000=u_text.Buffer 当长度，与
+  dump qword sbox0@+0x894≠0x8A0 互证）同一根因。**ctypes 宿主自洽
+  （两侧同错）测不出结构体-stub 漂移**。修=显式 pad0..pad3 + 9 条
+  offsetof typedef 断言（漂移=编译错）。
+- 页上自持 RC4-PRGA（59B，caller-saved only，字寄存器运算天然 mod256；
+  KSA 在明文 C 侧预计算 sbox0/sbox1 双份，exit/watch rep movsq 刷新后
+  同流解密）——stub 侧彻底零 API、零 CNG。
+- 栈契约重写：第 1-4 轮的形状让 BOF 以 rsp≡0 入场（ABI 要 ≡8）且 exit
+  无影子空间——从未活体执行过。现 BOF 完美模拟真 call（[rsp]=exit，
+  retC 在影子区之上），exit 尾 `add rsp,0x28; ret`；宿主金丝雀 BOF
+  写满 shadow + 窗口内真调 ntdll!RtlCopyMemory(0x800) 验证。
+- jne 认领改 rel32（watch 胜者路径 0x86 超 rel8 会静默回绕）。
+- 崩 6（18:20，WER 事件日志独证：APPCRASH spwizimg+0x15c79，LocalDumps
+  未落盘）：.rdata 入表后，**/O1 把 `pVP=VirtualProtect` 常量传播回
+  `call [__imp_VirtualProtect]`**——.rdata 掩码后下一块的 VP 调用穿密文
+  IAT。修=掩码循环改 `ctx->pVirtualProtect`（ctx 页加载，优化器不透明）
+  + pDelTimer 走 `bw_call_deltimer`（#pragma optimize off，同 bw_call_enter
+  类）+ 失败路径先解密再还原保护（bw_blocks_restore 经 .text 导入 thunk
+  跳 IAT）。
+- phase 插桩（10+i/40+i/60+i + 5/6/7/8）落地——崩 5 即靠它+qword 铁证
+  十分钟破案。
+
+**方法学沉淀**：①自洽镜像/宿主测不出"两侧同错"的契约漂移，必须
+offsetof 断言；②MSVC /O1 会把捕获的 API 指针折叠回 IAT 调用——凡
+"掩码后仍要调 API"的指针必须放 ctx 页或经 optimize-off 包装；
+③WER 事件日志在 LocalDumps 失灵时仍给模块+偏移（1000/1001 事件），
+配合新构建 .map 反汇编离线钉点。
+
+HEAD 8529030；CI 38132016475；rl0k encode 309792（jar 槽，客户端）；
+TS 槽维持 305696 无 BOFWIN（默认墙不砍）。遗留：真 BOF（带参/带
+beacon API 混用）的准入矩阵、watchdog 120s 实路径未活测。
