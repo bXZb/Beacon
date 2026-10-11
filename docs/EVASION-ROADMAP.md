@@ -850,7 +850,41 @@ loader 四轮转储修（全有 WER LocalDumps）：
 
 **Phase 4 收口 / 未做**：image-backed UDRL **过线**。未做=容器 decode
 缓冲释放（需不占 byte 0 的 continuation）、自写 EXE 模板、inject BOF、
-mutator、private heap、BOFWIN_ENABLE 重新打开（墙还在，槽容量未变）。
-Phase 5 未开工。
+mutator、private heap。Phase 5 未开工。
 
-分支 HEAD abc5b91；CI 38114369441 全绿；活测 10/10。
+### 14.1 默认墙不能砍；BOFWIN 改走 jar rl0k（2026-10-11，b1640ed）
+
+**定论修正**：`pe.process` / `BeaconRDLL.process` 从 ReflectiveLoader
+导出起 **memcpy 5120 字节**。默认 DLL 若把 CC/90 墙缩到 <5K，stock VA
+loader 会打爆后面的 `.text`。因此 **TS 槽里的默认 5K 墙必须留着**；
+官方 rl0k 比默认小 ~5.6KB 是因为官方默认 DLL 本身就不走我们这条
+「墙+pe.process」路径。100K 墙编码 440352，超槽 133KB，更不能进槽。
+
+**交付拆分（已落地）**：
+- TS 槽 / `beacon.x64.dll`：无 `BOFWIN_ENABLE`，5K 墙，encode **305696 /
+  cap 307232**（余 1536，与砍墙前相同）。`sleepmask_bofwin.cpp`
+  `ExcludedFromBuild` 除非 `BeaconBofWin=true`。
+- jar `sleeve/beacon.x64.rl0k.dll`：`BeaconBofWin=true` 第二份 x64 镜像
+  （独立 OutDir，Rebuild 不会冲掉默认 DLL），encode **308768**（BOFWIN
+  ~3KB，无 TS 上限）。`BEACON_RDLL_SIZE=0` 的 EXE/UDRL 走这条。
+- CI artifact `beacon-x64-rl0k`；空 Win32-only BOF `tests/bof_empty.c`
+  （`go()`，零导入）。
+
+**BOFWIN 真 TS 活测（UDRL EXE + mini_sm）未过线**：rl0k+BOFWIN EXE
+INITIAL 四次全绿（bid 1604300702 / 1050747370 / 1121572310 / 711809900），
+`binline_execute` 任务发出（CHECKIN 64B）后进程消失。四轮转储：
+1. RIP=`bofwin_window` 掩码后 `call [g_bw_stubs]`（/O1 从密文 .data 重载）
+   → `bw_call_enter` 无优化跳板，指针进 rcx。
+2. RIP=stub 页，enter 的 `FF 90 88 00 00 00`（6B）只 `e += 3`，下一条
+   指令盖掉 displacement → 所有 `call [rax+disp32]` 改 `e += 6`。
+3. RIP=stub+0x35，`C7 40 98` 被解码成 `[rax-0x68]`（0x98 是有符号
+   disp8）→ phase 存盘改 disp32 `C7 80 98 00 00 00`。
+4. RIP=ntdll+0xa4492，读 `0x2000000000`（rcx 同样是野指针）。窗口已经
+   进 stub，下一拍在 ntdll 里炸——**UDRL 映射下 snapshot/heap 与 host
+   测试不一致**，未再往下追。host 四层（capstone / ctypes / 真 DLL
+   .rdata / 114KB）仍绿。
+
+下一步若续 BOFWIN：在 stomped 镜像里把 snapshot 块打日志（或先对
+非 UDRL、槽内默认 DLL 开 BOFWIN——那条路仍然被 1536B 余量挡住）。
+
+分支 HEAD b1640ed；CI 38120978647 全绿；TS 槽 MATCH 305696。
