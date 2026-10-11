@@ -61,6 +61,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "inject_bof build failed" }
           Get-Item tests\_build\inject_bof.x64.o | Select-Object Name,Length
 
+      # diag variant imports BeaconPrintf: bypasses the masked window and
+      # gives the inject logic a real output channel for triage
+      - name: Compile inject diag BOF (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          & cl /nologo /W3 /O1 /GS- /Zl /c /Fo:tests\_build\inject_diag.x64.o tests\inject_diag.c
+          if ($LASTEXITCODE -ne 0) { throw "inject_diag build failed" }
+          Get-Item tests\_build\inject_diag.x64.o | Select-Object Name,Length
+
       - name: Report size
         shell: pwsh
         run: |
@@ -105,6 +115,7 @@ jobs:
             x64/Release/bofwin/beacon.x64.rl0k.map
             tests/_build/bof_empty.x64.o
             tests/_build/inject_bof.x64.o
+            tests/_build/inject_diag.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)
