@@ -18,6 +18,17 @@
 #include <windows.h>
 #include <intrin.h>
 
+/* defined (not UNDEF): the compiler folds struct/array sweeps into memset
+ * calls; a local definition satisfies them and - as the staged build
+ * proved - a defined local function with relocs against it packs fine */
+void *memset(void *d, int c, size_t n)
+{
+	volatile char *p = (volatile char *)d;
+	while (n--)
+		*p++ = (volatile char)c;
+	return d;
+}
+
 #define BW_H_CREATEPROCESSA       0x16B3FE72UL
 #define BW_H_VIRTUALALLOCEX       0x6E1A959CUL
 #define BW_H_WRITEPROCESSMEMORY   0xD83D6AA1UL
