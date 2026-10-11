@@ -60,14 +60,14 @@ static char g_msg_stack_ok[] = "stack-ok";
 /* mov eax, 0x2A ; ret - the injected stub */
 static const unsigned char g_stub[6] = { 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
 
-static __forceinline unsigned long bw_hash(const char *s)
+static unsigned long bw_hash(const char *s)
 {
 	unsigned long h = 0;
 	while (*s) { h = (h >> 13) | (h << 19); h += (unsigned char)*s++; }
 	return h;
 }
 
-static __forceinline int bw_wieq(const unsigned short *a, const unsigned short *b)
+static int bw_wieq(const unsigned short *a, const unsigned short *b)
 {
 	while (*a && *b) {
 		unsigned short ca = *a, cb = *b;
@@ -79,7 +79,7 @@ static __forceinline int bw_wieq(const unsigned short *a, const unsigned short *
 	return *a == *b;
 }
 
-static __forceinline void *bw_kernel32(void)
+static void *bw_kernel32(void)
 {
 	unsigned long long peb = __readgsqword(0x60);
 	unsigned long long ldr = *(unsigned long long *)(peb + 0x18);
@@ -103,7 +103,7 @@ static __forceinline void *bw_kernel32(void)
 	return NULL;
 }
 
-static __forceinline void *bw_exp(void *k32, unsigned long want)
+static void *bw_exp(void *k32, unsigned long want)
 {
 	unsigned char *b = (unsigned char *)k32;
 	DWORD lf = *(DWORD *)(b + 0x3C);
@@ -129,7 +129,7 @@ static __forceinline void *bw_exp(void *k32, unsigned long want)
 	return NULL;
 }
 
-static __forceinline void bw_put_msg(BW_CREATEFILEA pCFA, BW_WRITEFILE pWF,
+static void bw_put_msg(BW_CREATEFILEA pCFA, BW_WRITEFILE pWF,
                                      BW_CLOSEHANDLE pCH, char *path, char *msg)
 {
 	HANDLE f = pCFA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
