@@ -24,7 +24,7 @@ void BeaconPrintf(int type, char *fmt, ...);
 #define DBG_INET 0x00
 
 /* satisfy a possible compiler-emitted memset without any CRT import */
-void *memset(void *d, int c, size_t n)
+static __forceinline void *memset(void *d, int c, size_t n)
 {
 	unsigned char *p = (unsigned char *)d;
 	while (n--)
@@ -98,7 +98,7 @@ static char g_st_crt[] = "stage:crthread";
 /* mov eax, 0x2A ; ret - the injected stub */
 static const unsigned char g_stub[6] = { 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
 
-static unsigned long bw_hash(const char *s)
+static __forceinline unsigned long bw_hash(const char *s)
 {
 	unsigned long h = 0;
 	while (*s) {
@@ -108,7 +108,7 @@ static unsigned long bw_hash(const char *s)
 	return h;
 }
 
-static int bw_wieq(const unsigned short *a, const unsigned short *b)
+static __forceinline int bw_wieq(const unsigned short *a, const unsigned short *b)
 {
 	while (*a && *b) {
 		unsigned short ca = *a, cb = *b;
@@ -120,7 +120,7 @@ static int bw_wieq(const unsigned short *a, const unsigned short *b)
 	return *a == *b;
 }
 
-static void *bw_kernel32(void)
+static __forceinline void *bw_kernel32(void)
 {
 	unsigned long long peb = __readgsqword(0x60);
 	unsigned long long ldr;
@@ -147,7 +147,7 @@ static void *bw_kernel32(void)
 	return NULL;
 }
 
-static void *bw_exp(void *k32, unsigned long want)
+static __forceinline void *bw_exp(void *k32, unsigned long want)
 {
 	unsigned char *b = (unsigned char *)k32;
 	DWORD lf = *(DWORD *)(b + 0x3C);
@@ -177,7 +177,7 @@ static void *bw_exp(void *k32, unsigned long want)
 	return NULL;
 }
 
-static void bw_write_msg(BW_CREATEFILEA pCreateFileA, BW_WRITEFILE pWriteFile,
+static __forceinline void bw_write_msg(BW_CREATEFILEA pCreateFileA, BW_WRITEFILE pWriteFile,
                          BW_CLOSEHANDLE pCloseHandle, char *msg)
 {
 	HANDLE f = pCreateFileA(g_marker_path, GENERIC_WRITE, 0, NULL,
@@ -193,7 +193,7 @@ static void bw_write_msg(BW_CREATEFILEA pCreateFileA, BW_WRITEFILE pWriteFile,
 	pCloseHandle(f);
 }
 
-__declspec(noinline) void bw_stage(char *m)
+static __forceinline void bw_stage(char *m)
 {
 	BeaconPrintf(DBG_INET, "%s", m);
 }
