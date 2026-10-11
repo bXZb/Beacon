@@ -82,6 +82,12 @@ static char g_cmdline[] = "cmd.exe /c ping -n 30 127.0.0.1";
 static char g_marker_path[] = "C:\\Users\\Public\\bw_inject_marker.txt";
 static char g_msg_ok[] = "INJECT rc=0x2a (remote stub executed)";
 static char g_msg_fail[] = "INJECT FAIL";
+static char g_st_k32[] = "stage:k32";
+static char g_st_exp[] = "stage:exp";
+static char g_st_cp[] = "stage:createproc";
+static char g_st_vae[] = "stage:vallocex";
+static char g_st_wpm[] = "stage:wpm";
+static char g_st_crt[] = "stage:crthread";
 
 /* mov eax, 0x2A ; ret - the injected stub */
 static const unsigned char g_stub[6] = { 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3 };
@@ -165,18 +171,16 @@ static void *bw_exp(void *k32, unsigned long want)
 	return NULL;
 }
 
-static void bw_write_marker(BW_CREATEFILEA pCreateFileA, BW_WRITEFILE pWriteFile,
-                            BW_CLOSEHANDLE pCloseHandle, int ok)
+static void bw_write_msg(BW_CREATEFILEA pCreateFileA, BW_WRITEFILE pWriteFile,
+                         BW_CLOSEHANDLE pCloseHandle, char *msg)
 {
 	HANDLE f = pCreateFileA(g_marker_path, GENERIC_WRITE, 0, NULL,
 	                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	DWORD written = 0;
-	char *msg;
 	DWORD len;
 
 	if (f == INVALID_HANDLE_VALUE)
 		return;
-	msg = ok ? g_msg_ok : g_msg_fail;
 	for (len = 0; msg[len]; len++)
 		;
 	pWriteFile(f, msg, len, &written, NULL);
@@ -221,8 +225,10 @@ void go(char *args, int len)
 	pCloseHandle        = (BW_CLOSEHANDLE)bw_exp(k32, BW_H_CLOSEHANDLE);
 	if (!pCreateProcessA || !pVirtualAllocEx || !pWriteProcessMemory ||
 	    !pCreateRemoteThread || !pWaitForSingleObject || !pGetExitCodeThread ||
-	    !pCreateFileA || !pWriteFile || !pCloseHandle)
+	    !pCreateFileA || !pWriteFile || !pCloseHandle) {
+		bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle, g_st_exp);
 		return;
+	}
 
 	/* zero the structs field by field - no memset available */
 	si.cb = 0; si.lpReserved = 0; si.lpDesktop = 0; si.lpTitle = 0;
@@ -234,22 +240,35 @@ void go(char *args, int len)
 	pi.hProcess = 0; pi.hThread = 0; pi.dwProcessId = 0; pi.dwThreadId = 0;
 
 	if (!pCreateProcessA(NULL, g_cmdline, NULL, NULL, FALSE,
-	                     0x08000000 /* CREATE_NO_WINDOW */, NULL, NULL, &si, &pi))
+	                     0x08000000 /* CREATE_NO_WINDOW */, NULL, NULL, &si, &pi)) {
+		bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle, g_st_cp);
 		return;
+	}
 
+	bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle, g_st_k32);
 	remote = pVirtualAllocEx(pi.hProcess, NULL, 0x1000,
 	                         0x3000 /* MEM_COMMIT|MEM_RESERVE */,
 	                         0x20 /* PAGE_EXECUTE_READ */);
-	if (remote != NULL && pWriteProcessMemory(pi.hProcess, remote, g_stub, sizeof(g_stub), &written)) {
+	if (remote == NULL) {
+		bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle, g_st_vae);
+		pTerminateProcess(pi.hProcess, 0);
+		return;
+	}
+	if (!pWriteProcessMemory(pi.hProcess, remote, g_stub, sizeof(g_stub), &written)) {
+		bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle, g_st_wpm);
+	} else {
 		th = pCreateRemoteThread(pi.hProcess, NULL, 0,
 		                        (LPTHREAD_START_ROUTINE)remote, NULL, 0, NULL);
-		if (th != NULL) {
+		if (th == NULL) {
+			bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle, g_st_crt);
+		} else {
 			pWaitForSingleObject(th, 10000);
 			if (pGetExitCodeThread(th, &rc) && rc == 0x2A)
 				ok = 1;
 		}
 	}
-	bw_write_marker(pCreateFileA, pWriteFile, pCloseHandle, ok);
+	bw_write_msg(pCreateFileA, pWriteFile, pCloseHandle,
+	             ok ? g_msg_ok : g_msg_fail);
 
 	if (th != NULL)
 		pCloseHandle(th);
