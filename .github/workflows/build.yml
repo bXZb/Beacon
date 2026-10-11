@@ -57,7 +57,7 @@ jobs:
         if: matrix.project == 'beacon'
         shell: pwsh
         run: |
-          & cl /nologo /W3 /O1 /GS- /Zl /c /Fo:tests\_build\inject_bof.x64.o tests\inject_bof.c
+          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_build\inject_bof.x64.o tests\inject_bof.c
           if ($LASTEXITCODE -ne 0) { throw "inject_bof build failed" }
           Get-Item tests\_build\inject_bof.x64.o | Select-Object Name,Length
 
