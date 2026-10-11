@@ -195,13 +195,18 @@ void go(char *args, int len)
 		pCH(f);
 	}
 
-	si.cb = 0; si.lpReserved = 0; si.lpDesktop = 0; si.lpTitle = 0;
-	si.dwX = 0; si.dwY = 0; si.dwXSize = 0; si.dwYSize = 0;
-	si.dwXCountChars = 0; si.dwYCountChars = 0; si.dwFillAttribute = 0;
-	si.dwFlags = 0; si.wShowWindow = 0; si.cbReserved2 = 0;
-	si.lpReserved2 = 0; si.hStdInput = 0; si.hStdOutput = 0; si.hStdError = 0;
+	/* zero the structs through a volatile byte loop: a plain field sweep
+	 * gets folded into a memset call, and memset would be an UNDEF symbol
+	 * the packer refuses with 'Unknown symbol' */
+	{
+		volatile char *vp = (volatile char *)&si;
+		for (mlen = 0; mlen < (DWORD)sizeof si; mlen++)
+			vp[mlen] = 0;
+		vp = (volatile char *)&pi;
+		for (mlen = 0; mlen < (DWORD)sizeof pi; mlen++)
+			vp[mlen] = 0;
+	}
 	si.cb = sizeof(BW_STARTUPINFOA);
-	pi.hProcess = 0; pi.hThread = 0; pi.dwProcessId = 0; pi.dwThreadId = 0;
 
 	if (!pCP(NULL, g_cmdline, NULL, NULL, FALSE, 0x08000000, NULL, NULL, &si, &pi))
 		return;
