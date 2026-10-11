@@ -64,10 +64,8 @@ extern "C" void * __cdecl realloc(void *p, size_t n)
 	return HeapReAlloc(bw_heap(), 0, p, n);
 }
 
-extern "C" size_t __cdecl _msize(void *p)
-{
-	return p ? HeapSize(bw_heap(), 0, p) : 0;
-}
+/* _msize stays the CRT's (libucrt's msize.obj is force-pulled by other
+ * CRT members - LNK2005): nothing in this image calls it. */
 
 /* UCRT internals allocate through the _base family rather than malloc
  * (e.g. the aligned_* built on _malloc_base + a header) - overriding the

