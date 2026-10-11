@@ -932,3 +932,41 @@ offsetof 断言；②MSVC /O1 会把捕获的 API 指针折叠回 IAT 调用—�
 HEAD 8529030；CI 38132016475；rl0k encode 309792（jar 槽，客户端）；
 TS 槽维持 305696 无 BOFWIN（默认墙不砍）。遗留：真 BOF（带参/带
 beacon API 混用）的准入矩阵、watchdog 120s 实路径未活测。
+
+### 14.3 P4 遗留战役（2026-10-11/12 深夜，e23932d → 4f9da6f）
+
+**已过线三项**：
+- **容器 decode 缓冲释放（P4-1）**：loader 在 reason-4 调用前把
+  {'BWCF', AllocationBase} 交接结构（自身栈上）作 lpParameter 传入；
+  DllMain(4) 的 container_release() 先探针后读 magic、校验
+  MEM_COMMIT+MEM_PRIVATE、拒绝与自身镜像重叠、一次性擦除。
+  **活测：PE-sieve Implanted PE 0x1→0x0**（Replaced=1 不变）——进程内
+  零植入物，beacon 只以被替换牺牲模块形态存在。坑：udrl-dist 的
+  loader .o 不随部署链刷新，需从 CI 工件手动更新（本轮白跑一次）。
+- **私有堆（P4-2）**：bw_heap.cpp 覆盖 malloc/calloc/realloc/free +
+  `_base` 家族（/MT 静态 CRT 全量重定向，UCRT 内部分配也走
+  `_malloc_base`）；x86 排除（槽余量 512B）。_msize 不覆盖
+  （libucrt msize.obj 强引用 → LNK2005）。活测经 udrl/bofwin/inject
+  三路回归。
+- **inject BOF（P4-4）**：零导入（PEB 遍历 + ROR13 十哈希一次扫）
+  自包含注入：CreateProcessA 隐藏 victim → VirtualAllocEx RX →
+  6B stub(mov eax,0x2A;ret) → CreateRemoteThread → 验退出码 →
+  标记文件。**全程跑在 BOFWIN 掩码窗口内**（beacon 全镜像+堆密文时
+  执行注入）。活测 6/6，rc=0x2A。
+
+**BOF 打包器契约（反编译 pe/OBJExecutable + BOFUtils + 活测五轮）**：
+重定位符号只认 ①bapi.txt 白名单（beacon API 名）②`dll!func` 动态名。
+对象内部函数符号、UNDEF memset（/O1 内部 outline 的 .pdata 幽灵）、
+裸字符串字面量（??_C@）、SSE 常量（__xmm@，字节循环会被向量化！）一概
+拒收（beacon_error "linker errors for UserSpecified"——**驱动脚本必须
+grep ERROR 而非只看 OUTPUT**）。可行形态=/O0 + 单外部函数（全并入
+go）+ 静态数组字符串 + QWORD 立即数构造 + 不做结构体清扫（dwFlags=0
+门控即可）。bof_empty（单函数零数据）从第一天就符合纯属幸运。
+
+**P4-3/P4-5 设计定案（未实施）**：`EXECUTABLE_ARTIFACT_GENERATOR`
+cna 标量钩子（BaseArtifactUtils._patchArtifact 官方扩展点，ArtifactKit
+同款）——自定义 EXE = CI 构建 hostexe 模板（读自身文件、尾部找合法
+MZ、VirtualAlloc、导出表定位 ReflectiveLoader、call(flat)）+ 追加
+baked DLL + **每代随机 overlay（0-4KB 随机尾——PE 容忍尾部字节，
+loader 按节表拷贝不受影响）= mutator v1**。部署走 Public 路径（同
+BOF .o），无需动 jar。
