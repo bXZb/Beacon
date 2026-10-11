@@ -53,69 +53,7 @@ jobs:
 
       # P4 inject BOF: zero-import (PEB-walk + ROR13), runs inside the
       # BOFWIN masked window; writes a marker file with the remote exit code
-      - name: Compile inject BOF (beacon only)
-        if: matrix.project == 'beacon'
-        shell: pwsh
-        run: |
-          & cl /nologo /W3 /O1 /GS- /Zl /c /Fo:tests\_build\inject_bof.x64.o tests\inject_bof.c
-          if ($LASTEXITCODE -ne 0) { throw "inject_bof build failed" }
-          Get-Item tests\_build\inject_bof.x64.o | Select-Object Name,Length
 
-      # diag variant imports BeaconPrintf: bypasses the masked window and
-      # gives the inject logic a real output channel for triage
-      - name: Compile inject diag BOF (beacon only)
-        if: matrix.project == 'beacon'
-        shell: pwsh
-        run: |
-          & cl /nologo /W3 /O1 /GS- /Zl /c /Fo:tests\_build\inject_diag.x64.o tests\inject_diag.c
-          if ($LASTEXITCODE -ne 0) { throw "inject_diag build failed" }
-          Get-Item tests\_build\inject_diag.x64.o | Select-Object Name,Length
-
-      - name: Report size
-        shell: pwsh
-        run: |
-          $dll = Get-Item "x64/Release/${{ matrix.project }}.x64.dll"
-          "$($dll.Name) = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-
-      # stageless 形状冒烟：blob 补丁 → LoadLibrary → 导出验证 → 干净卸载
-      - name: Load smoke (beacon variant only)
-        if: matrix.project == 'beacon'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path tests\_build | Out-Null
-          & cl /nologo /W3 /EHsc /MT tests/load_smoke.cpp /Fe:tests\_build\load_smoke.exe /Fo:tests\_build\
-          if ($LASTEXITCODE -ne 0) { throw "smoke build failed" }
-          ./tests/_build/load_smoke.exe x64/Release/beacon.x64.dll
-          ./tests/_build/load_smoke.exe x64/Release/winhttpb.x64.dll
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.project }}-x64
-          path: |
-            x64/Release/${{ matrix.project }}.x64.dll
-            x64/Release/${{ matrix.project }}.x64.map
-
-      - name: Upload WinHTTP artifact
-        if: matrix.project == 'beacon'
-        uses: actions/upload-artifact@v4
-        with:
-          name: beacon-winhttp-x64
-          path: |
-            x64/Release/winhttpb.x64.dll
-            x64/Release/winhttpb.x64.map
-
-      - name: Upload BOFWIN rl0k artifact
-        if: matrix.project == 'beacon'
-        uses: actions/upload-artifact@v4
-        with:
-          name: beacon-x64-rl0k
-          path: |
-            x64/Release/bofwin/beacon.x64.rl0k.dll
-            x64/Release/bofwin/beacon.x64.rl0k.map
-            tests/_build/bof_empty.x64.o
-            tests/_build/inject_bof.x64.o
-            tests/_build/inject_diag.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)
