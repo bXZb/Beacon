@@ -799,11 +799,58 @@ Sleep 报 `Unknown expression at 1`（**BOM 字节被当 token**）——写 cna
 无 BOM（wb+encode utf-8）；②Sleep 字符串里 `C:\udrl-dist` 的 `\u` 被解析为
 unicode 转义——路径反斜杠必须双写。
 
-**阻塞（非代码）**：GitHub Actions 账户计费失败（"recent account payments
-have failed or your spending limit needs to be increased"）——全部 job 不再
-启动，log 404。**UDRL loader 的编译+活测待 billing 恢复后执行**：栈名版
-loader 尚未经编译验证；活测流程已备（evasion-lab/udrl_live.py：EXE 经 hook
-生成 → 上线 → PE-sieve 验证 beacon 落牺牲 DLL 区域、unbacked RX 命中消失——
-对比 Phase 0 基线）。
+**billing 恢复后的活测（2026-10-11，abc5b91 / CI 38114369441）——Phase 4
+image-backed 上线过线**：
 
-分支 HEAD 8ec1391+（UDRL 代码）；CI 状态=billing 阻塞；TS 已复位 r2_nosm。
+接入链（实测，反编译源有一处与真 jar 不符）：
+- `artifact_payload` → `ScListener.export` → `BEACON_RDLL_GENERATE` **会触发**
+  （不是"仅 exportLocal"）。hook 的 `$2` 在默认 size=5 路径上是
+  **peProcessedDLL**（stock VA loader 已把 5K 墙填满，`setup_reflective_loader`
+  报 available space 0）。逃生口=官方 kit 的 `BEACON_RDLL_SIZE` 返回 `"0"` →
+  client 改走 `sleeve/beacon.x64.rl0k.dll`。我们把 jar 该条目换成自己的
+  encode（墙完好），hook 收到 `resources/beacon.x64.rl0k.dll`。
+- `extract_reflective_loader` = `OBJExecutableSimple`：只接受节内 type 20/4
+  重定位。第一刀 loader 因 `.rdata` 字符串 + CRT `memset` + `__imp_VirtualQuery`
+  抛异常，Sleep 吞成 `$null`，空 loader 循环填墙。修成 ROR13 哈希 + 栈宽名
+  + `__stosb/__movsb` 后 extract **3228B 干净**（镜像器与 client 一致）。
+- extractor 取**第一个可执行节的 byte 0** 当入口。`#pragma code_seg(".text$aaa")`
+  把节名写进字符串表（`/566`），碰巧仍是最后一个 EXEC 节。`bw_after_hop` 若
+  排在 `ReflectiveLoader` 前会抢走 byte 0——DOS stub 跳进 `MEM_RELEASE`
+  （dump RIP=0x8000）。**入口必须是 ReflectiveLoader**。
+
+loader 四轮转储修（全有 WER LocalDumps）：
+1. RIP 在 `rep stosb`（bw_zero 当了入口）+ 导出表把 `NumberOfFunctions`
+   当成 `AddressOfFunctions` → API 全是 kernel32+0x664。
+2. overlay 铺在 `.text` 而非 HMODULE → DllMain hinst 偏 0x1000，原 EP 页
+   被整段翻 RW 后变不可执行（BEX64 DEP at xpsservices+0x1d29d8）。
+3. xpsservices 带 CFG：ntdll 仍按加载时 bitmap 校验间接调用，dispatch 落到
+   原代码。改无 CFG 候选（spwizimg/shellstyle/msvcr100/UIRibbonRes）+
+   overlay 外 PAGE_NOACCESS。
+4. 只调 reason 4：AddressOfEntryPoint 是 `DllMainCRTStartup`，堆句柄 NULL，
+   ntdll `cmp [rbx+10h], 0DDEEDDEEh` rbx=0。先 `PROCESS_ATTACH` 再 reason 4。
+
+**活测铁证（udrl_live.py，r1.log 字节 + PE-sieve 0.4.1.1）**：
+- hook fired / extract 3228B / baked 305664 / EXE 328704B
+- **INITIAL bid=1824997970** + **pwd ALT 过线** + PID 7084
+- PE-sieve：`Replaced=1` = PEB 挂接的 `C:\Windows\System32\spwizimg.dll`
+  SizeOfImage **0x67000**（= beacon，不是原 0x598000）；`Implanted shc=0`；
+  `Implanted PE=1` = 容器 decode 缓冲（MEM_PRIVATE ~0xa0000/0x4b000），
+  loader 自己还在这块上跑。hop-then-VirtualFree（85746a9）试图释放它，
+  但 continuation 抢走 extract 入口 → 回退 abc5b91。
+- 对比 Phase 0 基线：EXE 形态的 **unbacked RX 整镜像命中消失**（分配级
+  目标达成）；残余 = 容器私有 PE + stomped 模块的 PE 头被替换（PE-sieve
+  replaced，预期）。
+
+**cna/工具链新坑（本轮）**：①`udrl-dist\ReflectiveLoader` 单反斜杠 `\R`
+  被 Sleep 当转义；②SIZE hook 必须返回 `"0"`/`"5"` 字符串，`$null` 被当
+  size 5；③真 jar 的 `$2` 是 peProcessedDLL 不是 originalDLL（反编译源
+  推 originalDLL——**信 jar 字节码和 probe 落盘**）；④PE-sieve 0.4 参数
+  是 `/shellc` 不是 `/shellcode`；⑤判定通道：`[UDRL]` println 走 stdout
+  不在 r1.log。
+
+**Phase 4 收口 / 未做**：image-backed UDRL **过线**。未做=容器 decode
+缓冲释放（需不占 byte 0 的 continuation）、自写 EXE 模板、inject BOF、
+mutator、private heap、BOFWIN_ENABLE 重新打开（墙还在，槽容量未变）。
+Phase 5 未开工。
+
+分支 HEAD abc5b91；CI 38114369441 全绿；活测 10/10。
