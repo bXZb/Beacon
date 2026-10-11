@@ -42,6 +42,7 @@
  * x64 only. x86 compiles to permanent FALSE (caller runs the BOF unmasked). */
 #include <windows.h>
 #include <string.h>
+#include <stddef.h>
 #include "sleepmask_bofwin.h"
 #include "sleepmask_gen3.h"
 
@@ -89,10 +90,15 @@ typedef struct {
 	void          (*entry)(void *, int);  /* +0x20 BOF entry                  */
 	void          * args;                 /* +0x28                            */
 	int             alen;                 /* +0x30                            */
+	int             pad0;                 /* +0x34 align pad (explicit)       */
 	BW_BLOCK      * blocks;               /* +0x38 -> ctx->storage            */
 	int             nblocks;              /* +0x40                            */
-	int             text_idx;             /* +0x48 .text block index          */
-	BW_USTRING      u_text;               /* +0x50                            */
+	int             text_idx;             /* +0x44 .text block index          */
+	int             pad1;                 /* +0x48 layout pad: WITHOUT these  */
+	int             pad2;                 /* +0x4C two words u_text lands at  */
+	                                     /* +0x48 and every stub offset from */
+	BW_USTRING      u_text;               /* +0x50 here down is off by 8 (the */
+	                                     /* round-4/5 root cause)            */
 	BW_USTRING      u_key;                /* +0x60  (Buffer -> ctx->key)      */
 	unsigned long   vp_old;               /* +0x70 VirtualProtect old-prov bin */
 	unsigned long   text_prot;            /* +0x74 .text original protection  */
@@ -109,6 +115,7 @@ typedef struct {
 	                                       * 7=timer gone 8=wiped 10+i=C mask
 	                                       * block i 40+i=C restore block i
 	                                       * 60+i=watchdog restore block i    */
+	int             pad3;                 /* +0x9C -> storage at +0xA0        */
 	unsigned char   storage[BW_MAX_BLOCKS * sizeof(BW_BLOCK)];      /* +0xA0 */
 	unsigned char   sbox0[256];           /* KSA(key,ctr=text_idx) - pristine;
 	                                       * the stub-side PRGA mutates sbox1,
@@ -116,6 +123,19 @@ typedef struct {
 	                                       * fresh state back before unmasking */
 	unsigned char   sbox1[256];           /* PRGA working copy                */
 } BW_CTX;
+
+/* the hand-asm stubs address BW_CTX by HARDCODED offsets - the round-4/5
+ * crashes were both this struct silently landing 8 bytes below them. These
+ * asserts make any future drift a COMPILE error instead of a live dump. */
+typedef char bw_assert_u_text[offsetof(BW_CTX, u_text) == 0x50 ? 1 : -1];
+typedef char bw_assert_vp_old[offsetof(BW_CTX, vp_old) == 0x70 ? 1 : -1];
+typedef char bw_assert_key2[offsetof(BW_CTX, key2) == 0x78 ? 1 : -1];
+typedef char bw_assert_pvp[offsetof(BW_CTX, pVirtualProtect) == 0x88 ? 1 : -1];
+typedef char bw_assert_pflush[offsetof(BW_CTX, pFlushIC) == 0x90 ? 1 : -1];
+typedef char bw_assert_phase[offsetof(BW_CTX, phase) == 0x98 ? 1 : -1];
+typedef char bw_assert_storage[offsetof(BW_CTX, storage) == 0xA0 ? 1 : -1];
+typedef char bw_assert_sbox0[offsetof(BW_CTX, sbox0) == 0x8A0 ? 1 : -1];
+typedef char bw_assert_sbox1[offsetof(BW_CTX, sbox1) == 0x9A0 ? 1 : -1];
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
 
