@@ -679,16 +679,18 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				 * gen3_sleep; the nook setting is the same mask switch the
 				 * sleep path honours. Any decline (engine, threads,
 				 * watchdog) falls back to the plain unmasked call. */
-				if (!beacon_api_used && conv == 0 &&
-				    setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
-					if (gparms == NULL)
-						gargle_setup_parms(NULL, NULL, 0);
-					if (!bofwin_window((void (*)(void *, int))inlinefunc, args, alen, 0))
+					if (!beacon_api_used && conv == 0 &&
+					    setting_int(SETTING_GARGLE_NOOK) != 0 && threadcount == 0) {
+						if (gparms == NULL)
+							gargle_setup_parms(NULL, NULL, 0);
+						if (bofwin_window((void (*)(void *, int))inlinefunc, args, alen, 0))
+							command_shell_callback("bofwin window served", 20, CALLBACK_OUTPUT);
+						else
+							inlinefunc(args, alen);
+					}
+					else {
 						inlinefunc(args, alen);
-				}
-				else {
-					inlinefunc(args, alen);
-				}
+					}
 #else
 				inlinefunc(args, alen);
 #endif

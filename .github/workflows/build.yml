@@ -33,6 +33,24 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Project beacon -Toolset v143 -HttpLibrary winhttp
 
+      # Phase 4 follow-up: BOFWIN lives in the client-side rl0k variant, NOT
+      # the TS-slot default. pe.process memcpy's 5120 bytes at the export, so
+      # the default DLL must keep the 5K wall; the UDRL/EXE path (SIZE=0)
+      # loads sleeve/beacon.x64.rl0k.dll which has no TS cap.
+      - name: Build BOFWIN rl0k variant (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: ./build.ps1 -Project beacon -Toolset v143 -ExtraProperties BeaconBofWin=true
+
+      - name: Compile empty Win32-only BOF (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tests\_build | Out-Null
+          & cl /nologo /W3 /O1 /GS- /Zl /c /Fo:tests\_build\bof_empty.x64.o tests\bof_empty.c
+          if ($LASTEXITCODE -ne 0) { throw "bof_empty build failed" }
+          Get-Item tests\_build\bof_empty.x64.o | Select-Object Name,Length
+
       - name: Report size
         shell: pwsh
         run: |
@@ -66,6 +84,16 @@ jobs:
           path: |
             x64/Release/winhttpb.x64.dll
             x64/Release/winhttpb.x64.map
+
+      - name: Upload BOFWIN rl0k artifact
+        if: matrix.project == 'beacon'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-x64-rl0k
+          path: |
+            x64/Release/bofwin/beacon.x64.rl0k.dll
+            x64/Release/bofwin/beacon.x64.rl0k.map
+            tests/_build/bof_empty.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)
