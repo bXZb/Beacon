@@ -118,9 +118,9 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_STATE_CLOSED 2
 
 #define BW_ENTER_OFF 0x000
-#define BW_EXIT_OFF  0x060
-#define BW_WATCH_OFF 0x0E0
-#define BW_CTXQ_OFF  0x160   /* after the watchdog tail-jump data qword */
+#define BW_EXIT_OFF  0x070
+#define BW_WATCH_OFF 0x100
+#define BW_CTXQ_OFF  0x180   /* after the watchdog tail-jump data qword */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -394,13 +394,13 @@ static BOOL bw_build_pages(void)
 	e += 6;
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00;                          /* call VP->RW */
-	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x89; e[1] = 0x40; e[2] = 0x98;                          /* mov [rax+0x98],eax: phase=VP ret */
-	e += 3;
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x88] VP */
+		e += 6;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0xC7; e[1] = 0x40; e[2] = 0x98;                          /* mov dword [rax+0x98],1 */
+		e[3] = 0x01; e[4] = 0x00; e[5] = 0x00; e[6] = 0x00;
+		e += 7;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x50; e[3] = 0x60;            /* lea rdx,[rax+0x60] */
@@ -417,8 +417,8 @@ static BOOL bw_build_pages(void)
 	e += 3;
 	e[0] = 0xFF; e[1] = 0x60; e[2] = 0x20;                          /* jmp [rax+0x20] entry */
 	e += 3;
-	if ((int)(e - (p + BW_ENTER_OFF)) > 0x60)
-		BW_BUILD_FAIL();
+		if ((int)(e - (p + BW_ENTER_OFF)) > 0x70)
+			BW_BUILD_FAIL();
 
 	/* ---- exit_stub (BOF's ret lands here, rsp%16==0, .text=RW-cipher) ----
 	 * mov rax,[rip+ctx]; mov ecx,2; xchg ecx,[rax]; cmp ecx,1; jne ret
@@ -438,7 +438,7 @@ static BOOL bw_build_pages(void)
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x49;                                        /* jne ret (+0x49) */
+		e[0] = 0x75; e[1] = 0x46;                                        /* jne ret (+0x46) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x50;            /* lea rcx,[rax+0x50] */
 	e += 4;
@@ -456,20 +456,20 @@ static BOOL bw_build_pages(void)
 	e = bw_put32(e + 3, 0x74);
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00;                          /* call VP->RX */
-	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
-	e += 7;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
-	e += 4;
-	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x50] len32 */
-	e = bw_put32(e + 3, 0x50);
-	e[0] = 0xFF; e[1] = 0x90;                                        /* call [rax+0x80] flush */
-	e = bw_put32(e + 2, 0x90);
-	e[0] = 0xC3;                                                     /* ret */
-	e += 1;
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x88] VP */
+		e += 6;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
+		e += 7;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
+		e += 4;
+		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x40; e[3] = 0x50;            /* mov r8d,[rax+0x50] len32 */
+		e += 4;
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x80; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x80] flush */
+		e += 6;
+		e[0] = 0xC3;                                                     /* ret */
+		e += 1;
 	if ((int)(e - (p + BW_EXIT_OFF)) > 0x70)
 		BW_BUILD_FAIL();
 
@@ -487,7 +487,7 @@ static BOOL bw_build_pages(void)
 	e += 2;
 	e[0] = 0x83; e[1] = 0xF9; e[2] = 0x01;                          /* cmp ecx,1 */
 	e += 3;
-	e[0] = 0x75; e[1] = 0x6C;                                        /* jne wd_ret (+0x6C) */
+		e[0] = 0x75; e[1] = 0x66;                                        /* jne wd_ret (+0x66) */
 	e += 2;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xEC; e[3] = 0x28;            /* sub rsp,0x28 */
 	e += 4;
@@ -507,18 +507,18 @@ static BOOL bw_build_pages(void)
 	e = bw_put32(e + 3, 0x74);
 	e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x48; e[3] = 0x70;            /* lea r9,[rax+0x70] */
 	e += 4;
-	e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00;                          /* call VP->RX */
-	e += 3;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
-	e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
-	e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
-	e += 7;
-	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
-	e += 4;
-	e[0] = 0x44; e[1] = 0x8B; e[2] = 0x80;                          /* mov r8d,[rax+0x50] len32 */
-	e = bw_put32(e + 3, 0x50);
-	e[0] = 0xFF; e[1] = 0x90;                                        /* call flush */
-	e = bw_put32(e + 2, 0x90);
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x88; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x88] VP */
+		e += 6;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_CTXQ_OFF));
+		e[0] = 0x48; e[1] = 0xC7; e[2] = 0xC1; e[3] = 0xFF; e[4] = 0xFF; e[5] = 0xFF; e[6] = 0xFF; /* mov rcx,-1 */
+		e += 7;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x50; e[3] = 0x58;            /* mov rdx,[rax+0x58] buf */
+		e += 4;
+		e[0] = 0x44; e[1] = 0x8B; e[2] = 0x40; e[3] = 0x50;            /* mov r8d,[rax+0x50] len32 */
+		e += 4;
+		e[0] = 0xFF; e[1] = 0x90; e[2] = 0x80; e[3] = 0x00; e[4] = 0x00; e[5] = 0x00; /* call [rax+0x80] flush */
+		e += 6;
 	e[0] = 0x48; e[1] = 0x83; e[2] = 0xC4; e[3] = 0x28;            /* add rsp,0x28 */
 	e += 4;
 	e[0] = 0x48; e[1] = 0x8B; e[2] = 0x05;                          /* reload ctx */
