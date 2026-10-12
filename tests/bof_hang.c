@@ -3,9 +3,10 @@
  *   t0 "t0"     -> 60s  -> "t60"   (masked period; external scan expects
  *                                  ciphertext against the disk plaintext)
  *                -> 55s  -> "t115"  (still masked; second ciphertext scan)
- *                -> 10s  -> "t125-done" (watchdog fired at 120s: image is
+ *                -> 40s  -> "t155-done" (watchdog fired at 120s: image is
  *                                  PLAINTEXT again while this BOF still
- *                                  runs) -> return.
+ *                                  runs - the 35s tail widens the forensic
+ *                                  window) -> return.
  * Real-path coverage: watchdog_stub claims the restore, bw_watchdog_rest
  * unmasks the remaining blocks from plain C; when this BOF finally
  * returns, exit_stub takes the loser path (state==CLOSED) and the window
@@ -22,7 +23,7 @@ static char g_path[] = "C:\\Users\\Public\\bw_hang_probe.txt";
 static char g_t0[] = "t0\n";
 static char g_t60[] = "t60\n";
 static char g_t115[] = "t115\n";
-static char g_t125[] = "t125-done\n";
+static char g_t155[] = "t155-done\n";
 
 void go(char * args, int len)
 {
@@ -40,7 +41,7 @@ void go(char * args, int len)
 	kernel32$WriteFile(h, g_t60, 4, &wr, NULL);
 	kernel32$Sleep(55000);
 	kernel32$WriteFile(h, g_t115, 5, &wr, NULL);
-	kernel32$Sleep(10000);
-	kernel32$WriteFile(h, g_t125, 10, &wr, NULL);
+	kernel32$Sleep(40000);
+	kernel32$WriteFile(h, g_t155, 10, &wr, NULL);
 	kernel32$CloseHandle(h);
 }
