@@ -134,8 +134,7 @@ jobs:
         run: |
           & cl /nologo /W3 /O1 /GS- /c /Fo:udrl\_build\hostexe.obj udrl\hostexe.c
           if ($LASTEXITCODE -ne 0) { throw "hostexe compile failed" }
-          & link /nologo /SUBSYSTEM:WINDOWS /ENTRY:WinMainCRTStartup /MACHINE:X64 /DYNAMICBASE /NXCOMPAT ^
-            /OUT:udrl\_build\host_template_x64.exe udrl\_build\hostexe.obj kernel32.lib
+          & link /nologo /SUBSYSTEM:WINDOWS /ENTRY:WinMainCRTStartup /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /OUT:udrl\_build\host_template_x64.exe udrl\_build\hostexe.obj kernel32.lib
           if ($LASTEXITCODE -ne 0) { throw "hostexe link failed" }
           Get-Item udrl\_build\host_template_x64.exe | Select-Object Name,Length
 
