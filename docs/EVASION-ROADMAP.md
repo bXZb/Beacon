@@ -980,3 +980,65 @@ RWX flat→节表 RVA→raw 换算后走导出表定位 ReflectiveLoader→call(
 模板不会被 update_src 解出，须手动解 udrl-x64.zip（部署链曾拿着
 旧模板白跑一轮——**部署后必须 md5 验新**）。cna 组装时 dll 工件
 类型本身也是模板包装的，原始 baked DLL 从 RDLL 钩子的落盘文件取。
+
+### 14.4 P3 收官：真 BOF 准入矩阵 + watchdog 实路径（2026-10-13，4053d49→624d00b）
+
+**结果：矩阵全绿**（beacon bid=215743674，mini_sm + UDRL EXE + rl0k
+310304）。四个细胞全部过线，Phase 3 至此闭环。
+
+**带参缺口（本轮唯一的真引擎 bug）**：inline-execute 的 args blob
+指向 beacon.cpp 的 `malloc(MAX_GET)` 任务缓冲——那是
+track_memory_add 注册块，**窗口内是密文**。Win32-only 带参 BOF 在
+窗口内读 args 必得 RC4 垃圾。修复=bofwin_window 在掩码循环前把
+args 拷进**非 tracked 的 VirtualAlloc 私页**（ctx->args 指向拷贝），
+teardown 后（IAT 复明）wipe+free；三个失败路径全部覆盖。rl0k
+encode 309792→310304（尺寸变化=新鲜度铁律）。
+
+**客户端 args 契约（RE 收口）**：UserSpecified.getArguments =
+`encodeForBeacon(bid, args+"\0")` = **原始字节+尾部 NUL，无 TLV**——
+真实带参 BOF 的 BeaconDataParse 走 TLV 是 Beacon API 侧的约定，
+blob 本身就是裸串。驱动侧 `binline_execute($bid, $path, $args)`。
+
+**矩阵四细胞（全部真编译 BOF，活测判据=r1.log 字节+标记文件）**：
+- **C1 基线** bof_empty（无参）→ `bofwin window served` ✓
+- **C2 带参+形状** bof_args（纯动态 `kernel32$Func` 导入，零
+  ftable reloc）→ 窗口内读 args 并写标记：**args 字节逐字节精确**
+  （35B 串+NUL）、校验和吻合、动态导入经 ftable other[] 槽（非
+  tracked malloc）全程可调——两条新契约同证。**形状取证**：
+  `_AddressOfReturnAddress()&0xF==8`（ABI 完美入场）+ 
+  `_ReturnAddress()&0xFFF==0x080`（[rsp] 恰为 exit stub）——
+  第 1-4 轮的错位入场形状（rsp≡0/无影子）若还在，这两个断言
+  必炸；从真实编译 BOF 肚子里关掉该遗留 ✓
+- **C3 混用** bof_mixed（BeaconPrintf ftable + 动态导入）→
+  `bofwin skipped (api/nook/threads)` + BeaconPrintf 输出送达 +
+  标记落盘——混用类永不进窗口（ftable 调用会执行密文 .text），
+  分流正确 ✓（化妆 bug：skip 消息发 31/32 字节截尾，624d00b 修）
+- **C5 watchdog 实路径** bof_hang（60+55+40=155s 阻塞 > 120s）：
+  外部扫描铁证链——**T+48s CIPHER(0/512) → T+120s watchdog 触发 →
+  T+136-141s PLAIN(512/512) 且 BOF 仍在跑（served 未现）→ T+155s
+  返回走 loser exit + rest_done 跳过重解 → `window served` → pwd
+  ALT 会话存活**。watchdog_stub/bw_watchdog_rest/loser 路径/teardown
+  全部真路径首测。
+
+**扫描器方法（stomped 镜像定位）**：beacon 在 spwizimg 里是
+MEM_IMAGE 型（LoadLibraryExW 映射后改写），不能按 MEM_PRIVATE 过滤；
+正解=**自证式分类**：对进程内每个 MZ 区域取 .text 前 0x200B 与我们
+的磁盘明文比匹配率，只有 ≥90%（明文）或 ≤10%（密文）才算我们的
+镜像，其余模块自然跳过。
+
+**驱动侧翻车三连（第 4-6 次实证，全部驱动假象、系统无辜）**：
+①wait_for 位置快照又漏先写行（输出在 TASKED 后 0.13s 就到）——
+终判全量 grep；②全量 grep 又吃了上一轮旧行（INITIAL 匹配到死会话，
+任务发给死人）——正解=**驱动启动时记 POS0，只扫本段**（既不漏先
+写行也不吃旧行）；③tasklist 本机 GBK 输出 + `text=True` 解码崩
+——capture_output 后 errors=replace。另有 bof_hang 标记句柄
+shareMode=0 把驱动的取证读锁死（FILE_SHARE_READ 修，624d00b）。
+
+**方法学沉淀**：①args/参数类缓冲凡进 BOF 的都要问一句"它在不在
+掩码集合里"；②msvc `$` 标识符合法——`__declspec(dllimport)
+kernel32$Func` 是官方 BOF 动态导入形态，与 bapi 白名单
+`__imp_BeaconX` 并列，两者混用即"混用类"；③watchdog 类长窗口
+测试要把取证窗拉宽（125s 形状只剩 1-4s 窗口，155s 形状给 33s）。
+
+HEAD 624d00b；CI 38277204534/38278106418/38280254724 全绿；
+TS 复位 r2_nosm。**Phase 3 全部遗留清零。**
