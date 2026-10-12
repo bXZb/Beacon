@@ -32,7 +32,9 @@ void go(char * args, int len)
 
 	(void)args;
 	(void)len;
-	h = kernel32$CreateFileA(g_path, GENERIC_WRITE, 0, NULL,
+	/* FILE_SHARE_READ: the driver tails this marker while we hold the
+	 * handle (shareMode 0 locked it out mid-run and cost a forensic read) */
+	h = kernel32$CreateFileA(g_path, GENERIC_WRITE, 1, NULL,
 	                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE)
 		return;

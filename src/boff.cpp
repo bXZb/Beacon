@@ -691,7 +691,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						}
 					}
 						else {
-							command_shell_callback("bofwin skipped (api/nook/threads)", 31, CALLBACK_OUTPUT);
+							command_shell_callback("bofwin skipped (api/nook/threads)", 32, CALLBACK_OUTPUT);
 							inlinefunc(args, alen);
 						}
 #else
