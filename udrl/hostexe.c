@@ -66,7 +66,9 @@ void bw_entry(void)
 	CloseHandle(f);
 
 	pe = NULL;
-	for (i = size - 0x2000; (long)i > 0; i -= 0x10) {
+	/* align the scan grid: an unaligned start (size-0x2000) can step
+	 * straight past the payload's 16-aligned MZ */
+	for (i = (size - 0x2000) & ~0xFUL; (long)i > 0; i -= 0x10) {
 		if (buf[i] == 'M' && buf[i + 1] == 'Z') {
 			DWORD lf = *(DWORD *)(buf + i + 0x3C);
 			if (lf < 0x400 && i + lf + 0x100 < size &&
