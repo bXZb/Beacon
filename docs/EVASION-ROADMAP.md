@@ -963,10 +963,20 @@ grep ERROR 而非只看 OUTPUT**）。可行形态=/O0 + 单外部函数（全�
 go）+ 静态数组字符串 + QWORD 立即数构造 + 不做结构体清扫（dwFlags=0
 门控即可）。bof_empty（单函数零数据）从第一天就符合纯属幸运。
 
-**P4-3/P4-5 设计定案（未实施）**：`EXECUTABLE_ARTIFACT_GENERATOR`
-cna 标量钩子（BaseArtifactUtils._patchArtifact 官方扩展点，ArtifactKit
-同款）——自定义 EXE = CI 构建 hostexe 模板（读自身文件、尾部找合法
-MZ、VirtualAlloc、导出表定位 ReflectiveLoader、call(flat)）+ 追加
-baked DLL + **每代随机 overlay（0-4KB 随机尾——PE 容忍尾部字节，
-loader 按节表拷贝不受影响）= mutator v1**。部署走 Public 路径（同
-BOF .o），无需动 jar。
+**P4-3/P4-5 完成（bcc86a1，2026-10-12）**：`EXECUTABLE_ARTIFACT_GENERATOR`
+标量钩子在 4.9 的 exe64 路径不触发（走 BeaconLoader 内部包装：模板
+洞@0x2620 + XorEncoder + 头字段@0xd8，硬耦合不值得逆向）——改为
+**cna 的 artifact 调用点自组装**：exe+x64 = CI 构建 hostexe 模板
+（3.5KB：GetModuleFileName 读自身→尾部 16 对齐网格向下扫合法 MZ→
+RWX flat→节表 RVA→raw 换算后走导出表定位 ReflectiveLoader→call(flat)）
++ 钩子落盘的原始 baked DLL + **每代 rand(4097) 随机尾 = mutator v1**。
+活测：INITIAL + bofwin window served 双绿（bid=1234305010，r1.log
+字节）；两代生成 md5/尺寸均不同（316497/315835B）。
+
+**模板三坑**（各吃一转储/一 die 码）：①扫描起点 `size-0x2000` 不
+16 对齐→网格踩不到载荷 MZ（die 码经 ExitThread 变进程退出码，直读
+即定位）；②导出表 RVA 当文件偏移用（flat 是 FILE 格式副本；loader
+能走是因为那时镜像已按自然 RVA 铺开）→节表换算；③工件 zip 里的
+模板不会被 update_src 解出，须手动解 udrl-x64.zip（部署链曾拿着
+旧模板白跑一轮——**部署后必须 md5 验新**）。cna 组装时 dll 工件
+类型本身也是模板包装的，原始 baked DLL 从 RDLL 钩子的落盘文件取。
