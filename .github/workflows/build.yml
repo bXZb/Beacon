@@ -61,6 +61,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "inject_bof build failed" }
           Get-Item tests\_build\inject_bof.x64.o | Select-Object Name,Length
 
+      # P3 admission matrix: args (dynamic dll$func imports, reads the args
+      # blob mid-window -> proves the pre-mask args copy), mixed (BeaconPrintf
+      # ftable import + dynamic -> must be classified beacon_api_used and run
+      # unmasked), hang (blocks 125s > the 120s watchdog -> real watchdog
+      # restore path, loser exit, session survival)
+      - name: Compile admission-matrix BOFs (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_build\bof_args.x64.o tests\bof_args.c
+          if ($LASTEXITCODE -ne 0) { throw "bof_args build failed" }
+          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_build\bof_mixed.x64.o tests\bof_mixed.c
+          if ($LASTEXITCODE -ne 0) { throw "bof_mixed build failed" }
+          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_build\bof_hang.x64.o tests\bof_hang.c
+          if ($LASTEXITCODE -ne 0) { throw "bof_hang build failed" }
+          Get-Item tests\_build\bof_args.x64.o, tests\_build\bof_mixed.x64.o, tests\_build\bof_hang.x64.o | Select-Object Name,Length
+
       - name: Report size
         shell: pwsh
         run: |
@@ -105,6 +122,9 @@ jobs:
             x64/Release/bofwin/beacon.x64.rl0k.map
             tests/_build/bof_empty.x64.o
             tests/_build/inject_bof.x64.o
+            tests/_build/bof_args.x64.o
+            tests/_build/bof_mixed.x64.o
+            tests/_build/bof_hang.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)

