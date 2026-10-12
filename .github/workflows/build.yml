@@ -132,7 +132,7 @@ jobs:
       - name: Link host EXE template
         shell: pwsh
         run: |
-          & cl /nologo /W3 /O1 /GS- /c /Fo:udrl\_build\hostexe.obj udrl\hostexe.c
+          & cl /nologo /W3 /O1 /GS- /MT /c /Fo:udrl\_build\hostexe.obj udrl\hostexe.c
           if ($LASTEXITCODE -ne 0) { throw "hostexe compile failed" }
           & link /nologo /SUBSYSTEM:WINDOWS /ENTRY:WinMainCRTStartup /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /OUT:udrl\_build\host_template_x64.exe udrl\_build\hostexe.obj kernel32.lib
           if ($LASTEXITCODE -ne 0) { throw "hostexe link failed" }
