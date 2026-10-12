@@ -24,7 +24,7 @@ static void bw_die(DWORD code)
 	ExitThread(code);
 }
 
-void WinMainCRTStartup(void)
+void bw_entry(void)
 {
 	char path[MAX_PATH + 8];
 	HANDLE f;
