@@ -1053,7 +1053,7 @@ void command_inline_execute_pe(char * pe, int pelen, char * entryName, int entry
 	BOOL ok = TRUE;
 #if defined _M_X64
 	BOOL fnTableAdded = FALSE;
-	void (WINAPI *pRtlAddFunctionTable)(void *, DWORD, UINT64) = NULL;
+	BOOL (WINAPI *pRtlAddFunctionTable)(void *, DWORD, UINT64) = NULL;
 	BOOL (WINAPI *pRtlDeleteFunctionTable)(void *) = NULL;
 #endif
 
