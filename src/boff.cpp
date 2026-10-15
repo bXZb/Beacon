@@ -1156,7 +1156,8 @@ void command_inline_execute_pe(char * pe, int pelen, char * entryName, int entry
 		goto cleanup;
 	}
 
-	if (nt->FileHeader.Characteristics & IMAGE_FILE_DLL) {
+	if ((nt->FileHeader.Characteristics & IMAGE_FILE_DLL)
+	    && nt->OptionalHeader.AddressOfEntryPoint != 0) {
 		BOOL (WINAPI * dllmain)(void *, DWORD, void *);
 		dllmain = (BOOL (WINAPI *)(void *, DWORD, void *))(base + nt->OptionalHeader.AddressOfEntryPoint);
 		if (dllmain != NULL)
