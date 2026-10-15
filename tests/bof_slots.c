@@ -105,8 +105,8 @@ EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$QueryPerformanceCounter(LARG
 EXTERN_C __declspec(dllimport) void * WINAPI advapi32$OpenSCManagerA(LPCSTR, LPCSTR, DWORD);
 EXTERN_C __declspec(dllimport) BOOL WINAPI advapi32$GetUserNameA(LPSTR, LPDWORD);
 EXTERN_C __declspec(dllimport) BOOL WINAPI advapi32$GetUserNameW(LPWSTR, LPDWORD);
-EXTERN_C __declspec(dllimport) BOOL WINAPI advapi32$GetComputerNameA(LPSTR, LPDWORD);
-EXTERN_C __declspec(dllimport) BOOL WINAPI advapi32$GetComputerNameW(LPWSTR, LPDWORD);
+EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$GetComputerNameA(LPSTR, LPDWORD);
+EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$GetComputerNameW(LPWSTR, LPDWORD);
 EXTERN_C __declspec(dllimport) BOOL WINAPI advapi32$CloseServiceHandle(void *);
 EXTERN_C __declspec(dllimport) int WINAPI user32$MessageBoxA(void *, LPCSTR, LPCSTR, UINT);
 EXTERN_C __declspec(dllimport) BOOL WINAPI user32$GetCursorPos(LPPOINT);
@@ -246,8 +246,8 @@ void go(char * args, int len)
 	if (G) advapi32$OpenSCManagerA(0, 0, 0);
 	if (G) advapi32$GetUserNameA(0, 0);
 	if (G) advapi32$GetUserNameW(0, 0);
-	if (G) advapi32$GetComputerNameA(0, 0);
-	if (G) advapi32$GetComputerNameW(0, 0);
+	if (G) kernel32$GetComputerNameA(0, 0);
+	if (G) kernel32$GetComputerNameW(0, 0);
 	if (G) advapi32$CloseServiceHandle(0);
 	if (G) user32$MessageBoxA(0, 0, 0, 0);
 	if (G) user32$GetCursorPos(0);
