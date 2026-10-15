@@ -34,6 +34,7 @@
     <ClCompile Include="src\callback.cpp" />
     <ClCompile Include="src\channel.cpp" />
     <ClCompile Include="src\channel_tcp.cpp" />
+    <ClCompile Include="src\channel_doh.c" />
     <ClCompile Include="src\commands.cpp" />
     <ClCompile Include="src\dnsb.cpp" />
     <ClCompile Include="src\elevate.cpp" />

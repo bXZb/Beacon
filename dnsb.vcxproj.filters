@@ -36,6 +36,9 @@
     <ClCompile Include="src\channel_tcp.cpp">
       <Filter>source</Filter>
     </ClCompile>
+    <ClCompile Include="src\channel_doh.c">
+      <Filter>source</Filter>
+    </ClCompile>
     <ClCompile Include="src\commands.cpp">
       <Filter>source</Filter>
     </ClCompile>

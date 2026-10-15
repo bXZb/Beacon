@@ -267,6 +267,9 @@ unsigned int channel_lookup_retry(char * domain, int retry) {
 	DNS_STATUS status;
 	PDNS_RECORD pDnsRecord;
 
+	if (doh_enabled())
+		return doh_lookup_a(domain);
+
 	channel_winsock_init();
 
 	/* introduce artificial latency between requests--if the user wants this? */
@@ -301,6 +304,14 @@ unsigned int channel_lookup_retry(char * domain, int retry) {
 BOOL channel_lookup(char * domain, unsigned int * result) {
 	DNS_STATUS status;
 	PDNS_RECORD pDnsRecord;
+
+	if (doh_enabled()) {
+		unsigned int answer = doh_lookup_a(domain);
+		if (answer == 0)
+			return FALSE;
+		*result = answer;
+		return TRUE;
+	}
 
 	/* init please */
 	channel_winsock_init();
@@ -390,6 +401,9 @@ int channel_lookup_retry_txt(char * domain, int retry, char * buffer, int max) {
 	int l;
 	int t = 0;
 
+	if (doh_enabled())
+		return doh_lookup_txt(domain, buffer, max);
+
 	/* more artificial latency */
 	dns_sleep();
 
@@ -444,6 +458,9 @@ int channel_lookup_retry6(char * domain, int retry, char * buffer) {
 
 	int x;
 	int t = 0;
+
+	if (doh_enabled())
+		return doh_lookup_aaaa(domain, buffer);
 
 	/* more artificial latency */
 	dns_sleep();

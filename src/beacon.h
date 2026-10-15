@@ -141,3 +141,10 @@ unsigned int bigger_rand();
 
 /* debugging! FTW */
 // void dlog(char * fmt, ...);
+
+/* DoH beacon (4.11 parity): dns-beacon comm_mode dns-over-https */
+#define SETTING_DOH_MODE       77
+#define SETTING_DOH_SERVER     78
+#define SETTING_DOH_VERB       79
+#define SETTING_DOH_USERAGENT  80
+#define SETTING_DOH_ACCEPT     81
