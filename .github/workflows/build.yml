@@ -78,8 +78,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "bof_hang build failed" }
           Get-Item tests\_build\bof_args.x64.o, tests\_build\bof_mixed.x64.o, tests\_build\bof_hang.x64.o | Select-Object Name,Length
 
-      - name: Report size
+      # 4.12-parity: 130 dynamic imports (address-of only) - the fixed
+      # other[64] loader died at import #65 (0x4e); the chunked slot table
+      # must load it. Live proof = bw_slots_probe.txt marker.
+      - name: Compile dynamic-import slots BOF (beacon only)
+        if: matrix.project == 'beacon'
         shell: pwsh
+        run: |
+          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_buildof_slots.x64.o testsof_slots.c
+          if ($LASTEXITCODE -ne 0) { throw "bof_slots build failed" }
+          Get-Item tests\_buildof_slots.x64.o | Select-Object Name,Length
+
+      - name: Report size        shell: pwsh
         run: |
           $dll = Get-Item "x64/Release/${{ matrix.project }}.x64.dll"
           "$($dll.Name) = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
@@ -125,6 +135,7 @@ jobs:
             tests/_build/bof_args.x64.o
             tests/_build/bof_mixed.x64.o
             tests/_build/bof_hang.x64.o
+            tests/_build/bof_slots.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)

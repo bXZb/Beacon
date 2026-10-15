@@ -38,7 +38,7 @@
 #define SYMBOL_XDATA         1029
 #define SYMBOL_PDATA         1030
 #define SYMBOL_BSS           1031
-#define BOF_DYNAMIC_SLOTS    64
+
 
 static void postmsgf(int type, char * fmt, ...) {
 	va_list va;
@@ -176,32 +176,87 @@ typedef struct {
 	size_t (*BeaconDataStoreMaxEntries)(void);
 	char * (*BeaconGetCustomUserData)(void);
 
-	/* our other pointers */
-	void * other[BOF_DYNAMIC_SLOTS];
+	/* our other pointers: 4.12 Dynamic Import. The named API fields above
+	 * keep their offsets (BOFs compile against beacon.h field names); this
+	 * tail now points at a BOF_SLOT_TABLE whose chunked slots have stable
+	 * addresses for the lifetime of the run, so import count is unlimited
+	 * (4.9: fixed other[64]; 4.10 official: 128). */
+	void * other;
 } BOFF_FUNCTIONS;
 
+/* chunked dynamic-import slot table: chunk addresses never move once
+ * allocated (relocations patch references to slot addresses), while the
+ * chunk-pointer array itself may realloc - nothing points into it. */
+#define BOF_SLOT_CHUNK 64
+
+typedef struct _BOF_SLOT_TABLE {
+	void *** chunks;
+	int       nchunks;
+	int       cap;
+	int       used;
+} BOF_SLOT_TABLE;
+
+void bof_free_slot_table(BOFF_FUNCTIONS * f) {
+	BOF_SLOT_TABLE * t = (BOF_SLOT_TABLE *)f->other;
+	int i;
+	if (t == NULL)
+		return;
+	for (i = 0; i < t->nchunks; i++)
+		free(t->chunks[i]);
+	if (t->chunks != NULL)
+		free(t->chunks);
+	free(t);
+	f->other = NULL;
+}
+
 void * function_slot(BOFF_FUNCTIONS * f, void * ptr) {
-	int x;
+	BOF_SLOT_TABLE * t;
+	int g;
 
-	/* try and find our pointer and return a pointer to it! */
-	for (x = 0; x < BOF_DYNAMIC_SLOTS; x++) {
-		if (f->other[x] == ptr)
-			return &(f->other[x]);
+	if (f->other == NULL) {
+		t = (BOF_SLOT_TABLE *)malloc(sizeof(BOF_SLOT_TABLE));
+		if (t == NULL)
+			return NULL;
+		memset(t, 0, sizeof(BOF_SLOT_TABLE));
+		f->other = (void *)t;
+	}
+	t = (BOF_SLOT_TABLE *)f->other;
+
+	/* already assigned? hand back the same slot (dedup by pointer) */
+	for (g = 0; g < t->used; g++) {
+		void ** chunk = t->chunks[g / BOF_SLOT_CHUNK];
+		if (chunk[g % BOF_SLOT_CHUNK] == ptr)
+			return &chunk[g % BOF_SLOT_CHUNK];
 	}
 
-	/* boo... OK, find a NULL pointer and return a pointer to that */
-	for (x = 0; x < BOF_DYNAMIC_SLOTS; x++) {
-		if (f->other[x] == NULL) {
-			f->other[x] = ptr;
-			return &(f->other[x]);
+	/* need a new chunk? */
+	if (t->used == t->nchunks * BOF_SLOT_CHUNK) {
+		void ** chunk = (void **)malloc(sizeof(void *) * BOF_SLOT_CHUNK);
+		void *** grown;
+		int newcap;
+		if (chunk == NULL)
+			return NULL;
+		memset(chunk, 0, sizeof(void *) * BOF_SLOT_CHUNK);
+		newcap = t->cap == 0 ? 4 : t->cap * 2;
+		if (t->nchunks == t->cap) {
+			grown = (void ***)realloc(t->chunks, sizeof(void **) * newcap);
+			if (grown == NULL) {
+				free(chunk);
+				return NULL;
+			}
+			t->chunks = grown;
+			t->cap = newcap;
 		}
+		t->chunks[t->nchunks++] = chunk;
 	}
 
-	return NULL;
+	g = t->used++;
+	t->chunks[g / BOF_SLOT_CHUNK][g % BOF_SLOT_CHUNK] = ptr;
+	return &t->chunks[g / BOF_SLOT_CHUNK][g % BOF_SLOT_CHUNK];
 }
 
 void setup_functions(BOFF_FUNCTIONS * f) {
-	/* clear all of these pointers, please */
+	/* clear all of these pointers, please (also NULLs f->other) */
 	memset(f, 0, sizeof(BOFF_FUNCTIONS));
 
 	/* setup some of our fixed APIs */
@@ -714,6 +769,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		DWORD oldw = 0;
 		VirtualProtect(base, total, PAGE_READWRITE, &oldw);
 	}
+	bof_free_slot_table(ftable);
 	memset(ftable, 0, sizeof(*ftable));
 	free(ftable);
 	return success;
