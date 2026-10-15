@@ -85,11 +85,12 @@ jobs:
         if: matrix.project == 'beacon'
         shell: pwsh
         run: |
-          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_buildof_slots.x64.o testsof_slots.c
+          & cl /nologo /W3 /O0 /GS- /Zl /c /Fo:tests\_build\bof_slots.x64.o tests\bof_slots.c
           if ($LASTEXITCODE -ne 0) { throw "bof_slots build failed" }
-          Get-Item tests\_buildof_slots.x64.o | Select-Object Name,Length
+          Get-Item tests\_build\bof_slots.x64.o | Select-Object Name,Length
 
-      - name: Report size        shell: pwsh
+      - name: Report size
+        shell: pwsh
         run: |
           $dll = Get-Item "x64/Release/${{ matrix.project }}.x64.dll"
           "$($dll.Name) = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
