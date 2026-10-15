@@ -92,6 +92,48 @@ static BOOL doh_init(void) {
 	return TRUE;
 }
 
+/* WinInet resolved dynamically: the winhttp build variant does not link
+ * wininet.lib, and LoadLibrary keeps us out of any import table. */
+static struct {
+	HMODULE mod;
+	HINTERNET (WINAPI *InternetOpenA)(LPCSTR, DWORD, LPCSTR, LPCSTR, DWORD);
+	HINTERNET (WINAPI *InternetConnectA)(HINTERNET, LPCSTR, INTERNET_PORT, LPCSTR, LPCSTR, DWORD, DWORD, DWORD_PTR);
+	HINTERNET (WINAPI *HttpOpenRequestA)(HINTERNET, LPCSTR, LPCSTR, LPCSTR, LPCSTR, LPCSTR *, DWORD, DWORD_PTR);
+	BOOL (WINAPI *HttpSendRequestA)(HINTERNET, LPCSTR, DWORD, LPVOID, DWORD);
+	BOOL (WINAPI *HttpQueryInfoA)(HINTERNET, DWORD, LPVOID, LPDWORD, LPDWORD);
+	BOOL (WINAPI *InternetReadFile)(HINTERNET, LPVOID, DWORD, LPDWORD);
+	BOOL (WINAPI *InternetSetOptionA)(HINTERNET, DWORD, LPVOID, DWORD);
+	BOOL (WINAPI *InternetCloseHandle)(HINTERNET);
+} WI;
+
+static BOOL doh_wininet(void) {
+	if (WI.mod != NULL)
+		return TRUE;
+	WI.mod = LoadLibraryA("wininet.dll");
+	if (WI.mod == NULL)
+		return FALSE;
+	WI.InternetOpenA = (HINTERNET (WINAPI *)(LPCSTR, DWORD, LPCSTR, LPCSTR, DWORD))
+		(void *)GetProcAddress(WI.mod, "InternetOpenA");
+	WI.InternetConnectA = (HINTERNET (WINAPI *)(HINTERNET, LPCSTR, INTERNET_PORT, LPCSTR, LPCSTR, DWORD, DWORD, DWORD_PTR))
+		(void *)GetProcAddress(WI.mod, "InternetConnectA");
+	WI.HttpOpenRequestA = (HINTERNET (WINAPI *)(HINTERNET, LPCSTR, LPCSTR, LPCSTR, LPCSTR, LPCSTR *, DWORD, DWORD_PTR))
+		(void *)GetProcAddress(WI.mod, "HttpOpenRequestA");
+	WI.HttpSendRequestA = (BOOL (WINAPI *)(HINTERNET, LPCSTR, DWORD, LPVOID, DWORD))
+		(void *)GetProcAddress(WI.mod, "HttpSendRequestA");
+	WI.HttpQueryInfoA = (BOOL (WINAPI *)(HINTERNET, DWORD, LPVOID, LPDWORD, LPDWORD))
+		(void *)GetProcAddress(WI.mod, "HttpQueryInfoA");
+	WI.InternetReadFile = (BOOL (WINAPI *)(HINTERNET, LPVOID, DWORD, LPDWORD))
+		(void *)GetProcAddress(WI.mod, "InternetReadFile");
+	WI.InternetSetOptionA = (BOOL (WINAPI *)(HINTERNET, DWORD, LPVOID, DWORD))
+		(void *)GetProcAddress(WI.mod, "InternetSetOptionA");
+	WI.InternetCloseHandle = (BOOL (WINAPI *)(HINTERNET))
+		(void *)GetProcAddress(WI.mod, "InternetCloseHandle");
+	return WI.InternetOpenA != NULL && WI.InternetConnectA != NULL
+		&& WI.HttpOpenRequestA != NULL && WI.HttpSendRequestA != NULL
+		&& WI.HttpQueryInfoA != NULL && WI.InternetReadFile != NULL
+		&& WI.InternetCloseHandle != NULL;
+}
+
 BOOL doh_enabled(void) {
 	if (setting_short(SETTING_DOH_MODE) == 0)
 		return FALSE;
@@ -173,6 +215,9 @@ static int doh_exchange(unsigned char * query, int qlen,
 	int rv = -1;
 	DWORD flags = 0;
 
+	if (!doh_wininet())
+		return -1;
+
 	if (strlen(verb) == 0)
 		verb = "POST";
 	if (strlen(ua) == 0)
@@ -187,40 +232,40 @@ static int doh_exchange(unsigned char * query, int qlen,
 	flags |= INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE
 	         | INTERNET_FLAG_NO_AUTO_REDIRECT;
 
-	session = InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+	session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
 	if (session == NULL)
 		goto done;
-	connect = InternetConnectA(session, doh_host, doh_port, NULL, NULL,
-	                           INTERNET_SERVICE_HTTP, 0, 0);
+	connect = WI.InternetConnectA(session, doh_host, doh_port, NULL, NULL,
+	                               INTERNET_SERVICE_HTTP, 0, 0);
 	if (connect == NULL)
 		goto done;
-	request = HttpOpenRequestA(connect, verb, doh_path, NULL, NULL,
-	                           acceptTypes, flags, 0);
+	request = WI.HttpOpenRequestA(connect, verb, doh_path, NULL, NULL,
+	                               acceptTypes, flags, 0);
 	if (request == NULL)
 		goto done;
-	InternetSetOptionA(request, INTERNET_OPTION_SECURITY_FLAGS,
-	                   &secFlags, sizeof(secFlags));
+	WI.InternetSetOptionA(request, INTERNET_OPTION_SECURITY_FLAGS,
+	                      &secFlags, sizeof(secFlags));
 
 	_snprintf(headers, sizeof(headers) - 1,
 	          "Content-Type: %s\r\nAccept: %s\r\n",
 	          accept, accept);
 
-	if (!HttpSendRequestA(request, headers, (DWORD)-1L, query, qlen))
+	if (!WI.HttpSendRequestA(request, headers, (DWORD)-1L, query, qlen))
 		goto done;
 
 	{
 		char code[8] = { 0 };
 		DWORD len = sizeof(code) - 1;
-		if (!HttpQueryInfoA(request,
-		              HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
-		              code, &len, NULL))
+		if (!WI.HttpQueryInfoA(request,
+		               HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
+		               code, &len, NULL))
 			goto done;
 		if (*(DWORD *)code != 200)
 			goto done;
 	}
 
 	while (total < rmax) {
-		if (!InternetReadFile(request, resp + total, rmax - total, &read))
+		if (!WI.InternetReadFile(request, resp + total, rmax - total, &read))
 			goto done;
 		if (read == 0)
 			break;
@@ -231,9 +276,9 @@ static int doh_exchange(unsigned char * query, int qlen,
 	rv = total;
 
 done:
-	if (request != NULL) InternetCloseHandle(request);
-	if (connect != NULL) InternetCloseHandle(connect);
-	if (session != NULL) InternetCloseHandle(session);
+	if (request != NULL) WI.InternetCloseHandle(request);
+	if (connect != NULL) WI.InternetCloseHandle(connect);
+	if (session != NULL) WI.InternetCloseHandle(session);
 	return rv;
 }
 
