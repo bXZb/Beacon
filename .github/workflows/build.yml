@@ -89,6 +89,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "bof_slots build failed" }
           Get-Item tests\_build\bof_slots.x64.o | Select-Object Name,Length
 
+      # 4.13-parity BOF-PE: real DLL mixing kernel32 imports with a virtual
+      # beacon.dll import (BeaconPrintf) - exercises the beacon-side PE
+      # loader's dual import resolution. Live proof = bw_bofpe_probe.txt.
+      - name: Compile BOF-PE test DLL (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          & lib /nologo /def:tests\bofpe_beacon.def /out:tests\_build\bofpe_beacon.lib /machine:x64
+          if ($LASTEXITCODE -ne 0) { throw "beacon.dll stub lib failed" }
+          & cl /nologo /W3 /O1 /GS- /Zl /LD tests\bofpe_test.c /Fe:tests\_build\bofpe_test.dll /Fo:tests\_build\ /link kernel32.lib tests\_build\bofpe_beacon.lib
+          if ($LASTEXITCODE -ne 0) { throw "bofpe_test build failed" }
+          Get-Item tests\_build\bofpe_test.dll | Select-Object Name,Length
+
       - name: Report size
         shell: pwsh
         run: |
@@ -137,6 +150,7 @@ jobs:
             tests/_build/bof_mixed.x64.o
             tests/_build/bof_hang.x64.o
             tests/_build/bof_slots.x64.o
+            tests/_build/bofpe_test.dll
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)

@@ -170,6 +170,7 @@ void command_webserver_local(char * buffer, int length);
 /* inline execute mechanism... *pHEAR* */
 void command_inline_execute(char * buffer, int length);
 void command_inline_execute_object(char * buffer, int length);
+void command_inline_execute_pe(char * pe, int pelen, char * entryName, int entryLen, char * args, int alen);
 void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellcode, DWORD slen, char * parameter, DWORD plen, char * description, DWORD dlen, BOOL x86, BOOL ignoreToken);
 
 /* generic mechanism for this */

