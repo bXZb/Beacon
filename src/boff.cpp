@@ -957,7 +957,12 @@ static BOOL bofpe_imports(BOFF_FUNCTIONS * f, char * base, SIZE_T image, IMAGE_N
 					}
 					byName = (IMAGE_IMPORT_BY_NAME *)(base + oft->u1.AddressOfData);
 					if (isBeacon) {
-						proc = bofpe_resolve_api(f, (char *)byName->Name);
+						/* the map gives the FIELD ADDRESS inside BOFF_FUNCTIONS;
+						 * a dllimport call dereferences the IAT exactly once,
+						 * so the slot must hold the function pointer itself
+						 * (COFF BOFs load through the field address instead) */
+						void * fieldAddr = bofpe_resolve_api(f, (char *)byName->Name);
+						proc = fieldAddr != NULL ? *(void **)fieldAddr : NULL;
 					}
 					else {
 						proc = (void *)f->GetProcAddress(mod, (char *)byName->Name);
