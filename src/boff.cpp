@@ -1132,8 +1132,8 @@ void command_inline_execute_pe(char * pe, int pelen, char * entryName, int entry
 		if (ex.VirtualAddress && ex.Size >= sizeof(RUNTIME_FUNCTION)) {
 			HMODULE ntdll = GetModuleHandleA("ntdll.dll");
 			if (ntdll != NULL) {
-				pRtlAddFunctionTable = (void (WINAPI *)(void *, DWORD, UINT64))
-					(void *)GetProcAddress(ntdll, "RtlAddFunctionTable");
+				pRtlAddFunctionTable = (BOOL (WINAPI *)(void *, DWORD, UINT64))
+					(BOOL (WINAPI *)(void *, DWORD, UINT64))GetProcAddress(ntdll, "RtlAddFunctionTable");
 				pRtlDeleteFunctionTable = (BOOL (WINAPI *)(void *))
 					(void *)GetProcAddress(ntdll, "RtlDeleteFunctionTable");
 			}
