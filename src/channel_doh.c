@@ -148,15 +148,18 @@ static int doh_build_query(const char * domain, unsigned short qtype,
 	const char * label = domain;
 	int n;
 
-	if (max < (int)(sizeof(short) * 6 + strlen(domain) + 2))
+	if (max < (int)(12 + strlen(domain) + 8))
 		return -1;
 
-	((unsigned short *)p)[0] = (unsigned short)(GetTickCount() & 0xFFFF); /* id */
-	((unsigned short *)p)[1] = 0x0100;   /* RD=1 */
-	((unsigned short *)p)[2] = 1;        /* QDCOUNT */
-	((unsigned short *)p)[3] = 0;
-	((unsigned short *)p)[4] = 0;
-	((unsigned short *)p)[5] = 0;
+	/* header - big-endian by byte (never through short stores: the host is
+	 * little-endian and the wire is not) */
+	p[0] = (unsigned char)((GetTickCount() >> 8) & 0xFF); /* id hi */
+	p[1] = (unsigned char)(GetTickCount() & 0xFF);        /* id lo */
+	p[2] = 0x01; p[3] = 0x00;   /* flags: RD=1 */
+	p[4] = 0x00; p[5] = 0x01;   /* QDCOUNT = 1 */
+	p[6] = 0x00; p[7] = 0x00;
+	p[8] = 0x00; p[9] = 0x00;
+	p[10] = 0x00; p[11] = 0x00;
 	p += 12;
 
 	/* QNAME labels */
@@ -172,9 +175,11 @@ static int doh_build_query(const char * domain, unsigned short qtype,
 	}
 	*p++ = 0;
 
-	((unsigned short *)p)[0] = qtype;
-	((unsigned short *)p)[1] = 1; /* IN */
-	p += 4;
+	/* QTYPE / QCLASS, big-endian by byte */
+	*p++ = (unsigned char)(qtype >> 8);
+	*p++ = (unsigned char)(qtype & 0xFF);
+	*p++ = 0x00;
+	*p++ = 0x01;
 	return (int)(p - out);
 }
 
