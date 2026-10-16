@@ -25,6 +25,10 @@
 /* kit markers - do not change */
 volatile const char gPipeName[] = "\\\\.\\pipe\\POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE";
 volatile char gPostexArgumentsBuffer[20] = "_POSTEX_ARGUMENTS_";
+/* 4.9-lineage sleeve-loader config marker (PostExLoader patches it with the
+ * magic/key/cleanup config; the stub scans for the patched magic before it
+ * runs the DllMain(1) + DllMain(4, param) sequence) */
+volatile char gLoaderConfig[24] = "ZZZZZZZXXXXWYYYY";
 /* 4.9-path argument blob (patched in place) */
 volatile char gPostexUserArgs[256] = "__POSTEX_USER_ARGS__";
 
