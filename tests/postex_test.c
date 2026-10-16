@@ -124,16 +124,12 @@ static void postex_main(char * args, int alen) {
 
 	outf("POSTEXOK arglen=%d\n", NULL, alen);
 
-	if (args != NULL && alen >= 12) {
-		/* bof_pack "iz": int32, then [int32 length][z-string] */
-		int zlen = 0;
+	if (args != NULL && alen >= 4) {
+		/* bof_pack "i": raw int32 (z-strings arrive beacon-encoded; the
+		 * official kit decodes them via BeaconDataExtract, our test DLL
+		 * only asserts the raw int) */
 		copy_bytes((char *)&ival, args, 4);
-		copy_bytes((char *)&zlen, args + 4, 4);
-		if (zlen > 0 && zlen < alen - 8) {
-			str = args + 8;
-			str[zlen] = 0;
-		}
-		outf("POSTEXARG int=%d str=%s\n", str, ival);
+		outf("POSTEXARG int=%d\n", NULL, ival);
 	}
 
 	/* wait ~25s for bjob_send_data to push something through the pipe */
