@@ -1,28 +1,32 @@
 /*
- * postex_test.c - 4.10 execute-dll parity test DLL (Postex Kit contract).
+ * postex_test.c - 4.10 execute-dll parity test DLL.
  *
- * Mirrors the official Postex Kit (arsenal-kit 20240716) template:
- *   - gPipeName: patched client-side (same marker string as the kit)
- *   - gPostexArgumentsBuffer: patched with POSTEX_ARGUMENTS
- *   - DllMain(DLL_POSTEX_ATTACH=4) starts the message-mode duplex pipe
- *     server, Beacon hands it arguments via lpReserved, output travels in
- *     the kit's big-endian chunk framing (see base/beacon.cpp of the kit).
+ * Dual contract so it works with BOTH loaders:
+ *   - 4.9 lineage postex loader (our sleeve): everything runs from
+ *     DllMain(PROCESS_ATTACH); user arguments arrive through the patched
+ *     gPostexUserArgs buffer (gPostexArgumentsBuffer carries the size).
+ *   - 4.10 Postex Kit loader: DllMain(DLL_POSTEX_ATTACH=4) with arguments
+ *     in lpReserved (the thread parameter), kit chunk framing.
+ *
+ * Markers (patched client-side):
+ *   "\\\\.\\pipe\\POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE"
+ *   "_POSTEX_ARGUMENTS_"        (POSTEX_ARGUMENTS struct)
+ *   "__POSTEX_USER_ARGS__"      (bof_pack blob, 4.9 path)
  *
  * Live proof markers:
- *   POSTEXOK arglen=<n> int=<i> str=<s>   (bof_pack iz arguments)
- *   JOBDATA <text>                        (bjob_send_data round trip)
- *   POSTEXDONE                            (clean exit)
+ *   POSTEXOK arglen=<n> int=<i> str=<s> / JOBDATA <text> / POSTEXDONE
  */
 #include <windows.h>
 
 #define DLL_POSTEX_ATTACH 4
 #define CALLBACK_OUTPUT   0
-#define CALLBACK_ERROR    0x1f
 #define MAX_PACKET_SIZE   (1024 * 1024)
 
 /* kit markers - do not change */
 volatile const char gPipeName[] = "\\\\.\\pipe\\POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE";
 volatile char gPostexArgumentsBuffer[20] = "_POSTEX_ARGUMENTS_";
+/* 4.9-path argument blob (patched in place) */
+volatile char gPostexUserArgs[256] = "__POSTEX_USER_ARGS__";
 
 typedef struct {
 	DWORD ExitFunc;
@@ -116,10 +120,15 @@ static void postex_main(char * args, int alen) {
 
 	outf("POSTEXOK arglen=%d\n", NULL, alen);
 
-	if (args != NULL && alen >= 4) {
-		/* bof_pack "iz": int32 then z-string */
+	if (args != NULL && alen >= 12) {
+		/* bof_pack "iz": int32, then [int32 length][z-string] */
+		int zlen = 0;
 		copy_bytes((char *)&ival, args, 4);
-		str = args + 4;
+		copy_bytes((char *)&zlen, args + 4, 4);
+		if (zlen > 0 && zlen < alen - 8) {
+			str = args + 8;
+			str[zlen] = 0;
+		}
 		outf("POSTEXARG int=%d str=%s\n", str, ival);
 	}
 
@@ -142,30 +151,42 @@ static void postex_main(char * args, int alen) {
 	out(CALLBACK_OUTPUT, "POSTEXDONE\n", 11);
 }
 
+static BOOL run_postex(char * args, int alen) {
+	gPipe = CreateNamedPipeA((LPCSTR)gPipeName, PIPE_ACCESS_DUPLEX,
+		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, 1,
+		MAX_PACKET_SIZE, MAX_PACKET_SIZE, 0, NULL);
+	if (gPipe == INVALID_HANDLE_VALUE) {
+		return FALSE;
+	}
+
+	if (!ConnectNamedPipe(gPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
+		CloseHandle(gPipe);
+		return FALSE;
+	}
+
+	postex_main(args, alen);
+
+	FlushFileBuffers(gPipe);
+	DisconnectNamedPipe(gPipe);
+	CloseHandle(gPipe);
+	return TRUE;
+}
+
 BOOL APIENTRY DllMain(HINSTANCE h, DWORD reason, LPVOID reserved) {
 	POSTEX_ARGUMENTS * pa;
 
 	if (reason == DLL_POSTEX_ATTACH) {
+		/* 4.10 kit loader: arguments ride lpReserved */
+		return run_postex((char *)reserved, ((POSTEX_ARGUMENTS *)gPostexArgumentsBuffer)->UserArgumentBufferSize);
+	}
+
+	if (reason == DLL_PROCESS_ATTACH) {
+		/* 4.9 lineage loader: arguments patched into gPostexUserArgs */
 		pa = (POSTEX_ARGUMENTS *)gPostexArgumentsBuffer;
-
-		gPipe = CreateNamedPipeA((LPCSTR)gPipeName, PIPE_ACCESS_DUPLEX,
-			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, 1,
-			MAX_PACKET_SIZE, MAX_PACKET_SIZE, 0, NULL);
-		if (gPipe == INVALID_HANDLE_VALUE) {
-			return FALSE;
+		if (pa->UserArgumentBufferSize > 0) {
+			return run_postex((char *)gPostexUserArgs, pa->UserArgumentBufferSize);
 		}
-
-		if (!ConnectNamedPipe(gPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
-			CloseHandle(gPipe);
-			return FALSE;
-		}
-
-		postex_main((char *)reserved, pa->UserArgumentBufferSize);
-
-		FlushFileBuffers(gPipe);
-		DisconnectNamedPipe(gPipe);
-		CloseHandle(gPipe);
-		return TRUE;
+		return run_postex(NULL, 0);
 	}
 
 	return TRUE;
