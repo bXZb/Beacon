@@ -252,20 +252,22 @@ int read_postex_message(HANDLE handle, char * buffer, int maxlength, int * type_
 		return read_all(handle, buffer, get);
 	}
 
-	/* kit chunk sanity: BE(len) counts type(4) + payload */
+	/* kit chunk: [int32 BE len][int32 BE flags][int32 BE type][payload]
+	 * where len = 4 + payload, so after the length prefix the message
+	 * still holds flags(4) + type(4) + payload = len + 4 bytes */
 	swap = ((get & 0xff) << 24) | ((get & 0xff00) << 8) | ((get >> 8) & 0xff00) | ((get >> 24) & 0xff);
-	if (swap > 8 && swap <= maxlength) {
+	if (swap > 8 && swap + 4 <= maxlength) {
 		char * chunk;
 		int    ctype;
 		int    payload;
 
-		chunk = (char *)malloc(swap);
+		chunk = (char *)malloc(swap + 4);
 		if (chunk == NULL) {
 			return -1;
 		}
 
 		/* read flags + type + payload in one go */
-		if (read_all(handle, chunk, swap) == -1) {
+		if (read_all(handle, chunk, swap + 4) == -1) {
 			free(chunk);
 			return -1;
 		}
@@ -273,7 +275,7 @@ int read_postex_message(HANDLE handle, char * buffer, int maxlength, int * type_
 		memcpy(&ctype, chunk + 4, 4);
 		ctype = ((ctype & 0xff) << 24) | ((ctype & 0xff00) << 8) | ((ctype >> 8) & 0xff00) | ((ctype >> 24) & 0xff);
 
-		payload = swap - 8;
+		payload = swap - 4;
 		if (payload > maxlength) {
 			payload = maxlength;
 		}
