@@ -30,6 +30,7 @@ void pipe_track(HANDLE read_stdout, DWORD pid, DWORD type, char * desc, short mo
 /* interal functions */
 void job_add(psh_entry * entry);
 int read_all_from_pipe(HANDLE handle, char * buffer, int maxlength);
+int read_postex_message(HANDLE handle, char * buffer, int maxlength, int * type_override);
 int read_blob_from_pipe(HANDLE handle, char * buffer, int maxlength);
 
 /* functions defined elsewhere */
