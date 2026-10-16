@@ -155,13 +155,31 @@ static void postex_main(char * args, int alen) {
 	out(CALLBACK_OUTPUT, "POSTEXDONE\n", 11);
 }
 
+static void debug_mark(const char * name, int value) {
+	HANDLE f = CreateFileA(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	char b[24];
+	int i = 0;
+	if (value >= 0) {
+		char num[12];
+		int n = 0;
+		int v = value;
+		if (v == 0) num[n++] = '0';
+		while (v > 0 && n < 11) { num[n++] = (char)('0' + (v % 10)); v /= 10; }
+		while (n && i < 20) b[i++] = num[--n];
+	}
+	b[i] = 0;
+	if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, b, i, &w, NULL); CloseHandle(f); }
+}
+
 static BOOL run_postex(char * args, int alen) {
 	gPipe = CreateNamedPipeA((LPCSTR)gPipeName, PIPE_ACCESS_DUPLEX,
 		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, 1,
 		MAX_PACKET_SIZE, MAX_PACKET_SIZE, 0, NULL);
 	if (gPipe == INVALID_HANDLE_VALUE) {
+		debug_mark("C:\Users\Public\postex_pipe_err.txt", (int)GetLastError());
 		return FALSE;
 	}
+	debug_mark("C:\Users\Public\postex_dllmain.txt", alen);
 
 	if (!ConnectNamedPipe(gPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
 		CloseHandle(gPipe);
