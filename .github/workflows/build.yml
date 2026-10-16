@@ -102,6 +102,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "bofpe_test build failed" }
           Get-Item tests\_build\bofpe_test.dll | Select-Object Name,Length
 
+      # tier-2 item5 (4.10 execute-dll parity): Postex Kit contract test DLL -
+      # message-mode duplex pipe + kit chunk framing + bjob_send_data input
+      - name: Compile postex test DLL (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          & cl /nologo /W3 /O1 /GS- /Zl /LD tests\postex_test.c /Fe:tests\_build\postex_test.x64.dll /Fo:tests\_build\ /link kernel32.lib /ENTRY:DllMain
+          if ($LASTEXITCODE -ne 0) { throw "postex_test build failed" }
+          Get-Item tests\_build\postex_test.x64.dll | Select-Object Name,Length
+
       - name: Report size
         shell: pwsh
         run: |
@@ -151,6 +161,7 @@ jobs:
             tests/_build/bof_hang.x64.o
             tests/_build/bof_slots.x64.o
             tests/_build/bofpe_test.dll
+            tests/_build/postex_test.x64.dll
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)

@@ -38,3 +38,10 @@ ci-artifacts/
 evasion-lab/tools/*.exe
 evasion-lab/results/pe-sieve-*/
 
+
+# rig leftovers - never commit
+jobs.json
+arts.json
+checks.json
+r1_inbox.txt
+_re/dec_tsi_beacons.py
