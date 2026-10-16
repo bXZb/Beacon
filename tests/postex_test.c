@@ -33,6 +33,14 @@ typedef struct {
 } POSTEX_ARGUMENTS;
 
 static HANDLE gPipe = INVALID_HANDLE_VALUE;
+static char gChunk[4112]; /* no CRT (__chkstk): keep big buffers off the stack */
+
+static void copy_bytes(char * dst, const char * src, unsigned int n) {
+	unsigned int i;
+	for (i = 0; i < n; i++) {
+		dst[i] = src[i];
+	}
+}
 
 static unsigned int swap32(unsigned int v) {
 	return ((v & 0xff) << 24) | ((v & 0xff00) << 8) | ((v >> 8) & 0xff00) | ((v >> 24) & 0xff);
@@ -41,20 +49,20 @@ static unsigned int swap32(unsigned int v) {
 /* kit BeaconOutput framing: one WriteFile message per chunk
  * { int32 BE len(=4+payload), int32 BE flags|chunkId, int32 BE type, payload } */
 static void out(int type, const char * data, int length) {
-	char         chunk[4096];
+	char       * chunk = gChunk;
 	unsigned int payload = length;
 	unsigned int flags   = 1 << 16; /* final chunk */
 	unsigned int len     = 4 + payload;
 
-	if (12 + payload > sizeof(chunk)) {
-		payload = (unsigned int)sizeof(chunk) - 12;
+	if (12 + payload > 4112 - 16) {
+		payload = 4112 - 16 - 12;
 		len = 4 + payload;
 	}
 
 	((unsigned int *)chunk)[0] = swap32(len);
 	((unsigned int *)chunk)[1] = swap32(flags);
 	((unsigned int *)chunk)[2] = swap32((unsigned int)type);
-	memcpy(chunk + 12, data, payload);
+	copy_bytes(chunk + 12, data, payload);
 
 	WriteFile(gPipe, chunk, 12 + payload, NULL, NULL);
 }
@@ -110,7 +118,7 @@ static void postex_main(char * args, int alen) {
 
 	if (args != NULL && alen >= 4) {
 		/* bof_pack "iz": int32 then z-string */
-		memcpy(&ival, args, 4);
+		copy_bytes((char *)&ival, args, 4);
 		str = args + 4;
 		outf("POSTEXARG int=%d str=%s\n", str, ival);
 	}
