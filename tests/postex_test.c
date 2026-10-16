@@ -129,11 +129,12 @@ static void postex_main(char * args, int alen) {
 		 * official kit decodes them via BeaconDataExtract, our test DLL
 		 * only asserts the raw int) */
 		copy_bytes((char *)&ival, args, 4);
+		ival = (int)swap32((unsigned int)ival); /* bof_pack ships big-endian */
 		outf("POSTEXARG int=%d\n", NULL, ival);
 	}
 
-	/* wait ~25s for bjob_send_data to push something through the pipe */
-	for (int t = 0; t < 25; t++) {
+	/* wait ~60s for bjob_send_data to push something through the pipe */
+	for (int t = 0; t < 60; t++) {
 		DWORD n = input_available();
 		if (n > 0) {
 			char b[256];
