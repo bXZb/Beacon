@@ -148,3 +148,5 @@ unsigned int bigger_rand();
 #define SETTING_DOH_VERB       79
 #define SETTING_DOH_USERAGENT  80
 #define SETTING_DOH_ACCEPT     81
+#define SETTING_PROCINJ_DRIP_SIZE   82 /* .process-inject.drip_size - 4.12 drip-loading, chunked remote writes */
+#define SETTING_PROCINJ_DRIP_DELAY  83 /* .process-inject.drip_delay ms between chunks */

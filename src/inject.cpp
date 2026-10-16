@@ -103,6 +103,13 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 					return TRUE;
 				break;
 
+			/* 4.11 ObfSetThreadContext: legitimately-started thread, payload via context */
+#if defined _M_X64
+			case PI_EXEC_OBFSETTHREADCONTEXT:
+				if (inject_via_obfsetthreadcontext(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+#endif
 			/* try NtQueueApcThread against a suspended process */
 			case PI_EXEC_NTQUEUEAPCTHREAD_S:
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))

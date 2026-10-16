@@ -55,6 +55,7 @@
     <ClCompile Include="src\inject_rtlcreateuserthread.cpp" />
     <ClCompile Include="src\inject_rtlcreateuserthread_wow64.cpp" />
     <ClCompile Include="src\inject_setthreadcontext.cpp" />
+    <ClCompile Include="src\inject_tier2.cpp" />
     <ClCompile Include="src\inject_smart.cpp" />
     <ClCompile Include="src\inlineexec.cpp" />
     <ClCompile Include="src\jobs.cpp" />
