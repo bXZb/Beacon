@@ -43,6 +43,7 @@ BOOL inject_via_apcthread(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID
 BOOL inject_via_apcthread_targeted(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 BOOL inject_via_resumethread(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 char * remote_mirror_data(INJECTCONTEXT * context, char * buffer, int length);
+void populate_inject_context(INJECTCONTEXT * context, PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid);
 /* tier-2 item7 techniques (inject_tier2.cpp) */
 BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 BOOL procinj_execute_has(BYTE opcode);

