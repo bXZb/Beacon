@@ -57,6 +57,10 @@ BOOL udc2_enabled(void) {
 	return udc2.info.proxy != NULL;
 }
 
+BOOL udc2_booted(void) {
+	return udc2.booted;
+}
+
 /* queue one encrypted output block (called from command_shell_post) */
 void udc2_queue(char * data, int length) {
 	if (udc2.pending_len + length > (int)sizeof(udc2.pending))
