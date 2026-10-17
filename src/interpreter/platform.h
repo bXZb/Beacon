@@ -18,9 +18,10 @@
 #ifdef UNIX_HOST
 # include <stdint.h>
 # include <unistd.h>
-#elif defined(WIN32) /*(predefined on MSVC)*/
-/* BEACON patch: modern MSVC ships stdint.h; expression.c shifts through
- * uint64_t and the original WIN32 branch (pre-2013 toolchains) skipped it */
+#elif defined(WIN32) || defined(_WIN64)
+/* BEACON patch: MSVC predefines WIN32 only for 32-bit targets - x64 needs
+ * _WIN64 too; stdint.h ships with modern MSVC (expression.c shifts through
+ * uint64_t and the original WIN32 branch skipped it) */
 # include <stdint.h>
 #else
 # error ***** A platform must be explicitly defined! *****

@@ -84,18 +84,14 @@ char *PlatformReadFile(Picoc *pc, const char *FileName)
     return NULL;
 }
 
-char *PlatformMakeTempName(Picoc *pc, char *TempNameBuffer)
-{
-    (void)pc;
-    TempNameBuffer[0] = '\0';
-    return TempNameBuffer;
-}
-
 void PlatformExit(Picoc *pc, int RetVal)
 {
     pc->PicocExitValue = RetVal;
     longjmp(pc->PicocExitBuf, 1);
 }
+
+/* note: PlatformMakeTempName is provided by picoc's own platform.c; the
+ * beacon has no temp files to make anyway */
 
 /* the beacon bridge provides the library surface (no library_msvc.c) */
 extern void bi_library_init(Picoc *pc);
