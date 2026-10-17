@@ -162,8 +162,10 @@ BOOL udc2_init(void) {
 		return FALSE;
 
 	/* run the BOF: go(UDC2_INFO*) fills in our function pointers */
-	if (!command_inline_execute_object_parsed(blob, len, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0))
+	if (!command_inline_execute_object_parsed(blob, len, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0)) {
+		post_error_dd(0x61, (DWORD)len, (DWORD)entry);
 		return FALSE;
+	}
 
 	return udc2.info.proxy != NULL;
 }
