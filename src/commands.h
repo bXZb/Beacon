@@ -50,6 +50,7 @@
 #define POST_HTTP             0x1
 #define POST_SMB              0x2
 #define POST_TCP              0x3
+#define POST_UDC2            0x4  /* 4.12 UDC2: cycles run through the user BOF's udc2Proxy */
 
 /* for file downloads */
 #define MAX_PACKET 524288
