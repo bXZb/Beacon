@@ -28,6 +28,8 @@ extern sessdata bigsession; /* metadata.cpp */
 
 /* boff.cpp: keep the loaded channel BOF executable - its proxy/close
  * callbacks run on every later cycle from the mapped block */
+#define chr_bs 92 /* backslash - file path separator in stack-built strings */
+
 extern void bof_set_pin(BOOL on);
 extern void bof_unpin(void);
 
@@ -68,7 +70,6 @@ void udc2_step_mark(int stage) {
 }
 
 #define UDC2_MAX_GET (1024 * 1024)
-#define chr_bs 92 /* backslash */
 
 typedef int(*UDC2PROXY)(const char *, int, char *, int);
 typedef void(*UDC2CLOSE)(void);
