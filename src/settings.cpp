@@ -44,7 +44,7 @@ unsigned int setting_length(int field) {
 /* 4.9.1 TeamServer writes exactly Settings.PATCH_SIZE bytes at AAAABBBB
  * (see BeaconPayload.java / Settings.java). The template allocation is larger
  * so 4.5's 4096-byte blob still fits. Checksum and XOR 0x2E cover this length. */
-#define SETTINGS_BLOB_SIZE 6144
+#define SETTINGS_BLOB_SIZE 8192
 #define GUARD_BLOB_SIZE    2048
 
 #define GUARD_USER             5
