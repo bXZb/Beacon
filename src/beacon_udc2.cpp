@@ -153,6 +153,11 @@ BOOL udc2_init(void) {
 	len = (int)setting_int(SETTING_UDC2_LENGTH);
 	entry = (int)setting_int(SETTING_UDC2_ENTRY);
 
+	/* DEBUG probe: 0x60 arg1=ptr? arg2=len arg3=entry - remove after the
+	 * live-chain bring-up. These land in the console as Unknown error 96
+	 * even when the channel itself never engages (HTTP fallback). */
+	post_error_dd(0x60, (DWORD)len, (DWORD)entry);
+
 	if (blob == NULL || len <= 0 || entry < 0)
 		return FALSE;
 
