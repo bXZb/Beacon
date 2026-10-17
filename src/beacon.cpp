@@ -2,6 +2,7 @@
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
+#include "spawn_trace.h"
 #include "beacon.h"
 #include "strategy.h"
 #include "link.h"
@@ -88,6 +89,20 @@ void beacon(LPVOID lpReserved) {
 	 * in RPCRT4 on its first checkin (see inject_tier2.cpp) */
 	{
 		extern void dv_nursery_init(void); /* self-gates on the profile */
+		/* one-shot diagnostics: the compiled execute chain (setting 51) */
+		{
+			char * ex = (char *)setting_ptr(SETTING_PROCINJ_EXECUTE);
+			if (ex != NULL) {
+				long v = 0;
+				int  i;
+				for (i = 0; i < 8 && ex[i] != 0; i++)
+					v = v * 10 + (ex[i] & 0xff);
+				spawn_log("boot: execute chain (bcd)=", v);
+			}
+			else {
+				spawn_log("boot: execute chain ABSENT", 0x7fffffff);
+			}
+		}
 		dv_nursery_init();
 	}
 
