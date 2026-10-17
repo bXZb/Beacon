@@ -25,6 +25,7 @@ typedef struct {
 
 EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAStartup(WORD, void *);
 EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSACleanup(void);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAGetLastError(void);
 
 EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateFileA(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, void *);
@@ -92,7 +93,7 @@ void go(UDC2INFO * info) {
 
 	/* stage 2 bisect: the FIRST winsock import */
 	if (ws2_32$WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-		mark(29);
+		mark(50000 + ws2_32$WSAGetLastError());
 		return;
 	}
 
