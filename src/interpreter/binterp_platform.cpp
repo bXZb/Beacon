@@ -93,6 +93,53 @@ void PlatformExit(Picoc *pc, int RetVal)
 /* note: PlatformMakeTempName is provided by picoc's own platform.c; the
  * beacon has no temp files to make anyway */
 
+/* print helpers that picoc's stdio.c normally provides (not vendored):
+ * everything funnels through PlatformPutc -> bi_putc_raw */
+void PrintCh(char OutCh, FILE *Stream)
+{
+    (void)Stream;
+    bi_putc_raw(OutCh);
+}
+
+void PrintStr(const char *Str, FILE *Stream)
+{
+    (void)Stream;
+    while (*Str != '\0') {
+        bi_putc_raw(*Str);
+        Str++;
+    }
+}
+
+void PrintSimpleInt(long Num, FILE *Stream)
+{
+    char Buf[24];
+    int N = _snprintf(Buf, sizeof(Buf), "%ld", Num);
+    int i;
+    (void)Stream;
+    for (i = 0; i < N; i++) {
+        bi_putc_raw(Buf[i]);
+    }
+}
+
+void PrintFP(double Num, FILE *Stream)
+{
+    char Buf[64];
+    int N = _snprintf(Buf, sizeof(Buf), "%f", Num);
+    int i;
+    (void)Stream;
+    for (i = 0; i < N; i++) {
+        bi_putc_raw(Buf[i]);
+    }
+}
+
+/* read and scan a file - unreachable in the beacon (PlatformReadFile always
+ * fails), kept for link completeness with picoc's include.c */
+void PicocPlatformScanFile(Picoc *pc, const char *FileName)
+{
+    char *SourceStr = PlatformReadFile(pc, FileName);
+    PicocParse(pc, FileName, SourceStr, (int)strlen(SourceStr), 1, 0, 1, 0);
+}
+
 /* the beacon bridge provides the library surface (no library_msvc.c) */
 extern void bi_library_init(Picoc *pc);
 void PlatformLibraryInit(Picoc *pc)

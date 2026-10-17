@@ -500,7 +500,8 @@ struct Picoc_Struct {
     const char *VersionString;
 
     /* exit longjump buffer */
-#if defined(UNIX_HOST) || defined(WIN32)
+#if defined(UNIX_HOST) || defined(WIN32) || defined(_WIN64)
+    /* BEACON patch: MSVC x64 targets do not predefine WIN32 */
     jmp_buf PicocExitBuf;
 #endif
 

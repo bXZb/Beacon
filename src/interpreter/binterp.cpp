@@ -336,7 +336,7 @@ static const char * bi_windows_defs =
 	"#define FALSE 0\n"
 	"#define MAX_PATH 260\n";
 
-void bi_library_init(Picoc * pc) {
+extern "C" void bi_library_init(Picoc * pc) {
 	IncludeRegister(pc, "beacon.h", NULL, &bi_beacon_funcs[0], bi_beacon_defs);
 	IncludeRegister(pc, "windows.h", NULL, NULL, bi_windows_defs);
 	IncludeRegister(pc, "internal.h", NULL, NULL,
@@ -473,6 +473,16 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 }
 
 #else /* !_M_X64 */
+
+/* the platform shim references these unconditionally; the x86 build has no
+ * VM so they are inert */
+void bi_putc_raw(char c) {
+	(void)c;
+}
+
+extern "C" void bi_library_init(Picoc * pc) {
+	(void)pc;
+}
 
 void command_interpreter(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
 	const char * msg = "[-] beacon-interpreter: this build is x86; the interpreter VM ships x64-only\n";
