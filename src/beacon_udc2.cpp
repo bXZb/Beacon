@@ -22,7 +22,6 @@
 #include "parse.h"
 #include "bformat.h"
 #include "security.h"
-#include "clientint.h"
 #include "datastore.h"
 
 extern sessdata bigsession; /* metadata.cpp */
