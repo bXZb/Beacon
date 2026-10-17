@@ -167,8 +167,13 @@ void go(UDC2INFO * info) {
 	if (info == NULL)
 		return;
 
-	/* measure the actual computed address of the .data scratch */
+	/* measure the actual computed address of the .data scratch, then stop */
 	markhex((unsigned long long)(void *)g_state);
+	return;
+	{
+		int dead = 0;
+		(void)dead;
+	}
 	if (ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)g_state) != 0) {
 		mark(60000 + ws2_32$WSAGetLastError());
 		return;
