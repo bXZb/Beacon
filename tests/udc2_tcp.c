@@ -23,6 +23,9 @@ typedef struct {
 	UDC2CLOSE close;
 } UDC2INFO;
 
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAStartup(WORD, void *);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSACleanup(void);
+
 EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateFileA(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, void *);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$CloseHandle(HANDLE);
@@ -80,13 +83,22 @@ static void stub_close(void) {
 }
 
 void go(UDC2INFO * info) {
+	static WSADATA wsa;
+
 	mark(1);
 
 	if (info == NULL)
 		return;
 
-	mark(2);
+	/* stage 2 bisect: the FIRST winsock import */
+	if (ws2_32$WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+		mark(29);
+		return;
+	}
+
+	mark(3);
 	info->proxy = stub_proxy;
 	info->close = stub_close;
+	ws2_32$WSACleanup();
 	mark(10);
 }
