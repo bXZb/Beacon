@@ -92,9 +92,12 @@ void go(UDC2INFO * info) {
 		return;
 
 	/* stage 2 bisect: the FIRST winsock import */
-	if (ws2_32$WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-		mark(50000 + ws2_32$WSAGetLastError());
-		return;
+	{
+		int rc = ws2_32$WSAStartup(MAKEWORD(2, 2), &wsa);
+		if (rc != 0) {
+			mark(60000 + rc);
+			return;
+		}
 	}
 
 	mark(3);
