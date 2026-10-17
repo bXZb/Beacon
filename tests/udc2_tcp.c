@@ -48,8 +48,7 @@ EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$WriteFile(HANDLE, LPCVOID, D
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$CloseHandle(HANDLE);
 
 /* .data (nonzero initializers), NOT .bss - see the header comment */
-static SOCKET g_sock = (SOCKET)0xFFFFFFFF;
-static int g_state[128] = { 1, 2, 3, 4 }; /* WSADATA lives here after WSAStartup */
+static SOCKET g_sock = INVALID_SOCKET;
 
 static void path_udc2_step(char * buf, int max) {
 	char parts[30];
