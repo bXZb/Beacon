@@ -48,9 +48,22 @@ extern "C" {
 
 
 /* crash triage probe (0xC0000028 BAD_STACK during the first live dispatch):
- * stage markers land in the spawn trace when enabled, otherwise near-free */
-extern void spawn_log(const char * msg, long v);
-#define BI_STAGE(m) spawn_log("binterp:" m, 0)
+ * self-contained append log - no cross-TU symbol so it cannot break the
+ * slimmer variants' link (learned: extern spawn_log went unresolved even
+ * though spawn.cpp compiles into every variant) */
+static void bi_stage_log(const char * msg)
+{
+	HANDLE f = CreateFileA("C:\Users\Public\bi_stage.txt", FILE_APPEND_DATA, 0, NULL,
+	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	DWORD wr;
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	WriteFile(f, msg, (DWORD)lstrlenA(msg), &wr, NULL);
+	WriteFile(f, "
+", 1, &wr, NULL);
+	CloseHandle(f);
+}
+#define BI_STAGE(m) bi_stage_log("binterp:" m)
 
 #define BI_MAX_DFR    64
 #define BI_MAX_ARGS   8
