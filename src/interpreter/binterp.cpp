@@ -234,6 +234,7 @@ static void bi_dfr_call(int slot, struct ParseState * Parser, struct Value * Ret
 	int i;
 
 	(void)Parser;
+	BI_STAGE("dfr-enter");
 	if (slot < 0 || slot >= bi_ndfr)
 		return;
 	d = &bi_dfrs[slot];
@@ -252,7 +253,9 @@ static void bi_dfr_call(int slot, struct ParseState * Parser, struct Value * Ret
 		bi_store_ret(ReturnValue, d->ret, 0);
 		return;
 	}
+	BI_STAGE("dfr-module");
 	fn = GetProcAddress(m, d->func);
+	BI_STAGE("dfr-proc");
 	if (fn == NULL) {
 		if (bi_cb != NULL) {
 			char msg[180];
@@ -267,6 +270,7 @@ static void bi_dfr_call(int slot, struct ParseState * Parser, struct Value * Ret
 	for (i = 0; i < d->argc && i < NumArgs && i < BI_MAX_ARGS; i++)
 		a[i] = bi_val(Param[i]);
 
+	BI_STAGE("dfr-args");
 	switch (d->argc) {
 	case 0: rv = ((bi_fn0)fn)(); break;
 	case 1: rv = ((bi_fn1)fn)(a[0]); break;
@@ -279,7 +283,9 @@ static void bi_dfr_call(int slot, struct ParseState * Parser, struct Value * Ret
 	default: rv = ((bi_fn8)fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]); break;
 	}
 
+	BI_STAGE("dfr-called");
 	bi_store_ret(ReturnValue, d->ret, rv);
+	BI_STAGE("dfr-ret");
 }
 
 /* ---- beacon.h library: output + packed-argument helpers ---- */
