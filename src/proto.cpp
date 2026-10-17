@@ -502,8 +502,7 @@ void process_payload(char * buffer, unsigned int length) {
 		}
 
 		/* process our message */
-		//dlog("Process Message: %d t: %d h:%d
-", h.size, h.type, sizeof(header));
+		//dlog("Process Message: %d t: %d h:%d (nl)", h.size, h.type, sizeof(header));
 		process_message(h.type, buffer + pos + sizeof(header), h.size);
 
 		/* on to the next message please */
