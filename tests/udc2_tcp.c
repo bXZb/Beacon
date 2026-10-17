@@ -63,6 +63,26 @@ static void path_udc2_step(char * buf, int max) {
 	buf[i] = 0;
 }
 
+static void markhex(unsigned long long v) {
+	char path[40];
+	HANDLE f;
+	char b[20];
+	int i;
+	int n;
+	DWORD w;
+	const char hex[16] = { '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f' };
+
+	path_udc2_step(path, 40);
+	f = kernel32$CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	for (i = 0; i < 16; i++)
+		b[i] = hex[(v >> ((15 - i) * 4)) & 0xF];
+	b[16] = 0;
+	kernel32$WriteFile(f, b, 16, &w, NULL);
+	kernel32$CloseHandle(f);
+}
+
 static void mark(int v) {
 	char path[40];
 	HANDLE f;
@@ -147,7 +167,8 @@ void go(UDC2INFO * info) {
 	if (info == NULL)
 		return;
 
-	/* WSADATA into the .data-backed scratch (bss relocs are broken) */
+	/* measure the actual computed address of the .data scratch */
+	markhex((unsigned long long)(void *)g_state);
 	if (ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)g_state) != 0) {
 		mark(60000 + ws2_32$WSAGetLastError());
 		return;
