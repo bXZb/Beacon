@@ -1,26 +1,18 @@
 /*
  * udc2_tcp.c - 4.12 UDC2 test BOF: a TCP channel over the udc2-vs contract.
  *
- * BOF-packaging rules learned the hard way (see docs/TIER2-BATTLE.md):
- *  - all imports as dll$func dynamic declarations (direct libc/winsock
- *    linking produces import thunks the packer never relocates -> call
- *    into garbage; crash offset 0x9 was exactly that)
- *  - /Gy- so MSVC keeps ONE .text (COMDAT .text$mn sections get dropped
- *    by the client packer: only the first same-named section is packed)
- *  - literal-free: string literals split .rdata across COMDATs and the
- *    dropped ones fault at first reference
+ * BOF-packaging rules learned during bring-up (docs/TIER2-BATTLE.md):
+ *  - all imports as dll$func dynamic declarations
+ *  - /O0 /Gy- /Gw-: no auto-vectorization (movdqa alignment), single
+ *    .text (COMDAT sections get dropped), no split string .rdata
+ *  - literal-free strings
  *
- * go(UDC2_INFO*) connects to the relay and fills udc2Proxy/udc2Close.
- * Each proxy round ships the complete [4B LE len][data] frame and reads
- * the response frame back verbatim (never strip the length - the #1 UDC2
- * failure mode per the template README).
+ * Bring-up bisect stage: go() marks steps and installs trivial
+ * proxy/close stubs (NO winsock yet). If the beacon boots through the
+ * config with markers 1 and 10, winsock gets layered back next.
  */
 #include <winsock2.h>
 #include <windows.h>
-
-#ifndef UDC2_PORT
-#define UDC2_PORT 3333
-#endif
 
 typedef int(*UDC2PROXY)(const char *, int, char *, int);
 typedef void(*UDC2CLOSE)(void);
@@ -31,22 +23,9 @@ typedef struct {
 	UDC2CLOSE close;
 } UDC2INFO;
 
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAStartup(WORD, void *);
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSACleanup(void);
-EXTERN_C __declspec(dllimport) SOCKET WINAPI ws2_32$socket(int, int, int);
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$connect(SOCKET, const struct sockaddr *, int);
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$closesocket(SOCKET);
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$send(SOCKET, const char *, int, int);
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$recv(SOCKET, char *, int, int);
-EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAGetLastError(void);
-EXTERN_C __declspec(dllimport) u_short WINAPI ws2_32$htons(u_short);
-
 EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateFileA(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, void *);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$CloseHandle(HANDLE);
-
-static SOCKET g_sock = INVALID_SOCKET;
-static WSADATA g_wsa;
 
 static void path_udc2_step(char * buf, int max) {
 	char parts[30];
@@ -89,89 +68,25 @@ static void mark(int v) {
 	kernel32$CloseHandle(f);
 }
 
-int udc2Proxy(const char * sendBuf, int sendBufLen, char * recvBuf, int recvBufMaxLen) {
-	int sent = 0;
-	int n;
-	unsigned int len;
-	int total;
-
-	if (g_sock == INVALID_SOCKET)
-		return -1;
-
-	while (sent < sendBufLen) {
-		n = ws2_32$send(g_sock, sendBuf + sent, sendBufLen - sent, 0);
-		if (n <= 0)
-			return -1;
-		sent += n;
-	}
-
-	total = 0;
-	while (total < 4) {
-		n = ws2_32$recv(g_sock, recvBuf + total, 4 - total, 0);
-		if (n <= 0)
-			return -1;
-		total += n;
-	}
-
-	len  = (unsigned char)recvBuf[0];
-	len |= (unsigned char)recvBuf[1] << 8;
-	len |= (unsigned char)recvBuf[2] << 16;
-	len |= (unsigned char)recvBuf[3] << 24;
-	if ((int)(4 + len) > recvBufMaxLen)
-		return -1;
-
-	while (total < 4 + (int)len) {
-		n = ws2_32$recv(g_sock, recvBuf + total, 4 + (int)len - total, 0);
-		if (n <= 0)
-			return -1;
-		total += n;
-	}
-
-	return total;
+/* stage stubs: proxy returns -1 (error) so the beacon falls back cleanly */
+static int stub_proxy(const char * a, int b, char * c, int d) {
+	(void)a; (void)b; (void)c; (void)d;
+	mark(20);
+	return -1;
 }
 
-void udc2Close(void) {
-	if (g_sock != INVALID_SOCKET) {
-		ws2_32$closesocket(g_sock);
-		g_sock = INVALID_SOCKET;
-	}
-	ws2_32$WSACleanup();
+static void stub_close(void) {
+	mark(21);
 }
 
 void go(UDC2INFO * info) {
-	struct sockaddr_in sa;
-
 	mark(1);
 
 	if (info == NULL)
 		return;
 
-	if (ws2_32$WSAStartup(MAKEWORD(2, 2), &g_wsa) != 0)
-		return;
-
-	mark(3);
-
-	g_sock = ws2_32$socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (g_sock == INVALID_SOCKET)
-		return;
-
-	sa.sin_family = AF_INET;
-	sa.sin_port = ws2_32$htons(UDC2_PORT);
-	/* loopback without the "127.0.0.1" literal */
-	sa.sin_addr.S_un.S_un_b.s_b1 = 127;
-	sa.sin_addr.S_un.S_un_b.s_b2 = 0;
-	sa.sin_addr.S_un.S_un_b.s_b3 = 0;
-	sa.sin_addr.S_un.S_un_b.s_b4 = 1;
-
-	if (ws2_32$connect(g_sock, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR) {
-		mark((int)ws2_32$WSAGetLastError());
-		ws2_32$closesocket(g_sock);
-		g_sock = INVALID_SOCKET;
-		return;
-	}
-
-	mark(9);
-	info->proxy = udc2Proxy;
-	info->close = udc2Close;
+	mark(2);
+	info->proxy = stub_proxy;
+	info->close = stub_close;
 	mark(10);
 }
