@@ -19,6 +19,9 @@
 # include <stdint.h>
 # include <unistd.h>
 #elif defined(WIN32) /*(predefined on MSVC)*/
+/* BEACON patch: modern MSVC ships stdint.h; expression.c shifts through
+ * uint64_t and the original WIN32 branch (pre-2013 toolchains) skipped it */
+# include <stdint.h>
 #else
 # error ***** A platform must be explicitly defined! *****
 #endif

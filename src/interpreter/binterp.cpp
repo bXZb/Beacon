@@ -267,7 +267,7 @@ static void bi_nBeaconPrint(struct ParseState * Parser, struct Value * ReturnVal
                             struct Value ** Param, int NumArgs) {
 	(void)Parser; (void)NumArgs;
 	if (bi_cb != NULL && Param[1] != NULL)
-		bi_cb(Param[1]->Val->Pointer,
+		bi_cb((char *)Param[1]->Val->Pointer,
 		      (int)strlen((char *)Param[1]->Val->Pointer),
 		      (int)bi_val(Param[0]));
 	ReturnValue->Val->Integer = 0;
