@@ -3,6 +3,13 @@
 
 #include "interpreter.h"
 
+#ifdef _MSC_VER
+/* BEACON patch: POSIX names MSVC's CRT does not ship */
+#define index(s, c)   strchr((s), (c))
+#define rindex(s, c)  strrchr((s), (c))
+#define strtok_r(save, del, ctx) strtok_s((save), (del), (ctx))
+#endif
+
 
 static int String_ZeroValue = 0;
 

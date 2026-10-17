@@ -3,6 +3,20 @@
 
 #include "interpreter.h"
 
+#ifdef _MSC_VER
+/* BEACON patch: POSIX time APIs MSVC's CRT does not ship (strptime is a
+ * stub - scripts that need it get NULL, matching "parse failed") */
+#include <stdlib.h>
+#define timegm(tm) _mkgmtime(tm)
+static struct tm *gmtime_r(const time_t *t, struct tm *out) {
+    return gmtime_s(out, t) == 0 ? out : NULL;
+}
+static char *strptime(const char *buf, const char *fmt, struct tm *tm) {
+    (void)buf; (void)fmt; (void)tm;
+    return NULL;
+}
+#endif
+
 
 static int CLOCKS_PER_SECValue = CLOCKS_PER_SEC;
 
