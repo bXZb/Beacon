@@ -102,9 +102,11 @@ static void hc_collect(const char * token, void * ctx) {
 
 static void hc_collect_uri(const char * token, void * ctx) {
 	hc_list * l = (hc_list *)ctx;
-	/* uris land at the index of the NEXT host slot (host i <-> uri i) */
-	int idx = l->n;
-	if (idx >= HC_MAX_HOSTS)
+	/* host i <-> uri i: the host list is collected first, so the next uri
+	 * fills the slot of the most recently collected host (live-fire showed
+	 * the uri landing one slot too far) */
+	int idx = l->n - 1;
+	if (idx < 0 || idx >= HC_MAX_HOSTS)
 		return;
 	strncpy(l->uris[idx], token, HC_URI_LEN - 1);
 	l->uris[idx][HC_URI_LEN - 1] = '\0';
