@@ -53,14 +53,15 @@ extern "C" {
  * though spawn.cpp compiles into every variant) */
 static void bi_stage_log(const char * msg)
 {
-	HANDLE f = CreateFileA("C:\Users\Public\bi_stage.txt", FILE_APPEND_DATA, 0, NULL,
+	HANDLE f = CreateFileA("C:\\Users\\Public\\bi_stage.txt", FILE_APPEND_DATA, 0, NULL,
 	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	DWORD wr;
+	char nl[1];
+	nl[0] = '\n';
 	if (f == INVALID_HANDLE_VALUE)
 		return;
 	WriteFile(f, msg, (DWORD)lstrlenA(msg), &wr, NULL);
-	WriteFile(f, "
-", 1, &wr, NULL);
+	WriteFile(f, nl, 1, &wr, NULL);
 	CloseHandle(f);
 }
 #define BI_STAGE(m) bi_stage_log("binterp:" m)
