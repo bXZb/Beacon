@@ -19,6 +19,8 @@
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */
 void command_inject_pid(char * buffer, int length, BOOL x86) {
+	spawn_log("inject_pid: entry len=", (long)length);
+
 	HANDLE hProcess = NULL;
 	DWORD  pid;
 	DWORD  offset;
