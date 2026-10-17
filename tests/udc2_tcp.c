@@ -194,11 +194,14 @@ void go(UDC2INFO * info) {
 
 	mark(3);
 
+	mark(31); /* before socket() */
 	g_sock = ws2_32$socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	mark(32); /* socket() returned */
 	if (g_sock == INVALID_SOCKET) {
 		mark(61000 + ws2_32$WSAGetLastError());
 		return;
 	}
+	mark(33); /* socket stored, handle valid */
 
 	sa.sin_family = AF_INET;
 	sa.sin_port = ws2_32$htons(UDC2_PORT);
