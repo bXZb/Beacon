@@ -1,15 +1,18 @@
 /*
  * udc2_tcp.c - 4.12 UDC2 test BOF: a TCP channel over the udc2-vs contract.
  *
- * LITERAL-FREE build: the client-side BOF packer (OBJExecutable) only
- * extracts the FIRST section of each name, and MSVC splits string literals
- * across multiple .rdata COMDATs - a literal in a dropped section faults at
- * first reference. Until the packer learns to merge same-named sections,
- * every string here is constructed in code on the stack.
+ * BOF-packaging rules learned the hard way (see docs/TIER2-BATTLE.md):
+ *  - all imports as dll$func dynamic declarations (direct libc/winsock
+ *    linking produces import thunks the packer never relocates -> call
+ *    into garbage; crash offset 0x9 was exactly that)
+ *  - /Gy- so MSVC keeps ONE .text (COMDAT .text$mn sections get dropped
+ *    by the client packer: only the first same-named section is packed)
+ *  - literal-free: string literals split .rdata across COMDATs and the
+ *    dropped ones fault at first reference
  *
  * go(UDC2_INFO*) connects to the relay and fills udc2Proxy/udc2Close.
- * Each proxy round ships the complete [4B LE len][data] frame and reads the
- * response frame back verbatim (never strip the length - the #1 UDC2
+ * Each proxy round ships the complete [4B LE len][data] frame and reads
+ * the response frame back verbatim (never strip the length - the #1 UDC2
  * failure mode per the template README).
  */
 #include <winsock2.h>
@@ -28,11 +31,24 @@ typedef struct {
 	UDC2CLOSE close;
 } UDC2INFO;
 
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAStartup(WORD, void *);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSACleanup(void);
+EXTERN_C __declspec(dllimport) SOCKET WINAPI ws2_32$socket(int, int, int);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$connect(SOCKET, const struct sockaddr *, int);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$closesocket(SOCKET);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$send(SOCKET, const char *, int, int);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$recv(SOCKET, char *, int, int);
+EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAGetLastError(void);
+EXTERN_C __declspec(dllimport) u_short WINAPI ws2_32$htons(u_short);
+
+EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateFileA(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
+EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, void *);
+EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$CloseHandle(HANDLE);
+
 static SOCKET g_sock = INVALID_SOCKET;
 static WSADATA g_wsa;
 
 static void path_udc2_step(char * buf, int max) {
-	/* C:\Users\Public\udc2_step.txt built without a string literal */
 	char parts[30];
 	int i;
 	parts[0]='C'; parts[1]=':'; parts[2]='\\'; parts[3]='U'; parts[4]='s';
@@ -57,7 +73,7 @@ static void mark(int v) {
 	DWORD w;
 
 	path_udc2_step(path, 40);
-	f = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	f = kernel32$CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (f == INVALID_HANDLE_VALUE)
 		return;
 	if (x == 0)
@@ -69,8 +85,8 @@ static void mark(int v) {
 	while (n && i < 14)
 		b[i++] = num[--n];
 	b[i] = 0;
-	WriteFile(f, b, i, &w, NULL);
-	CloseHandle(f);
+	kernel32$WriteFile(f, b, i, &w, NULL);
+	kernel32$CloseHandle(f);
 }
 
 int udc2Proxy(const char * sendBuf, int sendBufLen, char * recvBuf, int recvBufMaxLen) {
@@ -83,7 +99,7 @@ int udc2Proxy(const char * sendBuf, int sendBufLen, char * recvBuf, int recvBufM
 		return -1;
 
 	while (sent < sendBufLen) {
-		n = send(g_sock, sendBuf + sent, sendBufLen - sent, 0);
+		n = ws2_32$send(g_sock, sendBuf + sent, sendBufLen - sent, 0);
 		if (n <= 0)
 			return -1;
 		sent += n;
@@ -91,7 +107,7 @@ int udc2Proxy(const char * sendBuf, int sendBufLen, char * recvBuf, int recvBufM
 
 	total = 0;
 	while (total < 4) {
-		n = recv(g_sock, recvBuf + total, 4 - total, 0);
+		n = ws2_32$recv(g_sock, recvBuf + total, 4 - total, 0);
 		if (n <= 0)
 			return -1;
 		total += n;
@@ -105,7 +121,7 @@ int udc2Proxy(const char * sendBuf, int sendBufLen, char * recvBuf, int recvBufM
 		return -1;
 
 	while (total < 4 + (int)len) {
-		n = recv(g_sock, recvBuf + total, 4 + (int)len - total, 0);
+		n = ws2_32$recv(g_sock, recvBuf + total, 4 + (int)len - total, 0);
 		if (n <= 0)
 			return -1;
 		total += n;
@@ -116,10 +132,10 @@ int udc2Proxy(const char * sendBuf, int sendBufLen, char * recvBuf, int recvBufM
 
 void udc2Close(void) {
 	if (g_sock != INVALID_SOCKET) {
-		closesocket(g_sock);
+		ws2_32$closesocket(g_sock);
 		g_sock = INVALID_SOCKET;
 	}
-	WSACleanup();
+	ws2_32$WSACleanup();
 }
 
 void go(UDC2INFO * info) {
@@ -130,26 +146,26 @@ void go(UDC2INFO * info) {
 	if (info == NULL)
 		return;
 
-	if (WSAStartup(MAKEWORD(2, 2), &g_wsa) != 0)
+	if (ws2_32$WSAStartup(MAKEWORD(2, 2), &g_wsa) != 0)
 		return;
 
 	mark(3);
 
-	g_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	g_sock = ws2_32$socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (g_sock == INVALID_SOCKET)
 		return;
 
 	sa.sin_family = AF_INET;
-	sa.sin_port = htons(UDC2_PORT);
+	sa.sin_port = ws2_32$htons(UDC2_PORT);
 	/* loopback without the "127.0.0.1" literal */
 	sa.sin_addr.S_un.S_un_b.s_b1 = 127;
 	sa.sin_addr.S_un.S_un_b.s_b2 = 0;
 	sa.sin_addr.S_un.S_un_b.s_b3 = 0;
 	sa.sin_addr.S_un.S_un_b.s_b4 = 1;
 
-	if (connect(g_sock, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR) {
-		mark((int)WSAGetLastError());
-		closesocket(g_sock);
+	if (ws2_32$connect(g_sock, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR) {
+		mark((int)ws2_32$WSAGetLastError());
+		ws2_32$closesocket(g_sock);
 		g_sock = INVALID_SOCKET;
 		return;
 	}
