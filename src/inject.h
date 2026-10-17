@@ -47,6 +47,7 @@ void populate_inject_context(INJECTCONTEXT * context, PROCESS_INFORMATION * pi, 
 /* tier-2 item7 techniques (inject_tier2.cpp) */
 BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 void dv_nursery_init(void);
+BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parameter, int plen);
 BOOL procinj_execute_has(BYTE opcode);
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen);
 BOOL finalize_memory_permissions(char * ptr, SIZE_T length);

