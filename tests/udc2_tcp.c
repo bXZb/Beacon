@@ -41,6 +41,8 @@ EXTERN_C __declspec(dllimport) int WINAPI ws2_32$recv(SOCKET, char *, int, int);
 EXTERN_C __declspec(dllimport) int WINAPI ws2_32$WSAGetLastError(void);
 EXTERN_C __declspec(dllimport) u_short WINAPI ws2_32$htons(u_short);
 
+EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$LoadLibraryA(LPCSTR);
+EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$GetModuleHandleA(LPCSTR);
 EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateFileA(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, void *);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$CloseHandle(HANDLE);
@@ -160,17 +162,25 @@ void udc2Close(void) {
 }
 
 void go(UDC2INFO * info) {
+	char ws[8];
+	HANDLE m;
+	int i;
+
+	ws[0]='w'; ws[1]='s'; ws[2]='2'; ws[3]='_'; ws[4]='3'; ws[5]='2'; ws[6]=0;
+
 	mark(1);
 
 	if (info == NULL)
 		return;
 
-	{
-		int rc = ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)g_state);
-		mark(70000 + (rc & 0xFF));
+	m = kernel32$GetModuleHandleA(ws);
+	mark(20 + (m != NULL ? 1 : 0));
+
+	if (m == NULL) {
+		m = kernel32$LoadLibraryA(ws);
+		mark(30 + (m != NULL ? 1 : 0));
 	}
 
-	markhex((unsigned long long)(void *)g_state);
 	mark(3);
 	info->proxy = udc2Proxy;
 	info->close = udc2Close;
