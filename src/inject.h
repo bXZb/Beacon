@@ -21,7 +21,7 @@ char * local_mirror_data(char * buffer, int length);
 #define PI_EXEC_NTQUEUEAPCTHREAD_S    0x8
 /* tier-2 item7 (4.11/4.12): */
 #define PI_EXEC_OBFSETTHREADCONTEXT  0x9  /* legit start addr + context RIP (x64->x64, running targets) */
-#define PI_EXEC_DIRTYVANITY          0xA  /* fork&run via RtlCloneUserProcess (spawn sites) */
+#define PI_EXEC_DIRTYVANITY          0xA  /* fork&run via RtlCreateProcessReflection */
 
 #define INJECT_ARCH_X86 0
 #define INJECT_ARCH_X64 1
@@ -46,6 +46,7 @@ char * remote_mirror_data(INJECTCONTEXT * context, char * buffer, int length);
 void populate_inject_context(INJECTCONTEXT * context, PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid);
 /* tier-2 item7 techniques (inject_tier2.cpp) */
 BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
+BOOL inject_via_dirtyvanity_reflect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 BOOL procinj_execute_has(BYTE opcode);
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen);
 BOOL finalize_memory_permissions(char * ptr, SIZE_T length);

