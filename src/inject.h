@@ -46,7 +46,7 @@ char * remote_mirror_data(INJECTCONTEXT * context, char * buffer, int length);
 void populate_inject_context(INJECTCONTEXT * context, PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid);
 /* tier-2 item7 techniques (inject_tier2.cpp) */
 BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
-BOOL inject_via_dirtyvanity_reflect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
+void dv_nursery_init(void);
 BOOL procinj_execute_has(BYTE opcode);
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen);
 BOOL finalize_memory_permissions(char * ptr, SIZE_T length);

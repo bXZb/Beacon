@@ -5,6 +5,7 @@
 #include "link.h"
 #include "build.h"
 #include "parse.h"
+#include "spawn_trace.h"
 #include "bformat.h"
 #include "datastore.h"
 
@@ -501,7 +502,7 @@ void process_payload(char * buffer, unsigned int length) {
 		}
 
 		/* process our message */
-		//dlog("Process Message: %d t: %d h:%d\n", h.size, h.type, sizeof(header));
+		spawn_log("payload: dispatch cmd=", (long)h.type);
 		process_message(h.type, buffer + pos + sizeof(header), h.size);
 
 		/* on to the next message please */
