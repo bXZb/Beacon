@@ -114,6 +114,12 @@ void spawn_populate(BOOL x86, char * cmdbuff);
 /* download related commands */
 void command_download(char * buffer, int length, void (*cb)(char * buffer, int length, int type));
 void command_download_stop(char * buffer, int length);
+/* 4.12 BeaconDownload BOF API: stream an in-memory buffer through the
+ * native download channel (tier-3 item 9) */
+BOOL beacon_download_buffer(const char * filename, const char * buffer, unsigned int length);
+
+/* tier-3 item11 (4.12 beacon_info): in-memory layout self-report */
+void command_beacon_info(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 
 /* token related commands */
 void command_getuid(char * buffer, int length, void (*callback)(char * buffer, int length, int type));

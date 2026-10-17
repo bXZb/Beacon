@@ -176,6 +176,10 @@ typedef struct {
 	void   (*BeaconDataStoreUnprotectItem)(size_t index);
 	size_t (*BeaconDataStoreMaxEntries)(void);
 	char * (*BeaconGetCustomUserData)(void);
+	/* 4.12 BeaconDownload: stream an in-memory buffer through Beacon's
+	 * native download channel (tier-3 item 9). Beacon copies the buffer;
+	 * official cap 2GB. */
+	BOOL   (*BeaconDownload)(const char * filename, const char * buffer, unsigned int length);
 
 	/* our other pointers: 4.12 Dynamic Import. The named API fields above
 	 * keep their offsets (BOFs compile against beacon.h field names); this
@@ -313,6 +317,7 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 	f->BeaconDataStoreProtectItem   = BeaconDataStoreProtectItem;
 	f->BeaconDataStoreUnprotectItem = BeaconDataStoreUnprotectItem;
 	f->BeaconDataStoreMaxEntries    = BeaconDataStoreMaxEntries;
+	f->BeaconDownload               = beacon_download_buffer;
 	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
@@ -1008,6 +1013,7 @@ static const BOFPE_API_MAP bofpe_apis[] = {
 	{ "BeaconDataStoreUnprotectItem",   offsetof(BOFF_FUNCTIONS, BeaconDataStoreUnprotectItem) },
 	{ "BeaconDataStoreMaxEntries",      offsetof(BOFF_FUNCTIONS, BeaconDataStoreMaxEntries) },
 	{ "BeaconGetCustomUserData",        offsetof(BOFF_FUNCTIONS, BeaconGetCustomUserData) },
+	{ "BeaconDownload",                 offsetof(BOFF_FUNCTIONS, BeaconDownload) },
 };
 
 static void * bofpe_resolve_api(BOFF_FUNCTIONS * f, const char * name) {

