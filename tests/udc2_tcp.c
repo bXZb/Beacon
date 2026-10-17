@@ -160,48 +160,18 @@ void udc2Close(void) {
 }
 
 void go(UDC2INFO * info) {
-	struct sockaddr_in sa;
-
 	mark(1);
 
 	if (info == NULL)
 		return;
 
-	/* measure the actual computed address of the .data scratch, then stop */
-	markhex((unsigned long long)(void *)g_state);
-	return;
 	{
-		int dead = 0;
-		(void)dead;
-	}
-	if (ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)g_state) != 0) {
-		mark(60000 + ws2_32$WSAGetLastError());
-		return;
+		int rc = ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)g_state);
+		mark(70000 + (rc & 0xFF));
 	}
 
+	markhex((unsigned long long)(void *)g_state);
 	mark(3);
-
-	g_sock = ws2_32$socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (g_sock == INVALID_SOCKET) {
-		mark(61000 + ws2_32$WSAGetLastError());
-		return;
-	}
-
-	sa.sin_family = AF_INET;
-	sa.sin_port = ws2_32$htons(UDC2_PORT);
-	sa.sin_addr.S_un.S_un_b.s_b1 = 127;
-	sa.sin_addr.S_un.S_un_b.s_b2 = 0;
-	sa.sin_addr.S_un.S_un_b.s_b3 = 0;
-	sa.sin_addr.S_un.S_un_b.s_b4 = 1;
-
-	if (ws2_32$connect(g_sock, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR) {
-		mark(62000 + ws2_32$WSAGetLastError());
-		ws2_32$closesocket(g_sock);
-		g_sock = INVALID_SOCKET;
-		return;
-	}
-
-	mark(9);
 	info->proxy = udc2Proxy;
 	info->close = udc2Close;
 	mark(10);
