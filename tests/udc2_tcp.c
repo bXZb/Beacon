@@ -184,9 +184,13 @@ void go(UDC2INFO * info) {
 		mark(30 + (m != NULL ? 1 : 0));
 	}
 
-	if (ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)g_state) != 0) {
-		mark(60000 + ws2_32$WSAGetLastError());
-		return;
+	{
+		char wsa[440]; /* stack: the mapped BOF .data gave WSAEFAULT */
+		int rc = ws2_32$WSAStartup(MAKEWORD(2, 2), (void *)wsa);
+		if (rc != 0) {
+			mark(60000 + rc);
+			return;
+		}
 	}
 
 	mark(3);
