@@ -117,7 +117,7 @@ jobs:
         if: matrix.project == 'beacon'
         shell: pwsh
         run: |
-          & cl /nologo /W3 /O1 /GS- /Zl /Gy- /c /Fo:tests\_build\udc2_tcp.x64.o tests\udc2_tcp.c /I tests
+          & cl /nologo /W3 /O1 /GS- /Zl /Gy- /Gw- /c /Fo:tests\_build\udc2_tcp.x64.o tests\udc2_tcp.c /I tests
           if ($LASTEXITCODE -ne 0) { throw "udc2_tcp build failed" }
           Get-Item tests\_build\udc2_tcp.x64.o | Select-Object Name,Length
 
