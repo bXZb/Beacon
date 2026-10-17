@@ -199,5 +199,9 @@ BOOL udc2_init(void) {
 	}
 	bof_set_pin(FALSE);
 
-	return udc2.info.proxy != NULL;
+	/* loaded once per beacon lifetime: the pin claim frees the previous
+	 * block on a retry, so a second load would dangle the callbacks that
+	 * are already installed and running */
+	udc2.booted = TRUE;
+	return udc2_enabled();
 }
