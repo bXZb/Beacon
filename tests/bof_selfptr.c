@@ -5,6 +5,9 @@
 #include <windows.h>
 #include "beacon.h"
 
+#define CALLBACK_OUTPUT 0x00
+void go(char * args, int alen);
+
 static int forty_two(void) {
 	return 42;
 }
