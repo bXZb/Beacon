@@ -156,9 +156,16 @@ unsigned int bigger_rand();
 #define SETTING_UDC2_LENGTH    88
 #define SETTING_UDC2_ENTRY     89
 
-/* 4.12 UDC2 (beacon_udc2.cpp) */
-BOOL udc2_enabled(void);
-BOOL udc2_init(void);
+/* 4.12 UDC2 (beacon_udc2.cpp) - beacon.h is included before windows.h
+ * in some translation units, so spell the return types out */
+#ifdef __cplusplus
+extern "C" {
+#endif
+int  udc2_enabled(void);
+int  udc2_init(void);
 int  udc2_cycle(char * recv, int max);
 void udc2_close(void);
 void udc2_queue(char * data, int length);
+#ifdef __cplusplus
+}
+#endif

@@ -21,6 +21,12 @@
 #include "commands.h"
 #include "parse.h"
 #include "bformat.h"
+#include "security.h"
+#include "clientint.h"
+#include "datastore.h"
+
+extern sessdata bigsession; /* metadata.cpp */
+#define UDC2_MAX_GET (1024 * 1024)
 
 typedef int(*UDC2PROXY)(const char *, int, char *, int);
 typedef void(*UDC2CLOSE)(void);
@@ -108,11 +114,11 @@ int udc2_cycle(char * recv, int max) {
 	}
 
 	if (udc2.pending_len > 0) {
-		char block[MAX_GET];
+		static char block[UDC2_MAX_GET];
 		int  take = udc2.pending_len;
 
-		if (take > MAX_GET)
-			take = MAX_GET;
+		if (take > UDC2_MAX_GET)
+			take = UDC2_MAX_GET;
 		memcpy(block, udc2.pending, take);
 		memmove(udc2.pending, udc2.pending + take, udc2.pending_len - take);
 		udc2.pending_len -= take;
