@@ -103,12 +103,20 @@ static void ps_getintegrity(HANDLE hProcess, char * buffer, DWORD length) {
 }
 
 /* ProcessCommandLineInformation (99): returns a UNICODE_STRING whose Buffer
- * lives in the target address space, so read it back through the handle */
+ * lives in the target address space, so read it back through the handle.
+ * Local struct spelling: winnt.h's UNICODE_STRING is not consistently
+ * visible across our include set. */
+typedef struct _PS_CMDLINE_US {
+	USHORT Length;
+	USHORT MaximumLength;
+	PWSTR  Buffer;
+} PS_CMDLINE_US;
+
 static void ps_getcmdline(HANDLE hProcess, char * buffer, DWORD length) {
 	typedef LONG (WINAPI *NQIP)(HANDLE, int, PVOID, ULONG, PULONG);
 	static NQIP pQIP = NULL;
-	UNICODE_STRING us;
-	ULONG got = 0;
+	PS_CMDLINE_US us;
+	SIZE_T got = 0;
 	wchar_t * wide = NULL;
 	int i;
 
@@ -120,7 +128,7 @@ static void ps_getcmdline(HANDLE hProcess, char * buffer, DWORD length) {
 	}
 
 	memset(&us, 0, sizeof(us));
-	if (pQIP(hProcess, 99, &us, sizeof(us), &got) != 0 || us.Buffer == NULL || us.Length == 0)
+	if (pQIP(hProcess, 99, &us, sizeof(us), NULL) != 0 || us.Buffer == NULL || us.Length == 0)
 		return;
 	if (us.Length > 32766)
 		us.Length = 32766;
@@ -128,7 +136,7 @@ static void ps_getcmdline(HANDLE hProcess, char * buffer, DWORD length) {
 	wide = (wchar_t *)malloc(us.Length + 2);
 	if (wide == NULL)
 		return;
-	if (!ReadProcessMemory(hProcess, us.Buffer, wide, us.Length, &got) || got == 0) {
+	if (!beacon_ReadProcessMemory(hProcess, us.Buffer, wide, us.Length, &got) || got == 0) {
 		free(wide);
 		return;
 	}

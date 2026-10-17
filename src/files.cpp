@@ -359,7 +359,7 @@ BOOL beacon_download_buffer(const char * filename, const char * buffer, unsigned
 	bformat_init(&builder, 256 + fnlen);
 	bformat_int(&builder, entry->id);
 	bformat_int(&builder, length);
-	bformat_copy(&builder, filename, fnlen);
+	bformat_copy(&builder, (char *)filename, fnlen);
 
 	out = bformat_string(&builder);
 	outlen = bformat_length(&builder);

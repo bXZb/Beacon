@@ -73,6 +73,76 @@
     <ClCompile Include="src\inject_tier2.cpp" />
     <ClCompile Include="src\beacon_udc2.cpp" />
     <ClCompile Include="src\hostcfg.cpp" />
+    <ClCompile Include="src\interpreter\expression.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\heap.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\include.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\lex.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\parse.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\table.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\type.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\variable.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\clibrary.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\platform.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_ctype.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_errno.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_math.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_stdbool.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_stdlib.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_string.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\cstdlib_time.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <PreprocessorDefinitions>BI_NO_STDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="src\interpreter\binterp.cpp" />
+    <ClCompile Include="src\interpreter\binterp_platform.cpp" />
     <ClCompile Include="src\beacon_info.cpp" />
     <ClCompile Include="src\inject_smart.cpp" />
     <ClCompile Include="src\jobs.cpp" />

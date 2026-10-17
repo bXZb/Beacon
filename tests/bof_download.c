@@ -27,9 +27,12 @@ void go(char * args, int alen)
 	BOOL ok;
 	char hex[16] = "0123456789abcdef";
 
-	/* optional packed int arg: the pattern seed (LE 4-byte prefix) */
-	if (args != NULL && alen >= 4) {
-		seed = *(int *)args;
+	/* optional packed arg: the pattern seed as a decimal ASCII string
+	 * (the harness ships raw console text, so parse digits manually) */
+	if (args != NULL && alen >= 1) {
+		char * p;
+		for (p = args; *p >= '0' && *p <= '9'; p++)
+			seed = seed * 10 + (*p - '0');
 	}
 
 	buf = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, DL_SIZE);

