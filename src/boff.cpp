@@ -512,6 +512,7 @@ static int    bof_cached_how;
 static char * bof_pinned = NULL;
 static SIZE_T bof_pinned_size;
 static int    bof_pinned_how;
+static BOFF_FUNCTIONS * bof_pinned_ftable = NULL;
 static BOOL   bof_load_pin = FALSE;
 
 void bof_set_pin(BOOL on) {
@@ -522,6 +523,11 @@ void bof_unpin(void) {
 	if (bof_pinned == NULL)
 		return;
 	bof_free(bof_pinned, bof_pinned_how);
+	if (bof_pinned_ftable != NULL) {
+		bof_free_slot_table(bof_pinned_ftable);
+		free(bof_pinned_ftable);
+		bof_pinned_ftable = NULL;
+	}
 	bof_pinned = NULL;
 	bof_pinned_size = 0;
 }
@@ -789,6 +795,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			bof_pinned = base;
 			bof_pinned_size = total;
 			bof_pinned_how = how;
+			bof_pinned_ftable = ftable; /* freed together in bof_unpin() */
 			if (bof_cached == base) {
 				bof_cached = NULL;
 				bof_cached_size = 0;
@@ -916,9 +923,20 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		DWORD oldw = 0;
 		VirtualProtect(base, total, PAGE_READWRITE, &oldw);
 	}
-	bof_free_slot_table(ftable);
-	memset(ftable, 0, sizeof(*ftable));
-	free(ftable);
+	if (base == bof_pinned) {
+		/* the pinned BOF's DYNAMICF import slots point INTO the slot
+		 * table's chunks - freeing them here turned the first post-load
+		 * proxy() call into a jump through freed heap (intermittent
+		 * live: worked while the chunks happened to survive untouched,
+		 * crashed with an unknown-module AV the moment the heap reused
+		 * them). The pinned block and its slot table now live and die
+		 * together via bof_unpin(). */
+	}
+	else {
+		bof_free_slot_table(ftable);
+		memset(ftable, 0, sizeof(*ftable));
+		free(ftable);
+	}
 	return success;
 }
 
