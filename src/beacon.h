@@ -161,4 +161,4 @@ BOOL udc2_enabled(void);
 BOOL udc2_init(void);
 int  udc2_cycle(char * recv, int max);
 void udc2_close(void);
-void udc2_queue(char * data, int length); /* .process-inject.drip_delay ms between chunks */
+void udc2_queue(char * data, int length);
