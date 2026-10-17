@@ -470,6 +470,10 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 
 	bi_register_dfrs(&pc);
 	BI_STAGE("dfr-registered");
+	if (bi_ndfr > 0) {
+		bi_stage_log(bi_protos[0]);
+		bi_stage_log(glued);
+	}
 
 	/* runtime globals (official 4.13 contract) */
 	{
