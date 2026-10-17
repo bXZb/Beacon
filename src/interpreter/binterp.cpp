@@ -35,10 +35,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "parse.h"
-#include "beacon.h"
-#include "commands.h"
-#include "track_memory.h"
+#include "../parse.h"
+#include "../beacon.h"
+#include "../commands.h"
+#include "../track_memory.h"
 
 extern "C" {
 #include "picoc.h"

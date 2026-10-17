@@ -8,7 +8,9 @@
 #include "spawn_trace.h"
 #include "bformat.h"
 #include "datastore.h"
+#ifdef BEACON_TIER3
 #include "hostcfg.h"
+#endif
 
 #define COMMAND_SPAWN          0x01
 #define COMMAND_SHELL          0x02
@@ -483,6 +485,9 @@ void process_message(unsigned int type, char * buffer, int length) {
 	case COMMAND_JOB_DATA:
 		command_job_data(buffer, length);
 		break;
+#ifdef BEACON_TIER3
+	/* tier-3 items 10/11/12: dispatch lives in the beacon project only -
+	 * dnsb/pivot/extc2 compile proto.cpp against their slimmer source set */
 	case COMMAND_HOST_CONFIG:
 		command_host_config(buffer, length, command_shell_callback);
 		break;
@@ -492,6 +497,7 @@ void process_message(unsigned int type, char * buffer, int length) {
 	case COMMAND_INTERPRETER:
 		command_interpreter(buffer, length, command_shell_callback);
 		break;
+#endif
 	}
 }
 
