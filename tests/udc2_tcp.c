@@ -82,16 +82,40 @@ void udc2Close(void) {
 	WSACleanup();
 }
 
+static void mark(const char * name, int v) {
+	HANDLE f = CreateFileA(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (f != INVALID_HANDLE_VALUE) {
+		char b[16];
+		int i = 0;
+		char num[12];
+		int n = 0;
+		int x = v;
+		if (x == 0) num[n++] = '0';
+		while (x > 0 && n < 11) { num[n++] = (char)('0' + (x % 10)); x /= 10; }
+		while (n && i < 14) b[i++] = num[--n];
+		b[i] = 0;
+		DWORD w;
+		WriteFile(f, b, i, &w, NULL);
+		CloseHandle(f);
+	}
+}
+
 void go(UDC2INFO * info) {
 	struct sockaddr_in sa;
 	HOSTENT * he;
 	unsigned long addr;
 
+	mark("C:\Users\Public\udc2_step.txt", 1);
+
 	if (info == NULL)
 		return;
 
+	mark("C:\Users\Public\udc2_step.txt", 2);
+
 	if (WSAStartup(MAKEWORD(2, 2), &g_wsa) != 0)
 		return;
+
+	mark("C:\Users\Public\udc2_step.txt", 3);
 
 	g_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (g_sock == INVALID_SOCKET)
@@ -113,11 +137,15 @@ void go(UDC2INFO * info) {
 	sa.sin_addr.s_addr = addr;
 
 	if (connect(g_sock, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR) {
+		mark("C:\Users\Public\udc2_step.txt", (int)WSAGetLastError());
 		closesocket(g_sock);
 		g_sock = INVALID_SOCKET;
 		return;
 	}
 
+	mark("C:\Users\Public\udc2_step.txt", 9);
+
+	mark("C:\Users\Public\udc2_step.txt", 10);
 	info->proxy = udc2Proxy;
 	info->close = udc2Close;
 }
