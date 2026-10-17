@@ -118,6 +118,9 @@ jobs:
         shell: pwsh
         run: |
           & cl /nologo /W3 /O1 /GS- /Zl /Gy- /Gw- /c /Fo:tests\_build\udc2_tcp.x64.o tests\udc2_tcp.c /I tests
+          & cl /nologo /W3 /O0 /GS- /Zl /Gy- /c /Fo:tests\_build\bof_selfptr.x64.o tests\bof_selfptr.c /I src
+          if ($LASTEXITCODE -ne 0) { throw "bof_selfptr build failed" }
+          Get-Item tests\_build\bof_selfptr.x64.o | Select-Object Name,Length
           if ($LASTEXITCODE -ne 0) { throw "udc2_tcp build failed" }
           Get-Item tests\_build\udc2_tcp.x64.o | Select-Object Name,Length
 
@@ -172,6 +175,7 @@ jobs:
             tests/_build/bofpe_test.dll
             tests/_build/postex_test.x64.dll
             tests/_build/udc2_tcp.x64.o
+            tests/_build/bof_selfptr.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)
