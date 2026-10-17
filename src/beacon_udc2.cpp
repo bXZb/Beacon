@@ -154,14 +154,14 @@ BOOL udc2_init(void) {
 	if (udc2.booted)
 		return udc2_enabled();
 
-	udc2.booted = TRUE;
-
-	if (setting_int(SETTING_UDC2_LENGTH) != 1)
+	if (setting_int(SETTING_UDC2_LENGTH) != 1) {
+		udc2.booted = TRUE; /* marker absent: this beacon is not UDC2 */
 		return FALSE;
+	}
 
 	blob = (char *)BeaconGetValue("udc2");
 	if (blob == NULL)
-		return FALSE;
+		return FALSE; /* BOF not delivered yet: retry next cycle */
 
 	magic  = *(int *)(blob + 0);
 	objlen = *(int *)(blob + 4);
