@@ -321,7 +321,7 @@ void command_host_config(char * buffer, int length, void (*callback)(char * buff
 			strncpy(scratch, s2, sizeof(scratch) - 1);
 			scratch[sizeof(scratch) - 1] = '\0';
 			hc_split(scratch, sizeof(scratch), hc_collect_uri, &ul);
-			for (i = 0; i < ul.n && i < HC_MAX_HOSTS; i++)
+			for (i = 0; i < ul.nuri && i < HC_MAX_HOSTS; i++)
 				strncpy(l.uris[i], ul.uris[i], HC_URI_LEN - 1);
 		}
 		for (i = 0; i < l.n; i++) {
