@@ -627,6 +627,7 @@ static HMODULE bof_real_LoadLibraryA(const char * lib) {
 extern "C" void __cdecl crashdiag_arm(void);
 extern "C" void __cdecl crashdiag_disarm(void);
 extern "C" void __cdecl crashdiag_note_bof(void * p);
+extern "C" void __cdecl crashdiag_note_args(void * p, int len);
 struct CdGuard {
 	CdGuard() { crashdiag_arm(); }
 	~CdGuard() { crashdiag_disarm(); }
@@ -722,6 +723,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	crashdiag_note_bof(base);
+	crashdiag_note_args(args, alen);
 
 	code_dst  = base;
 	rdata_dst = base + off_rdata;

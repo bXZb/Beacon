@@ -21,6 +21,8 @@ typedef struct _CD_STATE {
 	void * vmheap;   /* picoc HeapMemory (binterp) */
 	void * bofbase;  /* BOF mapping base (boff) */
 	void * imgbase;  /* beacon image anchor (any function address) */
+	void * args;     /* BOF args blob (boff) - hexdumped on fault */
+	int    argslen;
 } CD_STATE;
 
 static CD_STATE g_cd;
@@ -29,6 +31,11 @@ static PVOID g_cdveh;
 /* binterp/boff publish their live regions through these */
 extern "C" void __cdecl crashdiag_note_vm(void * p) { g_cd.vmheap = p; }
 extern "C" void __cdecl crashdiag_note_bof(void * p) { g_cd.bofbase = p; }
+extern "C" void __cdecl crashdiag_note_args(void * p, int len)
+{
+	g_cd.args = p;
+	g_cd.argslen = len;
+}
 
 static const char * region_of(void * p)
 {
@@ -118,6 +125,12 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 		}
 	}
 #endif /* _M_X64 */
+	if (g_cd.args != NULL && g_cd.argslen > 0) {
+		int i, n = g_cd.argslen < 96 ? g_cd.argslen : 96;
+		fprintf(f, " argslen=%d head=", g_cd.argslen);
+		for (i = 0; i < n; i++)
+			fprintf(f, "%02x", ((unsigned char *)g_cd.args)[i]);
+	}
 	fprintf(f, "\n");
 	fclose(f);
 	return EXCEPTION_CONTINUE_SEARCH;
