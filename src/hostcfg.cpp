@@ -88,7 +88,8 @@ static int hc_split(char * scratch, int smax, hc_token_cb cb, void * ctx) {
 typedef struct {
 	char hosts[HC_MAX_HOSTS][HC_HOST_LEN];
 	char uris[HC_MAX_HOSTS][HC_URI_LEN];
-	int  n;
+	int  n;     /* hosts collected */
+	int  nuri;  /* uris collected; uri i belongs to host i */
 } hc_list;
 
 static void hc_collect(const char * token, void * ctx) {
@@ -102,14 +103,15 @@ static void hc_collect(const char * token, void * ctx) {
 
 static void hc_collect_uri(const char * token, void * ctx) {
 	hc_list * l = (hc_list *)ctx;
-	/* host i <-> uri i: the host list is collected first, so the next uri
-	 * fills the slot of the most recently collected host (live-fire showed
-	 * the uri landing one slot too far) */
-	int idx = l->n - 1;
+	/* uri i belongs to host i: independent counter (keying off the HOSTS
+	 * count mislotted the uri in both directions - live-fire showed
+	 * "(profile default)" on the freshly added host) */
+	int idx = l->nuri;
 	if (idx < 0 || idx >= HC_MAX_HOSTS)
 		return;
 	strncpy(l->uris[idx], token, HC_URI_LEN - 1);
 	l->uris[idx][HC_URI_LEN - 1] = '\0';
+	l->nuri = idx + 1;
 }
 
 void hostcfg_init(const char * domains) {
@@ -319,7 +321,7 @@ void command_host_config(char * buffer, int length, void (*callback)(char * buff
 			strncpy(scratch, s2, sizeof(scratch) - 1);
 			scratch[sizeof(scratch) - 1] = '\0';
 			hc_split(scratch, sizeof(scratch), hc_collect_uri, &ul);
-			for (i = 0; i < ul.n && i < HC_MAX_HOSTS; i++)
+			for (i = 0; i < ul.nuri && i < HC_MAX_HOSTS; i++)
 				strncpy(l.uris[i], ul.uris[i], HC_URI_LEN - 1);
 		}
 		for (i = 0; i < l.n; i++) {
