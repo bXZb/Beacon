@@ -47,10 +47,6 @@ extern "C" {
 #ifdef _M_X64
 
 
-/* crash triage probe (0xC0000028 BAD_STACK during the first live dispatch):
- * stage markers land in the spawn trace when enabled, otherwise near-free */
-extern void spawn_log(const char * msg, long v);
-#define BI_STAGE(m) spawn_log("binterp:" m, 0)
 
 #define BI_MAX_DFR    64
 #define BI_MAX_ARGS   8
@@ -386,7 +382,6 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 	if (length < 4)
 		return;
 
-	BI_STAGE("entry");
 	bi_cb = callback;
 	bi_opos = 0;
 
@@ -441,15 +436,12 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 		glued[off + scriptlen] = '\0';
 	}
 
-	BI_STAGE("pre-init");
 	PicocInitialize(&pc, BI_VM_STACK);
-	BI_STAGE("initialized");
 	/* one tracked block = whole VM state is sleepmask-visible (see
 	 * binterp_platform.cpp header note) */
 	track_memory_add(pc.HeapMemory, BI_VM_STACK, TRACK_MEMORY_MALLOC, TRUE, NULL);
 
 	bi_register_dfrs(&pc);
-	BI_STAGE("dfr-registered");
 
 	/* runtime globals (official 4.13 contract) */
 	{
@@ -464,11 +456,8 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 			(union AnyValue *)&s_argv_dummy, TRUE);
 	}
 
-	BI_STAGE("globals-defined");
 	if (PicocPlatformSetExitPoint(&pc) == 0) {
-		BI_STAGE("parsing");
 		PicocParse(&pc, "script.c", glued, (int)strlen(glued), TRUE, TRUE, FALSE, FALSE);
-		BI_STAGE("parsed");
 	}
 	else {
 		char msg[128];
@@ -479,7 +468,6 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 	}
 
 	bi_flush();
-	BI_STAGE("flushed");
 	track_memory_remove(pc.HeapMemory);
 	PicocCleanup(&pc);
 	free(glued);
