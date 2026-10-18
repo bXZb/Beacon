@@ -196,8 +196,10 @@ char * data_ptr_extract(datap * d, int * size) {
 	if (size != NULL)
 		*size = buffer.length;
 
-	if (buffer.length == 0)
-		return NULL;
-
+	/* official BOF contract: a zero-length argument is an EMPTY STRING,
+	 * not NULL - data_ptr already yields the (valid) current pointer for
+	 * length 0. Returning NULL here crashed No-Consolation, which packs
+	 * empty strings for unset options and dereferences the result. NULL
+	 * stays reserved for a genuinely exhausted parser (buffer==NULL). */
 	return buffer.buffer;
 }
