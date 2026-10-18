@@ -31,6 +31,7 @@
     <ClCompile Include="src\beacon_extc2.cpp" />
     <ClCompile Include="src\bformat.cpp" />
     <ClCompile Include="src\boff.cpp" />
+    <ClCompile Include="src\crashdiag.cpp" />
     <ClCompile Include="src\build.cpp" />
     <ClCompile Include="src\callback.cpp" />
     <ClCompile Include="src\channel.cpp" />

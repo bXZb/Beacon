@@ -622,8 +622,19 @@ static HMODULE bof_real_LoadLibraryA(const char * lib) {
 	return fn(lib);
 }
 
+/* crash triage (see src/crashdiag.cpp): first-chance VEH recorder for the
+ * BOF run window - the original exception survives the unwind failure */
+extern "C" void __cdecl crashdiag_arm(void);
+extern "C" void __cdecl crashdiag_disarm(void);
+extern "C" void __cdecl crashdiag_note_bof(void * p);
+struct CdGuard {
+	CdGuard() { crashdiag_arm(); }
+	~CdGuard() { crashdiag_disarm(); }
+};
+
 BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv) {
 	datap parser;
+	CdGuard cd_guard;
 	datap relocsparser;
 	datap_buffer code, rdata, data, xdata, pdata, relocs;
 	DWORD bssSize;
@@ -709,6 +720,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		bof_cached_size = total;
 		bof_cached_how = how;
 	}
+
+	crashdiag_note_bof(base);
 
 	code_dst  = base;
 	rdata_dst = base + off_rdata;

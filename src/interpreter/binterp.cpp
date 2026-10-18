@@ -383,6 +383,17 @@ static int bi_split_types(char * csv, bi_dfr * d) {
 	return n;
 }
 
+/* crash triage (see src/crashdiag.cpp): first-chance VEH recorder, armed
+ * only while a script runs, so the original exception survives the
+ * BAD_STACK-during-unwind that currently kills the process */
+extern "C" void __cdecl crashdiag_arm(void);
+extern "C" void __cdecl crashdiag_disarm(void);
+extern "C" void __cdecl crashdiag_note_vm(void * p);
+struct CdGuard {
+	CdGuard() { crashdiag_arm(); }
+	~CdGuard() { crashdiag_disarm(); }
+};
+
 void command_interpreter(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
 	datap parser;
 	char * script;
@@ -393,6 +404,7 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 	char * glued;
 	char msg[128];
 	(void)msg;
+	CdGuard cd_guard;
 
 	if (length < 4)
 		return;
@@ -455,6 +467,7 @@ void command_interpreter(char * buffer, int length, void (*callback)(char * buff
 	/* one tracked block = whole VM state is sleepmask-visible (see
 	 * binterp_platform.cpp header note) */
 	track_memory_add(pc.HeapMemory, BI_VM_STACK, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	crashdiag_note_vm(pc.HeapMemory);
 
 	bi_register_dfrs(&pc);
 

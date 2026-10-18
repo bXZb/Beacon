@@ -181,6 +181,7 @@
     <ClCompile Include="src\ReflectiveLoader.cpp" />
     <ClCompile Include="src\security.cpp" />
     <ClCompile Include="src\crypto.cpp" />
+    <ClCompile Include="src\crashdiag.cpp" />
     <ClCompile Include="src\miniprintf.cpp" />
     <ClCompile Include="src\locale_stub.cpp" />
     <ClCompile Include="src\der_stub.cpp" />
