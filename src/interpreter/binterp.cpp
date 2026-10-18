@@ -338,11 +338,26 @@ static const char * bi_windows_defs =
 	"#define FALSE 0\n"
 	"#define MAX_PATH 260\n";
 
+/* official 4.13 interpreter bundles msvcrt.h as the CRT surface: scripts do
+ * #include <msvcrt.h> and get the CRT. picoc's built-in libc IS the CRT here,
+ * so msvcrt.h pulls in the whole built-in set (stdio.h is deliberately not
+ * vendored - scripts print through the beacon.h output APIs) */
+static void bi_msvcrt_setup(Picoc * pc) {
+	IncludeFile(pc, "ctype.h");
+	IncludeFile(pc, "errno.h");
+	IncludeFile(pc, "math.h");
+	IncludeFile(pc, "stdbool.h");
+	IncludeFile(pc, "stdlib.h");
+	IncludeFile(pc, "string.h");
+	IncludeFile(pc, "time.h");
+}
+
 extern "C" void bi_library_init(Picoc * pc) {
 	IncludeRegister(pc, "beacon.h", NULL, &bi_beacon_funcs[0], bi_beacon_defs);
 	IncludeRegister(pc, "windows.h", NULL, NULL, bi_windows_defs);
 	IncludeRegister(pc, "internal.h", NULL, NULL,
 		"int DbgPrintf(char *t) { BeaconPrint(0, t); return 0; }\n");
+	IncludeRegister(pc, "msvcrt.h", &bi_msvcrt_setup, NULL, NULL);
 }
 
 /* ---- command entry ---- */
