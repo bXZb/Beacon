@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 #include <limits.h>
 #include <stddef.h>
 #include "commands.h"
@@ -622,6 +623,23 @@ static HMODULE bof_real_LoadLibraryA(const char * lib) {
 	return fn(lib);
 }
 
+/* BOF-load trace: every relocation failure + dyn-import miss lands here
+ * so a dist artifact that dies mid-load leaves a trail (No-Consolation
+ * battle, 2026-10-19) */
+static void boftrace(const char * fmt, ...)
+{
+	FILE * f = fopen("C:\Users\Public\bof-loadtrace.log", "a");
+	if (f == NULL)
+		return;
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(f, fmt, ap);
+	va_end(ap);
+	fprintf(f, "
+");
+	fclose(f);
+}
+
 /* crash triage (see src/crashdiag.cpp): first-chance VEH recorder for the
  * BOF run window - the original exception survives the unwind failure */
 extern "C" void __cdecl crashdiag_arm(void);
@@ -782,27 +800,35 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 			ptr = GetProcAddress(mod, fun);
 			if (ptr == NULL) {
 				post_error(0x4c, "%s!%s", lib, fun);
+				boftrace("DYNFAIL %s!%s", lib, fun);
 				break;
 			}
 			slot = function_slot(ftable, ptr);
 			if (slot == NULL) {
 				post_error_na(0x4e);
+				boftrace("SLOTFAIL %s!%s", lib, fun);
 				break;
 			}
-			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base))
+			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base)) {
+				boftrace("RELOCFAIL dyn %s!%s type=%d off=%d", lib, fun, reloc->type, reloc->offset);
 				break;
+			}
 		}
 		else if (reloc->symbol >= 0 && reloc->symbol < 1024) {
 #if defined(_M_X64) && defined(BOFWIN_ENABLE)
 			beacon_api_used = TRUE;
 #endif
-			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base))
+			if (!process_reloc(reloc, src, dst, (char *)ftable + (reloc->symbol * sizeof(char *)), 0, base)) {
+				boftrace("RELOCFAIL int sym=%d type=%d off=%d", reloc->symbol, reloc->type, reloc->offset);
 				break;
+			}
 		}
 		else {
 			sym = bof_section_base(reloc->symbol, code_dst, rdata_dst, data_dst, xdata_dst, pdata_dst, bss_dst);
-			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section, base))
+			if (!process_reloc(reloc, src, dst, sym, reloc->offset_in_section, base)) {
+				boftrace("RELOCFAIL sec sym=%d type=%d off=%d", reloc->symbol, reloc->type, reloc->offset);
 				break;
+			}
 		}
 	}
 
