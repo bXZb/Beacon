@@ -79,7 +79,13 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 	fprintf(f, "code=0x%08lx addr=0x%p rip=0x%p p0=0x%llx p1=0x%llx region=%s vm=0x%p bof=0x%p",
 	        code,
 	        ep->ExceptionRecord->ExceptionAddress,
-	        ep->ContextRecord ? (void *)ep->ContextRecord->Rip : NULL,
+	        ep->ContextRecord ? (void *)
+#ifdef _M_X64
+	            ep->ContextRecord->Rip
+#else
+	            ep->ContextRecord->Eip
+#endif
+	            : NULL,
 	        ep->ExceptionRecord->NumberParameters > 0
 	            ? (unsigned long long)ep->ExceptionRecord->ExceptionInformation[0] : 0ULL,
 	        ep->ExceptionRecord->NumberParameters > 1
@@ -87,6 +93,7 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 	        region_of(ep->ExceptionRecord->ExceptionAddress),
 	        g_cd.vmheap, g_cd.bofbase);
 	/* crude frames: scan the first 0x400 of stack for image-code pointers */
+#ifdef _M_X64
 	if (ep->ContextRecord != NULL) {
 		unsigned long long * sp = (unsigned long long *)ep->ContextRecord->Rsp;
 		int nimg = 0, nvm = 0, nbof = 0;
@@ -110,6 +117,7 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 			}
 		}
 	}
+#endif /* _M_X64 */
 	fprintf(f, "\n");
 	fclose(f);
 	return EXCEPTION_CONTINUE_SEARCH;
