@@ -394,7 +394,55 @@ struct CdGuard {
 	~CdGuard() { crashdiag_disarm(); }
 };
 
+/* ---- big-stack VM thread (2026-10-19 interpreter crash fix) ----
+ * Crash dumps (7976/7424/10568): picoc's recursive-descent parser +
+ * interpreter recurse on the NATIVE stack; the official demo script
+ * (fib/goto/nested structs) exhausts the default 1MB thread stack and the
+ * resulting unwind dies with STATUS_BAD_STACK (0xC0000028) - UTF-16
+ * string data ends up where return addresses belong. The official VM is a
+ * bytecode interpreter with zero native recursion (documented divergence);
+ * until that exists, run the whole VM on a dedicated 16MB-stack thread.
+ * The main thread blocks in WaitForSingleObject for the whole run, so the
+ * output callback stays single-threaded against the channel layer, and
+ * threadcount is held >0 for the run (mirrors run_thread_start) so sleep
+ * masking never walks the VM heap mid-run from the waiting thread. */
+extern volatile long threadcount;
+
+typedef struct {
+	char * buffer;
+	int length;
+	void (*callback)(char * buffer, int length, int type);
+} BI_RUN_ARGS;
+
+static void command_interpreter_impl(char * buffer, int length,
+                                     void (*callback)(char * buffer, int length, int type));
+
+static DWORD WINAPI bi_vm_thread(LPVOID param) {
+	BI_RUN_ARGS * a = (BI_RUN_ARGS *)param;
+	command_interpreter_impl(a->buffer, a->length, a->callback);
+	return 0;
+}
+
 void command_interpreter(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
+	BI_RUN_ARGS args;
+	HANDLE h;
+	args.buffer = buffer;
+	args.length = length;
+	args.callback = callback;
+	InterlockedIncrement(&threadcount);
+	h = CreateThread(NULL, (SIZE_T)(16 * 1024 * 1024), bi_vm_thread, &args, 0, NULL);
+	if (h == NULL) {
+		/* no thread: degrade to inline execution (old behavior) */
+		InterlockedDecrement(&threadcount);
+		command_interpreter_impl(buffer, length, callback);
+		return;
+	}
+	WaitForSingleObject(h, INFINITE);
+	CloseHandle(h);
+	InterlockedDecrement(&threadcount);
+}
+
+static void command_interpreter_impl(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {
 	datap parser;
 	char * script;
 	int scriptlen;
