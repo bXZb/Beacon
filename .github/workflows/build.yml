@@ -125,22 +125,19 @@ jobs:
           Get-Item tests\_build\udc2_tcp.x64.o | Select-Object Name,Length
 
 
-      # tier-3 item9 (4.12 BeaconDownload API): stages a pattern buffer,
-      # hands it to BeaconDownload and frees the original - the live test
-      # hashes the file that lands in the TS downloads/ view
       # NC arg-walk repro: exact No-Consolation entry.c read sequence over
       # the 28-arg blob - live run pinpoints which extraction breaks
       - name: Compile NC argwalk BOF (beacon only)
         if: matrix.project == 'beacon'
         shell: pwsh
         run: |
-          & cl /nologo /W3 /O0 /GS- /Zl /Gy- /c /Fo:tests\_build
-c_argwalk.x64.o tests
-c_argwalk.c /I src
+          & cl /nologo /W3 /O0 /GS- /Zl /Gy- /c /Fo:tests\_build\nc_argwalk.x64.o tests\nc_argwalk.c /I src
           if ($LASTEXITCODE -ne 0) { throw "nc_argwalk build failed" }
-          Get-Item tests\_build
-c_argwalk.x64.o | Select-Object Name,Length
+          Get-Item tests\_build\nc_argwalk.x64.o | Select-Object Name,Length
 
+      # tier-3 item9 (4.12 BeaconDownload API): stages a pattern buffer,
+      # hands it to BeaconDownload and frees the original - the live test
+      # hashes the file that lands in the TS downloads/ view
       - name: Compile BeaconDownload test BOF (beacon only)
         if: matrix.project == 'beacon'
         shell: pwsh
