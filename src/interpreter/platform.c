@@ -18,6 +18,12 @@ static int gEnableDebugger = false;
 /* initialize everything */
 void PicocInitialize(Picoc *pc, int StackSize)
 {
+    /* stack-depth anchor for the recursion guard in ParseStatement */
+    {
+        volatile char probe;
+        extern char * PicocStackAnchor;
+        PicocStackAnchor = (char *)&probe;
+    }
     memset(pc, '\0', sizeof(*pc));
     PlatformInit(pc);
     BasicIOInit(pc);

@@ -586,6 +586,17 @@ void ParseTypedef(struct ParseState *Parser)
 }
 
 /* parse a statement */
+/* stack-depth guard (2026-10-19): interpreter_demo.c drove picoc's
+ * mutually-recursive statement/expression parser to unbounded recursion -
+ * it exhausted a 16MB dedicated VM stack (crash dumps 10052/11140: RSP
+ * at 100% of the 16MB region, STATUS_BAD_STACK during the failed unwind).
+ * Measure the real stack delta from the anchor captured at VM start: no
+ * bookkeeping on return, and the abort (ProgramFail) longjmps to the
+ * PicocPlatformSetExitPoint command_interpreter set up, so a pathological
+ * script becomes an error line instead of a dead beacon. */
+char * PicocStackAnchor;
+#define PIOC_MAX_STACK_USE (12 * 1024 * 1024)
+
 enum ParseResult ParseStatement(struct ParseState *Parser,
     int CheckTrailingSemicolon)
 {
@@ -594,6 +605,12 @@ enum ParseResult ParseStatement(struct ParseState *Parser,
     struct Value *CValue;
     struct Value *LexerValue;
     struct Value *VarValue;
+
+    if (PicocStackAnchor != NULL &&
+            PicocStackAnchor - (char *)&Condition > PIOC_MAX_STACK_USE) {
+        ProgramFail(Parser, "script nesting too deep (stack delta > %d bytes)",
+                    PIOC_MAX_STACK_USE);
+    }
     struct ParseState PreState;
 
 #ifdef DEBUGGER
