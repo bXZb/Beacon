@@ -5,7 +5,15 @@
  */
 #include <windows.h>
 #include <stdio.h>
-#include "beacon.h"
+
+/* BOF API surface declared directly (the repo's test BOFs skip beacon.h) */
+typedef struct { char * original; char * buffer; int length; } datap;
+EXTERN_C __declspec(dllimport) void   __cdecl BeaconDataParse(datap * parser, char * buffer, int size);
+EXTERN_C __declspec(dllimport) char * __cdecl BeaconDataExtract(datap * parser, int * size);
+EXTERN_C __declspec(dllimport) int    __cdecl BeaconDataInt(datap * parser);
+EXTERN_C __declspec(dllimport) int    __cdecl BeaconDataLength(datap * parser);
+EXTERN_C __declspec(dllimport) void   __cdecl BeaconPrintf(int type, const char * fmt, ...);
+#define CALLBACK_OUTPUT 0
 
 void go(char * args, int alen)
 {
@@ -21,7 +29,6 @@ void go(char * args, int alen)
     char * but, * deps, * search;
     int inthread;
     int pe_length = 0;
-    char msg[160];
 
     BeaconDataParse(&parser, args, alen);
 #define WALK(n, expr) do { expr; \
