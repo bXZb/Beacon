@@ -628,15 +628,14 @@ static HMODULE bof_real_LoadLibraryA(const char * lib) {
  * battle, 2026-10-19) */
 static void boftrace(const char * fmt, ...)
 {
-	FILE * f = fopen("C:\Users\Public\bof-loadtrace.log", "a");
+	FILE * f = fopen("C:/Users/Public/bof-loadtrace.log", "a");
 	if (f == NULL)
 		return;
 	va_list ap;
 	va_start(ap, fmt);
 	vfprintf(f, fmt, ap);
 	va_end(ap);
-	fprintf(f, "
-");
+	fprintf(f, "\n");
 	fclose(f);
 }
 
