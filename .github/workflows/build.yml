@@ -135,6 +135,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "nc_argwalk build failed" }
           Get-Item tests\_build\nc_argwalk.x64.o | Select-Object Name,Length
 
+      - name: Upload NC argwalk BOF (beacon only)
+        if: matrix.project == 'beacon'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nc-argwalk-x64
+          path: tests\_build\nc_argwalk.x64.o
+
       # tier-3 item9 (4.12 BeaconDownload API): stages a pattern buffer,
       # hands it to BeaconDownload and frees the original - the live test
       # hashes the file that lands in the TS downloads/ view
