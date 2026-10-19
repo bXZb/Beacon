@@ -60,7 +60,7 @@ static void register_exception_tables(HINSTANCE hinstDLL) {
 	if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
 		return; /* x86 has no .pdata walk */
 	ex = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
-	if (ex->VirtualAddress == 0 || ex->Size < sizeof(RUNTIME_FUNCTION))
+	if (ex->VirtualAddress == 0 || ex->Size < 12) /* RUNTIME_FUNCTION */
 		return;
 	ntdll = GetModuleHandleA("ntdll.dll");
 	if (ntdll == NULL)
