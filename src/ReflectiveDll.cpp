@@ -35,7 +35,7 @@ static void settings_init_once(HINSTANCE hinstDLL) {
  * PEs get this from the loader; reflective DLLs must do it themselves.
  * Resolved dynamically (no new import), idempotent, never removed. */
 static void register_exception_tables(HINSTANCE hinstDLL) {
-	typedef BOOL (WINAPI *fnRAFT)(PRUNTIME_FUNCTION, DWORD, ULONG64);
+	typedef BOOL (WINAPI *fnRAFT)(void *, DWORD, ULONG64);
 	fnRAFT fn;
 	unsigned char * img;
 	IMAGE_DOS_HEADER * dos;
@@ -68,8 +68,8 @@ static void register_exception_tables(HINSTANCE hinstDLL) {
 	fn = (fnRAFT)GetProcAddress(ntdll, "RtlAddFunctionTable");
 	if (fn == NULL)
 		return;
-	fn((PRUNTIME_FUNCTION)(img + ex->VirtualAddress),
-	   ex->Size / sizeof(RUNTIME_FUNCTION),
+	fn((void *)(img + ex->VirtualAddress),
+	   ex->Size / 12, /* sizeof(RUNTIME_FUNCTION) on x64 */
 	   (ULONG64)(UINT_PTR)img);
 }
 
