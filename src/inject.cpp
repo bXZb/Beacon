@@ -158,6 +158,17 @@ void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, 
 	}
 	spawn_log("inject_logic: mirror ok ptr=", (long)(long long)ptr);
 
+#ifdef INJECT_PREEXEC_PAUSE
+	/* observability window: lets an external snapshot tool read the mirrored
+	 * payload before the thread is created (vncdll host-death forensics) */
+	{
+		char * probe = (char *)ptr;
+		spawn_log("inject_logic: preexec head=", (long)(unsigned char)probe[0]);
+		spawn_log("inject_logic: preexec pause", 0x7fffffff);
+		Sleep(300);
+	}
+#endif
+
 	/* call our logic to execute code */
 	if (inject_process_execute(context, (char *)ptr, offset, parameter)) {
 		spawn_log("inject_logic: execute ok", 0x7fffffff);
