@@ -42,6 +42,7 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Project beacon -Toolset v143 -ExtraProperties BeaconBofWin=true
 
+
       - name: Compile empty Win32-only BOF (beacon only)
         if: matrix.project == 'beacon'
         shell: pwsh
@@ -177,6 +178,19 @@ jobs:
           path: |
             x64/Release/${{ matrix.project }}.x64.dll
             x64/Release/${{ matrix.project }}.x64.map
+
+      - name: Build inject-pause observability variant (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          ./build.ps1 -Project beacon -Toolset v143 -Platform x64 -ExtraProperties BeaconInjectPause=true
+          cp x64\Releaseeacon.x64.dll beacon.pause.x64.dll
+      - name: Upload inject-pause observability variant
+        if: matrix.project == 'beacon'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-pause-x64
+          path: beacon.pause.x64.dll
 
       - name: Upload WinHTTP artifact
         if: matrix.project == 'beacon'
