@@ -223,6 +223,13 @@ size_t BeaconDataStoreMaxEntries(void) {
 static char g_custom_user_data[32];
 static int  g_custom_user_data_set = 0;
 
+void BeaconSetUserDataSyscalls(const void * table);
+extern void syscalls_apply_udrl_table(const void * table);
+
+void BeaconSetUserDataSyscalls(const void * table) {
+	syscalls_apply_udrl_table(table);
+}
+
 void BeaconSetCustomUserData(const void * data) {
 	if (data == NULL)
 		return;

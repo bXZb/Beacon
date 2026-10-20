@@ -55,6 +55,7 @@ void BeaconDataStoreUnprotectItem(size_t index);
 size_t BeaconDataStoreMaxEntries(void);
 char * BeaconGetCustomUserData(void);
 void BeaconSetCustomUserData(const void * data);
+void BeaconSetUserDataSyscalls(const void * table);
 
 /* test-visible store core */
 int datastore_add(int type, unsigned long long hash, char * data, int length);

