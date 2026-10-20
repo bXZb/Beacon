@@ -241,7 +241,7 @@ jobs:
         # /Zl (no default library record)
         run: |
           New-Item -ItemType Directory -Force -Path udrl\_build | Out-Null
-          & cl /nologo /W3 /O2 /GS- /Zl /Gy- /DBW_UDRL_USER_DATA_DELIVER=1 /c /Fo:udrl\_build\ReflectiveLoader.x64.o udrl\ReflectiveLoader.c
+          & cl /nologo /W3 /O2 /GS- /Zl /Gy- /c /Fo:udrl\_build\ReflectiveLoader.x64.o udrl\ReflectiveLoader.c
           if ($LASTEXITCODE -ne 0) { throw "udrl build failed" }
           Get-Item udrl\_build\ReflectiveLoader.x64.o | Select-Object Name,Length
 
