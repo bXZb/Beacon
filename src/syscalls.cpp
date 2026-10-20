@@ -944,3 +944,12 @@ HANDLE beacon_CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATT
 	return CreateFileA(name, access, share, sa, disp, flags, tmpl);
 #endif
 }
+
+#if !defined(_M_X64)
+/* x86: the gate syscall machinery is x64-only; the UDRL override table has
+ * nothing to seed on this target */
+void syscalls_apply_udrl_table(const void * table);
+void syscalls_apply_udrl_table(const void * table) {
+    (void)table;
+}
+#endif
