@@ -183,6 +183,8 @@ jobs:
         if: matrix.project == 'beacon'
         shell: pwsh
         run: |
+          cp x64/Release/bofwin/beacon.x64.rl0k.dll beacon.x64.rl0k.normal.dll
+          cp x64/Release/bofwin/beacon.x64.rl0k.map beacon.x64.rl0k.normal.map
           ./build.ps1 -Project beacon -Toolset v143 -Platform x64 -ExtraProperties BeaconInjectPause=true,BeaconBofWin=true
           cp x64/Release/bofwin/beacon.x64.rl0k.dll beacon.pause.x64.dll
       - name: Upload inject-pause observability variant
@@ -207,8 +209,8 @@ jobs:
         with:
           name: beacon-x64-rl0k
           path: |
-            x64/Release/bofwin/beacon.x64.rl0k.dll
-            x64/Release/bofwin/beacon.x64.rl0k.map
+            beacon.x64.rl0k.normal.dll
+            beacon.x64.rl0k.normal.map
             tests/_build/bof_empty.x64.o
             tests/_build/inject_bof.x64.o
             tests/_build/bof_args.x64.o
