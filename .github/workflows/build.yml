@@ -184,7 +184,7 @@ jobs:
         shell: pwsh
         run: |
           ./build.ps1 -Project beacon -Toolset v143 -Platform x64 -ExtraProperties BeaconInjectPause=true,BeaconBofWin=true
-          cp x64/Release/beacon.x64.rl0k.dll beacon.pause.x64.dll
+          cp x64/Release/bofwin/beacon.x64.rl0k.dll beacon.pause.x64.dll
       - name: Upload inject-pause observability variant
         if: matrix.project == 'beacon'
         uses: actions/upload-artifact@v4
