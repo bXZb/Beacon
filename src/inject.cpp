@@ -162,10 +162,8 @@ void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, 
 	/* observability window: lets an external snapshot tool read the mirrored
 	 * payload before the thread is created (vncdll host-death forensics) */
 	{
-		char * probe = (char *)ptr;
-		spawn_log("inject_logic: preexec head=", (long)(unsigned char)probe[0]);
 		spawn_log("inject_logic: preexec pause", 0x7fffffff);
-		Sleep(5000);
+		Sleep(3000);
 	}
 #endif
 
