@@ -3,6 +3,7 @@
 //===============================================================================================//
 #include "ReflectiveLoader.h"
 #include "beacon.h"
+#include "datastore.h"
 
 // Note: REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR and REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN are
 // defined in the project properties (Properties->C++->Preprocessor) so as we can specify our own 
