@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
-#include <Tlhelp32.h>
+#include <tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
 

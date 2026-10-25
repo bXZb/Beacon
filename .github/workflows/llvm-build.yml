@@ -37,14 +37,15 @@ jobs:
         shell: bash
         run: |
           set -e
-          B="python3 tools/llvm/build.py --clang-cl $HOME/.llvm-cross/llvm/bin/clang-cl \
-             --lld-link $HOME/.llvm-cross/llvm/bin/lld-link --xwin-dir $HOME/.llvm-cross/xwin-splat"
-          $B --project beacon --platform x64
-          $B --project beacon --platform x64 --http winhttp
-          $B --project beacon --platform x64 --bofwin
-          $B --project dnsb   --platform x64
-          $B --project extc2  --platform x64
-          $B --project pivot  --platform x64
+          source "$HOME/.llvm-cross/toolpath.env"
+          B=(python3 tools/llvm/build.py --clang-cl "$LLVM_CLANG"
+             --lld-link "$LLVM_LLD" --xwin-dir "$XWIN_SPLAT")
+          "${B[@]}" --project beacon --platform x64
+          "${B[@]}" --project beacon --platform x64 --http winhttp
+          "${B[@]}" --project beacon --platform x64 --bofwin
+          "${B[@]}" --project dnsb   --platform x64
+          "${B[@]}" --project extc2  --platform x64
+          "${B[@]}" --project pivot  --platform x64
 
       - name: Size report
         shell: bash
@@ -86,12 +87,12 @@ jobs:
       - name: Build llvm sidecar (beacon subset)
         run: |
           set -e
-          CLANG="C:/Program Files/LLVM/bin/clang-cl"
-          LLD="C:/Program Files/LLVM/bin/lld-link"
-          XW="$(cygpath -m "$HOME/.llvm-cross/xwin-splat")"
-          python tools/llvm/build.py --clang-cl "$CLANG" --lld-link "$LLD" --xwin-dir "$XW" --project beacon --platform x64
-          python tools/llvm/build.py --clang-cl "$CLANG" --lld-link "$LLD" --xwin-dir "$XW" --project beacon --platform x64 --http winhttp
-          python tools/llvm/build.py --clang-cl "$CLANG" --lld-link "$LLD" --xwin-dir "$XW" --project beacon --platform x64 --bofwin
+          source "$HOME/.llvm-cross/toolpath.env"
+          PY=python; [[ -n "$(command -v python3)" ]] && PY=python3
+          B=($PY tools/llvm/build.py --clang-cl "$LLVM_CLANG" --lld-link "$LLVM_LLD" --xwin-dir "$XWIN_SPLAT")
+          "${B[@]}" --project beacon --platform x64
+          "${B[@]}" --project beacon --platform x64 --http winhttp
+          "${B[@]}" --project beacon --platform x64 --bofwin
 
       - name: Setup MSVC (baseline + smoke harness)
         uses: ilammy/msvc-dev-cmd@v1
@@ -120,8 +121,8 @@ jobs:
 
       - name: Export table diff (MSVC vs LLVM)
         run: |
-          RO="C:/Program Files/LLVM/bin/llvm-readobj.exe"
-          python tools/llvm/compare_exports.py "$RO" x64/Release/beacon.x64.dll llvm-out/beacon.x64.llvm.dll
+          source "$HOME/.llvm-cross/toolpath.env"
+          python tools/llvm/compare_exports.py "$LLVM_READOBJ" x64/Release/beacon.x64.dll llvm-out/beacon.x64.llvm.dll
 
       - name: Size report
         shell: pwsh
