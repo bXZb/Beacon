@@ -51,12 +51,8 @@ jobs:
         run: |
           {
             echo '### llvm linux-x64 build sizes'
-            echo '| variant | dll | bytes |'
-            echo '|---|---|---|'
-            python3 -c "
-import json
-for e in json.load(open('llvm-out/_sizes.json')):
-    print(f\"| {e['variant']} | {e['dll']} | {e['bytes']} |\")"
+            python3 tools/llvm/sizes_table.py llvm-out/_sizes.json
+            echo
             echo '(MSVC 基线对照见主 build.yml 的 step summary)'
           } >> "$GITHUB_STEP_SUMMARY"
 
