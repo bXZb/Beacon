@@ -180,7 +180,7 @@ def collect_files(root, props):
     return files
 
 
-def load_project(repo, name, platform, http, bofwin, pause):
+def load_project(repo, name, platform, http, bofwin, pause, no_exc=False):
     # vcxproj platform name for 32-bit is Win32; x86 is our CLI spelling
     msbuild_platform = "Win32" if platform == "x86" else platform
     props = {
@@ -192,6 +192,7 @@ def load_project(repo, name, platform, http, bofwin, pause):
         "BeaconHttpLibrary": http,
         "BeaconBofWin": "true" if bofwin else "",
         "BeaconInjectPause": "true" if pause else "",
+        "BeaconNoExcReg": "true" if no_exc else "",
         "CSOptimized": "MinSpace",
         # unset in the projects themselves; defines expand to "RefLoadSize="
         "RefLoadSize": "",
@@ -310,6 +311,9 @@ def main():
     ap.add_argument("--platform", default="x64", choices=["x64", "x86"])
     ap.add_argument("--http", default="wininet", choices=["wininet", "winhttp"])
     ap.add_argument("--bofwin", action="store_true")
+    ap.add_argument("--no-excreg", action="store_true",
+                    help="set BeaconNoExcReg=true (BW_NO_EXC_REG: skip "
+                         "RtlAddFunctionTable registration)")
     ap.add_argument("--pause", action="store_true")
     ap.add_argument("--clang-cl", default="clang-cl")
     ap.add_argument("--lld-link", default="lld-link")
@@ -324,7 +328,7 @@ def main():
     repo = os.path.abspath(args.repo).replace(os.sep, "/")
     xwin = os.path.abspath(args.xwin_dir).replace(os.sep, "/")
     proj = load_project(repo, args.project, args.platform, args.http,
-                        args.bofwin, args.pause)
+                        args.bofwin, args.pause, args.no_excreg)
 
     variant = f"{args.project}-{args.platform}-{args.http}"
     if args.bofwin:

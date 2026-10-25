@@ -33,6 +33,13 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Project beacon -Toolset v143 -HttpLibrary winhttp
 
+      - name: Build no-excreg variant (beacon only, A/B for LLVM crash)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          ./build.ps1 -Project beacon -Toolset v143 -ExtraProperties BeaconNoExcReg=true
+          cp x64/Release/beacon.x64.dll beacon.noexcreg.x64.dll
+
       # Phase 4 follow-up: BOFWIN lives in the client-side rl0k variant, NOT
       # the TS-slot default. pe.process memcpy's 5120 bytes at the export, so
       # the default DLL must keep the 5K wall; the UDRL/EXE path (SIZE=0)
@@ -178,6 +185,7 @@ jobs:
           path: |
             x64/Release/${{ matrix.project }}.x64.dll
             x64/Release/${{ matrix.project }}.x64.map
+            beacon.noexcreg.x64.dll
 
       - name: Build inject-pause observability variant (beacon only)
         if: matrix.project == 'beacon'

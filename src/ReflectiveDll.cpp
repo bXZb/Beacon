@@ -38,6 +38,11 @@ static void settings_init_once(HINSTANCE hinstDLL) {
  * Resolved dynamically (no new import), idempotent, never removed. */
 static void register_exception_tables(HINSTANCE hinstDLL) {
 	typedef BOOL (WINAPI *fnRAFT)(void *, DWORD, ULONG64);
+#ifdef BW_NO_EXC_REG
+	/* A/B 实验：clang 的 .pdata 条目经 RtlAddFunctionTable 注册后疑似污染
+	   ntdll 函数表（怪寄存器崩溃）；此开关跳过注册以定责 */
+	(void)hinstDLL; return;
+#endif
 	fnRAFT fn;
 	unsigned char * img;
 	IMAGE_DOS_HEADER * dos;

