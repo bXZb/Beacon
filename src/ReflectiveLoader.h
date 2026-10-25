@@ -33,6 +33,14 @@
 #include <winsock2.h>
 #include <intrin.h>
 
+#if defined(__clang__)
+/* clang-cl implements __debugbreak but has no __nop intrinsic (a long-standing
+   LLVM gap); MSVC's intrin.h declares __nop via #pragma intrinsic and emits it
+   in the compiler, so the 5K wall's per-nop calls would link as an undefined
+   external. Map the call to a real NOP instruction instead. */
+#define __nop() __asm nop
+#endif
+
 #include "ReflectiveDLLInjection.h"
 
 typedef HMODULE(WINAPI * LOADLIBRARYA)(LPCSTR);

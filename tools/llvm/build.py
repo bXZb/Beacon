@@ -48,7 +48,24 @@ DEFAULT_LIBS = [
 ]
 
 TRIPLE = {"x64": "x86_64-pc-windows-msvc", "x86": "i686-pc-windows-msvc"}
-ARCHDIR = {"x64": "x64", "x86": "x86"}
+# xwin splat arch dir spellings; probe because layouts differ across versions
+ARCHDIR_CANDIDATES = {"x64": ["x86_64", "x64"], "x86": ["x86", "i386"]}
+
+
+def arch_dirs(xwin_dir, platform):
+    # tolerate a missing splat (dry-run) by yielding the first candidate
+    if not os.path.isdir(xwin_dir):
+        for sub in ("crt/lib/", "sdk/lib/um/", "sdk/lib/ucrt/"):
+            yield f"{xwin_dir}/{sub}{ARCHDIR_CANDIDATES[platform][0]}"
+        return
+    for sub in ("crt/lib/", "sdk/lib/um/", "sdk/lib/ucrt/"):
+        for cand in ARCHDIR_CANDIDATES[platform]:
+            if os.path.isdir(f"{xwin_dir}/{sub}{cand}"):
+                yield f"{xwin_dir}/{sub}{cand}"
+                break
+        else:
+            die(f"xwin splat missing {sub}<arch> under {xwin_dir} "
+                f"(looked for {ARCHDIR_CANDIDATES[platform]})")
 
 
 def die(msg):
@@ -274,10 +291,8 @@ def link_command(proj, platform, xwin_dir, objs, out_dll, out_map):
         flags.append("/OPT:ICF")
     flags.append("/OUT:" + out_dll)
     flags.append("/MAP:" + out_map)
-    for sub in ("crt/lib/" + ARCHDIR[platform],
-                "sdk/lib/um/" + ARCHDIR[platform],
-                "sdk/lib/ucrt/" + ARCHDIR[platform]):
-        flags.append("/libpath:" + xwin_dir + "/" + sub)
+    for libdir in arch_dirs(xwin_dir, platform):
+        flags.append("/libpath:" + libdir)
     # repo root so the #pragma comment(lib, "lib/tomcrypt.x64.lib") relative
     # paths resolve (we always run with cwd = repo root)
     flags.append("/libpath:" + proj.repo)
