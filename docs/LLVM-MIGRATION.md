@@ -40,6 +40,10 @@ Release 形态：x64 `/O1 /GS- /MT /Zc:* /Gy /Gw /GR-`、C++17、MinSpace、LTCG
 已完成的 CRT 减负（Phase D 的地基）：`miniprintf.cpp`（甩 printf 链）、`der_stub/ecc_stub`
 （LTC 桩化）、`bw_heap.cpp`。定制 CRT 对我们只剩工程纯净度收益，降为可选。
 
+**关键事实（2026-10-25 复核）**：全树 **0 个 C++ STL 头、0 处 `new`/`delete`、零
+`namespace std`**（include 面只有 C 运行时头 + Windows SDK 头，不链 msvcprt）。MSVC 目标
+交叉编译最重的 STL 依赖在本仓库不存在——**Linux 主机构建因此成立**，见 §3 Phase A。
+
 ## 2. 约束现状（哪些"铁律"已经消失、哪些还在）
 
 | 约束 | 状态 | 说明 |
@@ -52,10 +56,17 @@ Release 形态：x64 `/O1 /GS- /MT /Zc:* /Gy /Gw /GR-`、C++17、MinSpace、LTCG
 
 ## 3. 技术选型（分相）
 
-- **Phase A：clang-cl + lld-link 侧车**。不动 MSBuild 主线，新增独立脚本直接调 clang-cl
-  镜像现有 flags（`build-llvm.ps1`，产物命名 `*.llvm.dll` 与 MSVC 产物并存）。保持 MSVC
-  ABI/CRT/对象格式，风险最小，tomcrypt lib 直接链接。vcxproj 的 `PlatformToolset=LLVM`
-  路线作为备选（一行改动但把主线耦合进实验，不采用）。
+- **Phase A：clang-cl + lld-link，Linux 交叉编译为默认轨**。clang 天生是交叉编译器，
+  lld-link 跨主机行为一致。Linux 主机路线：`clang-cl --target=x86_64-pc-windows-msvc`
+  + **xwin**（从微软官方源拉取 Windows SDK / MSVC CRT 头与库，可钉住 10.0.19041.0，
+  cargo-xwin 同源方案）+ lld-link。产物 ABI 与 MSVC 一致（静态 libcmt/vcruntime/libucrt），
+  tomcrypt COFF lib 直接链；`/Brepro` 消时间戳后与 Windows 侧 clang-cl 构建**逐字节 diff**
+  作为一致性门。Windows runner 侧车保留为对照轨。备选 llvm-mingw（x86_64-w64-windows-gnu，
+  完全自足无微软依赖，但 CRT/ABI 偏离现构建大）列为后期工具链自主期权，不作首选。
+  构建脚本纯 bash（`build-llvm.sh`，参数对齐 build.ps1），产物 `*.llvm.dll` 与 MSVC 并存；
+  vcxproj 的 `PlatformToolset=LLVM` 路线不采用（把主线耦合进实验）。
+  **战略意义**：TS 本就跑 Linux（192.168.100.98）——Linux 交叉编译使 Phase 5 的
+  TS 侧逐任务重编管道可原生跑在 TS 同机/同容器，无需 Windows 构建机。
 - **Phase B：变形 pass 管线（本线核心）**。两条注入路径，先 1 后 2：
   1. 每 TU in-process：`clang-cl -fpass-plugin=pass.dll`（new-PM 注册），简单、无链接改动；
   2. 全程序：`-flto` 产 bitcode → `lld-link` LTO 挂 plugin（跨 TU 变形、跨界内联后再变形，效果上限更高）。
@@ -88,12 +99,12 @@ Release 形态：x64 `/O1 /GS- /MT /Zc:* /Gy /Gw /GR-`、C++17、MinSpace、LTCG
 
 | Phase | 内容 | 验收门 |
 |---|---|---|
-| 0 | CI 侧车编译：windows-2022（LLVM 预装，版本写进产物名）、`build-llvm.ps1` × 4 变体 + winhttp + rl0k | 编译过/不过清单 + 体积对照表（**纯信息收集，无门槛**） |
+| 0 | CI 双轨编译：**Linux 为主**（ubuntu + 钉版本 LLVM + xwin，容器化可复现）+ windows-2022 侧车对照；`build-llvm` × 4 变体 + winhttp + rl0k + x86 | 编译过/不过清单 + 体积对照表 + 双端 `/Brepro` 字节 diff（差异须逐项归因） |
 | 1 | 形状验证：`load_smoke`（blob 补丁→LoadLibrary→导出验证）×4 变体；导出表/MAP/.pdata 对照；tomcrypt 链接确认 | load_smoke 全绿 + 导出名逐字节一致 |
 | 2 | 活体 A/B：cs-gradle sleeve 文件替换（非打槽）→ 六通道矩阵 + `evasion-lab` 扫描矩阵（PE-sieve/Moneta）与 MSVC 基线对照；UDRL 链（MSVC 烘焙 blob + clang beacon）混编验证；sleepmask 掩码表重派生 | MATRIX 全绿 + 扫描无回归 + 掩码窗口取证（等价性 diffs=0） |
 | 3 | pass 管线 MVP：1-2 个自研 pass + 种子；对自家已知签名做 YARA 自查；变形产物过 Phase 2 同套矩阵 | 逐构建形状唯一（哈希散列）+ 矩阵全绿 |
 | 4 | 主线切换决策点：clang-cl 默认或双轨并存 | 按 EVASION-ROADMAP Phase 0 矩阵双绿标准合入 `feat/post-4.9.1` |
-| 5 | TS 侧重编架构（跨仓库，与 cs-gradle 协同） | 另立规格文档 |
+| 5 | TS 侧重编架构（跨仓库，与 cs-gradle 协同）——Linux 交叉编译使重编管道可原生跑在 TS 同机，无需 Windows 构建机（本线最强的架构理由） | 另立规格文档 |
 
 ## 6. 与其他线的关系
 
@@ -105,12 +116,14 @@ Release 形态：x64 `/O1 /GS- /MT /Zc:* /Gy /Gw /GR-`、C++17、MinSpace、LTCG
 
 ## 7. 立即行动项（Phase 0 细目）
 
-1. `build-llvm.ps1`：参数镜像 `build.ps1`（-Project/-HttpLibrary/-Platform），内部定位
-   clang-cl/lld-link（vswhere 之外的 LLVM 安装路径或 PATH），flags 逐项照抄（`/nologo /W3
-   /O1 /GS- /MT /Zc:* /Gy /Gw /GR- /std:c++17 /Zl`——按 vcxproj Release|x64 实值核对），
-   产物 `<name>.<plat>.llvm.dll` + `.llvm.map`（lld-link `/MAP:`）。
-2. CI `llvm-x64` job：matrix × 4 变体 + winhttp + rl0k + x86；上传 `.llvm.*` 独立 artifact；
-   记录 clang 版本到 step summary。
+1. `build-llvm.sh`：参数对齐 `build.ps1`（-Project/-HttpLibrary/-Platform），Linux 主机定位
+   clang-cl/lld-link（钉版本），`xwin` 预取 SDK/CRT 到仓库外缓存（钉 10.0.19041.0），
+   flags 逐项照抄（`/nologo /W3 /O1 /GS- /MT /Zc:* /Gy /Gw /GR- /std:c++17`——按 vcxproj
+   Release|x64 实值核对），链接加 `/Brepro`，产物 `<name>.<plat>.llvm.dll` + `.llvm.map`
+   （lld-link `/MAP:`）。
+2. CI 双轨 job：`llvm-x64-linux`（ubuntu，主）+ `llvm-x64-win`（windows-2022，对照）；
+   matrix × 4 变体 + winhttp + rl0k + x86；上传 `.llvm.*` 独立 artifact；记录 clang/xwin
+   版本到 step summary；双端产物 sha256 对照表进本文件附录。
 3. 体积对照表进本文件附录（Phase 0 产出回填）。
 
 ---
