@@ -131,7 +131,7 @@ char * next_host_random(char * hosts) {
 		tokenIndex = -1;
 		// dlog("strategy.next_host_random - URI Index: %d \n", x);
 		/* 奇数 token 数（畸形 host,uri 列表）时 x 可能==tokenCount */
-		return (x < tokenCount) ? tokens[x] : "";
+		return (x < tokenCount) ? tokens[x] : (char *)"";
 	}
 }
 
@@ -286,7 +286,7 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 		uriOffset = 1;
 		// Return the host name at even array index: tokens[0,2,4,6,8...]
 		// dlog("strategy.next_host_priority_failover - Returning Index: %d Host: %s \n", tokenIndex, tokens[tokenIndex]);
-		return (tokenIndex >= 0 && tokenIndex < tokenCount) ? tokens[tokenIndex] : "";
+		return (tokenIndex >= 0 && tokenIndex < tokenCount) ? tokens[tokenIndex] : (char *)"";
 	}
 
 	// Set the URI flag OFF for the next invocation
@@ -296,7 +296,7 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 	// dlog("strategy.next_host_priority_failover - Returning Index: %d (+1) URI: %s \n", tokenIndex, tokens[tokenIndex + 1]);
 	{
 		int x = tokenIndex + 1;
-		return (x < tokenCount) ? tokens[x] : "";
+		return (x < tokenCount) ? tokens[x] : (char *)"";
 	}
 }
 
