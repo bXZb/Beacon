@@ -1,6 +1,7 @@
 //===============================================================================================//
 // This is a stub for the actuall functionality of the DLL.
 //===============================================================================================//
+#include <stdio.h>
 #include "ReflectiveLoader.h"
 #include "beacon.h"
 #include "datastore.h"
