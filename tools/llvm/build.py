@@ -281,6 +281,7 @@ def per_file_flags(meta, proj, is_c_file):
 def link_command(proj, platform, xwin_dir, objs, out_dll, out_map):
     lk = proj.link
     flags = ["/NOLOGO", "/DLL", "/Brepro",
+             "/ENTRY:_DllMainCRTStartup",  # 显式入口：lld 默认解析曾指向函数中段（RIP 落在指令内部）
              "/MACHINE:" + ("X64" if platform == "x64" else "X86")]
     if lk.get("SubSystem"):
         flags.append("/SUBSYSTEM:" + lk["SubSystem"].upper())
