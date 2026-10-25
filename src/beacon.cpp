@@ -90,8 +90,22 @@ static void bw_diag(const char *stage, long v) {
 		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE) return;
 	SetFilePointer(h, 0, NULL, FILE_END);
-	char buf[96];
-	int n = _snprintf(buf, sizeof(buf), "[%u] %s %ld\r\n", GetTickCount(), stage, v);
+	char buf[96]; int n = 0;
+	unsigned int t = GetTickCount();
+	buf[n++] = '[';
+	for (int sh = 28; sh >= 0; sh -= 4) {
+		int d = (t >> sh) & 0xF;
+		buf[n++] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
+	}
+	buf[n++] = ']'; buf[n++] = ' ';
+	while (*stage && n < 70) buf[n++] = *stage++;
+	buf[n++] = ' ';
+	unsigned long uv = (unsigned long)v;
+	if ((long)uv < 0) { buf[n++] = '-'; uv = (unsigned long)(-(long)uv); }
+	char tmp[24]; int m = 0;
+	do { tmp[m++] = (char)('0' + uv % 10); uv /= 10; } while (uv);
+	while (m > 0 && n < 90) buf[n++] = tmp[--m];
+	buf[n++] = '\r'; buf[n++] = '\n';
 	DWORD w; WriteFile(h, buf, n, &w, NULL);
 	CloseHandle(h);
 }

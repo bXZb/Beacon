@@ -161,12 +161,23 @@ static SYSCALL_API_UD g_udrl_syscalls = { NULL, 0 };
 
 /* BW_DIAG 前导链标记（定位 LLVM 版 pre-beacon 崩溃点） */
 static void bw_diag2(const char *stage) {
+	/* 无 CRT 依赖（_snprintf 在 LLVM+反射组合下崩——见 vsprintf_s 取证）：
+	   手搓 [tick] stage
+ */
 	HANDLE h = CreateFileA("C:\\lab\\diag2.txt", GENERIC_WRITE, FILE_SHARE_READ,
 		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE) return;
 	SetFilePointer(h, 0, NULL, FILE_END);
-	char buf[80];
-	int n = _snprintf(buf, sizeof(buf), "[%u] %s\r\n", GetTickCount(), stage);
+	char buf[96]; int n = 0;
+	unsigned int t = GetTickCount();
+	buf[n++] = '[';
+	for (int sh = 28; sh >= 0; sh -= 4) {
+		int v = (t >> sh) & 0xF;
+		buf[n++] = (char)(v < 10 ? '0' + v : 'A' + v - 10);
+	}
+	buf[n++] = ']'; buf[n++] = ' ';
+	while (*stage && n < 90) buf[n++] = *stage++;
+	buf[n++] = '\r'; buf[n++] = '\n';
 	DWORD w; WriteFile(h, buf, n, &w, NULL);
 	CloseHandle(h);
 }
