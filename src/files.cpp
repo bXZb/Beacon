@@ -7,7 +7,7 @@
 #include "bformat.h"
 #include "beacon.h"
 #include "track_memory.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 
 typedef struct {
 	unsigned int    id;

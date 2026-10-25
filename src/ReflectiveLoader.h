@@ -30,7 +30,7 @@
 //===============================================================================================//
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <Winsock2.h>
+#include <winsock2.h>
 #include <intrin.h>
 
 #include "ReflectiveDLLInjection.h"
@@ -68,7 +68,7 @@ __forceinline DWORD ror( DWORD d )
 
 __forceinline DWORD hash( char * c )
 {
-    register DWORD h = 0;
+    DWORD h = 0;
 	do
 	{
 		h = ror( h );

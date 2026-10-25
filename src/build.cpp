@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <wininet.h>
 #include "build.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 
 /* nonce/counter associated with this beacon session */
 int nonce = 1;

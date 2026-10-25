@@ -4,7 +4,7 @@
  * OK, this is just a PE/COFF file parsed and linked by Cobalt Strike's Beacon. It's nothing too special.
  * This is the code to make all of it work though.
  */
-#include <Windows.h>
+#include <windows.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>

@@ -14,7 +14,7 @@
 #include "functions.h"
 #include "bformat.h"
 #include "inlinecommon.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 #include "jobs.h"
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */

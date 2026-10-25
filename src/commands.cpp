@@ -10,7 +10,7 @@
 #include "process.h"
 #include "jobs.h"
 #include "functions.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 #include "channel.h"
 
 /* 我们应该休眠多长时间... */

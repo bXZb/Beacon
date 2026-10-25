@@ -12,7 +12,7 @@
  * (armed in command_inline_execute_object / command_interpreter, disarmed
  * when it returns), so background exceptions keep their normal path.
  */
-#include <Windows.h>
+#include <windows.h>
 #include <stdio.h>
 
 typedef struct _CD_STATE {

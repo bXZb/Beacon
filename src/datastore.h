@@ -1,5 +1,5 @@
 #pragma once
-#include <Windows.h>
+#include <windows.h>
 #include "track_memory.h"
 
 #define DATA_STORE_TYPE_EMPTY        0

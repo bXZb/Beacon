@@ -6,7 +6,7 @@
 #include <windows.h>
 #include <wininet.h>
 #include <windns.h>
-#include <WinSock2.h>
+#include <winsock2.h>
 #include <WS2tcpip.h>
 #include "crypto.h" /* P4.15: 不再直接依赖 tomcrypt */
 #include "beacon.h"

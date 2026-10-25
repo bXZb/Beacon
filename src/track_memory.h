@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Windows.h>
+#include <windows.h>
 
 #define TRACK_MEMORY_MALLOC 1
 #define TRACK_MEMORY_VALLOC 2

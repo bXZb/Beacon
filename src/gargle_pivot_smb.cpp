@@ -1,5 +1,5 @@
 /* gargle! */
-#include <WinSock2.h>
+#include <winsock2.h>
 #include <windows.h>
 #include <intrin.h>
 #include "beacon.h"

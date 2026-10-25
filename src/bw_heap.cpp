@@ -11,7 +11,7 @@
  * contract MSVC malloc gives, so xmm-sized buffer stores stay legal. The
  * heap is never destroyed: it dies with the process, and the tracked
  * path (track_memory_cleanup) already frees the individual blocks. */
-#include <Windows.h>
+#include <windows.h>
 #include <stddef.h>
 
 static HANDLE g_bw_heap;

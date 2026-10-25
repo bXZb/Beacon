@@ -1,5 +1,5 @@
 /* 用于获取和设置Beacon设置的API */
-#include <Windows.h>
+#include <windows.h>
 #include <stdlib.h>
 #include "parse.h"
 #include "beacon.h"

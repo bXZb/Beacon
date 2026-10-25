@@ -10,7 +10,7 @@
 #include "beacon.h"
 #include "parse.h"
 #include "bformat.h"
-#include <WinSock2.h>
+#include <winsock2.h>
 
 /* populate a buffer with DOMAIN\user from a token.
    Return TRUE on success. FALSE otherwise  */

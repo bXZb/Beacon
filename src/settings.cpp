@@ -1,7 +1,7 @@
 /* API to retrieve and set Beacon settings */
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <Windows.h>
+#include <windows.h>
 #include <stdlib.h>
 #include <string.h>
 #include "parse.h"

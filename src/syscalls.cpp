@@ -41,7 +41,7 @@
  * DR check: EDR hardware-breakpoint hooks (Cymulate Blindside lineage)
  * live in DR0-3; the gate samples and clears them on resolve and every
  * 128th dispatch. */
-#include <Windows.h>
+#include <windows.h>
 #include <string.h>
 #include "syscalls.h"
 #include "datastore.h"

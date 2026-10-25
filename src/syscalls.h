@@ -1,5 +1,5 @@
 #pragma once
-#include <Windows.h>
+#include <windows.h>
 
 /* Phase 2 unified execution gate (docs/EVASION-ROADMAP.md section 13.2).
  * Win32-shaped wrappers honouring the operator's syscall_method setting:
