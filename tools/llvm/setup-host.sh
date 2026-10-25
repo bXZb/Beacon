@@ -56,12 +56,12 @@ if [[ ! -d "$ROOT/xwin-splat/sdk/lib" ]]; then
   XWIN_BIN="$(find "$ROOT" -maxdepth 2 -type f -name 'xwin*' | head -1)"
   chmod +x "$XWIN_BIN" 2>/dev/null || true
   if [[ "$OS" == Linux ]]; then
-    "$XWIN_BIN" --accept-license splat --arch x64 --arch x86 \
-      --output "$ROOT/xwin-splat"
+    "$XWIN_BIN" --accept-license --arch x64 --arch x86 \
+      splat --output "$ROOT/xwin-splat"
   else
     # symlinked casings need dev mode on windows; real copies are equivalent
-    "$XWIN_BIN" --accept-license splat --arch x64 --arch x86 \
-      --disable-symlinks --output "$ROOT/xwin-splat"
+    "$XWIN_BIN" --accept-license --arch x64 --arch x86 \
+      splat --disable-symlinks --output "$ROOT/xwin-splat"
   fi
   rm -f "$ROOT/xwin.tar.gz"
 fi
