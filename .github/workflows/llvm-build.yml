@@ -1,0 +1,185 @@
+name: llvm-build
+
+# LLVM 工具链侧车（docs/LLVM-MIGRATION.md Phase 0/1）：
+#   linux-x64   — 主轨：Linux 交叉编译全部变体（clang-cl --target windows-msvc
+#                 + xwin SDK/CRT + lld-link）
+#   windows-x64 — 对照轨：同一钉版 LLVM 在 Windows 主机构建 beacon 子集 +
+#                 MSVC 基线 load_smoke（Phase 1 门）+ 导出表对照
+#   byte-diff   — 双轨产物 /Brepro sha256 对照（实验性，暂不阻断：跨主机
+#                 字节一致是目标态，首轮数据先归因）
+on:
+  push:
+    branches: [llvm]
+  workflow_dispatch:
+
+env:
+  LLVM_VERSION: 19.1.7
+  XWIN_VERSION: 0.10.0
+
+jobs:
+  linux-x64:
+    name: linux cross (all variants)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cross toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.llvm-cross
+          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-linux-v1
+
+      - name: Setup LLVM + xwin
+        shell: bash
+        run: bash tools/llvm/setup-host.sh
+
+      - name: Build all x64 variants
+        shell: bash
+        run: |
+          set -e
+          B="python3 tools/llvm/build.py --clang-cl $HOME/.llvm-cross/llvm/bin/clang-cl \
+             --lld-link $HOME/.llvm-cross/llvm/bin/lld-link --xwin-dir $HOME/.llvm-cross/xwin-splat"
+          $B --project beacon --platform x64
+          $B --project beacon --platform x64 --http winhttp
+          $B --project beacon --platform x64 --bofwin
+          $B --project dnsb   --platform x64
+          $B --project extc2  --platform x64
+          $B --project pivot  --platform x64
+
+      - name: Size report
+        shell: bash
+        run: |
+          {
+            echo '### llvm linux-x64 build sizes'
+            echo '| variant | dll | bytes |'
+            echo '|---|---|---|'
+            python3 -c "
+import json
+for e in json.load(open('llvm-out/_sizes.json')):
+    print(f\"| {e['variant']} | {e['dll']} | {e['bytes']} |\")"
+            echo '(MSVC 基线对照见主 build.yml 的 step summary)'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-linux-x64
+          path: |
+            llvm-out/*.dll
+            llvm-out/*.map
+            llvm-out/_sizes.json
+
+  windows-x64:
+    name: windows host (sidecar + phase-1 gate)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache xwin splat
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\.llvm-cross
+          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-win-v1
+
+      - name: Setup LLVM + xwin
+        run: bash tools/llvm/setup-host.sh
+
+      - name: Build llvm sidecar (beacon subset)
+        run: |
+          set -e
+          CLANG="C:/Program Files/LLVM/bin/clang-cl"
+          LLD="C:/Program Files/LLVM/bin/lld-link"
+          XW="$(cygpath -m "$HOME/.llvm-cross/xwin-splat")"
+          python tools/llvm/build.py --clang-cl "$CLANG" --lld-link "$LLD" --xwin-dir "$XW" --project beacon --platform x64
+          python tools/llvm/build.py --clang-cl "$CLANG" --lld-link "$LLD" --xwin-dir "$XW" --project beacon --platform x64 --http winhttp
+          python tools/llvm/build.py --clang-cl "$CLANG" --lld-link "$LLD" --xwin-dir "$XW" --project beacon --platform x64 --bofwin
+
+      - name: Setup MSVC (baseline + smoke harness)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build MSVC baseline beacon
+        shell: pwsh
+        run: ./build.ps1 -Project beacon -Toolset v143
+
+      - name: Compile load_smoke harness
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tests\_build | Out-Null
+          & cl /nologo /W3 /EHsc /MT tests\load_smoke.cpp /Fe:tests\_build\load_smoke.exe /Fo:tests\_build\
+          if ($LASTEXITCODE -ne 0) { throw "load_smoke build failed" }
+
+      - name: load_smoke — MSVC baseline (sanity)
+        run: ./tests/_build/load_smoke.exe x64/Release/beacon.x64.dll
+
+      - name: load_smoke — LLVM build (Phase 1 gate)
+        run: |
+          ./tests/_build/load_smoke.exe llvm-out/beacon.x64.llvm.dll
+          ./tests/_build/load_smoke.exe llvm-out/winhttpb.x64.llvm.dll
+          ./tests/_build/load_smoke.exe llvm-out/beacon.x64.rl0k.llvm.dll
+
+      - name: Export table diff (MSVC vs LLVM)
+        run: |
+          RO="C:/Program Files/LLVM/bin/llvm-readobj.exe"
+          python tools/llvm/compare_exports.py "$RO" x64/Release/beacon.x64.dll llvm-out/beacon.x64.llvm.dll
+
+      - name: Size report
+        shell: pwsh
+        run: |
+          $rows = (Get-ChildItem llvm-out/*.llvm.dll | ForEach-Object { "| $($_.Name) | $($_.Length) |" }) -join "`n"
+          $msvc = Get-Item x64/Release/beacon.x64.dll
+          "### llvm windows-x64 sidecar`n`n| dll | bytes |`n|---|---|`n$rows`n| MSVC baseline beacon.x64.dll | $($msvc.Length) |`n" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-windows-x64
+          path: |
+            llvm-out/*.dll
+            llvm-out/*.map
+
+  byte-diff:
+    name: dual-host /Brepro diff (experimental)
+    needs: [linux-x64, windows-x64]
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: llvm-linux-x64, path: lin }
+      - uses: actions/download-artifact@v4
+        with: { name: llvm-windows-x64, path: win }
+
+      - name: sha256 compare
+        shell: bash
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import hashlib, os
+          def sums(d):
+              out = {}
+              for f in sorted(os.listdir(d)):
+                  if f.endswith(".dll"):
+                      h = hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
+                      out[f] = h
+              return out
+          lin, win = sums("lin"), sums("win")
+          print("### dual-host byte-diff (/Brepro)\n")
+          print("| dll | linux sha256 | windows sha256 | identical |")
+          print("|---|---|---|---|")
+          mismatch = []
+          for f in sorted(set(lin) | set(win)):
+              a, b = lin.get(f, "-"), win.get(f, "-")
+              same = "YES" if a == b else "no"
+              if a != b and (f in lin) and (f in win):
+                  mismatch.append(f)
+              print(f"| {f} | {a[:16]} | {b[:16]} | {same} |")
+          print(f"\nbyte-identical: {len(lin) - len(mismatch)}/{len(lin)}")
+          # 名字集合必须一致；哈希不同只报告不阻断（首轮归因用）
+          if set(lin) != set(win):
+              print(f"variant set mismatch: lin-only={set(lin)-set(win)} win-only={set(win)-set(lin)}")
+              raise SystemExit(1)
+          EOF
