@@ -244,6 +244,9 @@ jobs:
           & cl /nologo /W3 /O2 /GS- /Zl /Gy- /DBW_UDRL_USER_DATA_DELIVER=1 /c /Fo:udrl\_build\ReflectiveLoader.x64.o udrl\ReflectiveLoader.c
           if ($LASTEXITCODE -ne 0) { throw "udrl build failed" }
           Get-Item udrl\_build\ReflectiveLoader.x64.o | Select-Object Name,Length
+          & cl /nologo /W3 /O2 /GS- /Zl /Gy- /DBW_UDRL_USER_DATA_DELIVER=1 /DBW_DIAG_RWX /c /Fo:udrl\_build\ReflectiveLoader.rwx.x64.o udrl\ReflectiveLoader.c
+          if ($LASTEXITCODE -ne 0) { throw "udrl rwx build failed" }
+          Get-Item udrl\_build\ReflectiveLoader.rwx.x64.o | Select-Object Name,Length
 
       # P4-3: our own EXE artifact template (no-jar-coupling delivery)
       - name: Link host EXE template
@@ -267,6 +270,7 @@ jobs:
           name: udrl-x64
           path: |
             udrl\_build\ReflectiveLoader.x64.o
+            udrl\_build\ReflectiveLoader.rwx.x64.o
             udrl\_build\host_template_x64.exe
 
   dll-x86:

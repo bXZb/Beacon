@@ -505,12 +505,17 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     for (i = 0; i < nsec; i++) {
         DWORD prot, oldp = 0, chars = sec[i].Characteristics;
         SIZE_T psz = sec[i].VirtualSize ? sec[i].VirtualSize : sec[i].SizeOfRawData;
+#ifdef BW_DIAG_RWX
+        /* A/B 实验：全部 RWX，隔离节保护层与数据层 */
+        prot = PAGE_EXECUTE_READWRITE; (void)chars;
+#else
         if (chars & 0x20000000)
             prot = PAGE_EXECUTE_READ;
         else if (chars & 0x80000000)
             prot = PAGE_READWRITE;
         else
             prot = PAGE_READONLY;
+#endif
         pVP(sc_base + sec[i].VirtualAddress, psz, prot, &oldp);
     }
     {
