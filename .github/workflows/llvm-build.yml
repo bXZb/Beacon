@@ -160,8 +160,7 @@ jobs:
               out = {}
               for f in sorted(os.listdir(d)):
                   if f.endswith(".dll"):
-                      h = hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
-                      out[f] = h
+                      out[f] = hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
               return out
           lin, win = sums("lin"), sums("win")
           print("### dual-host byte-diff (/Brepro)\n")
@@ -170,13 +169,14 @@ jobs:
           mismatch = []
           for f in sorted(set(lin) | set(win)):
               a, b = lin.get(f, "-"), win.get(f, "-")
-              same = "YES" if a == b else "no"
-              if a != b and (f in lin) and (f in win):
+              same = "YES" if a == b else ("n/a (single-host)" if f not in lin or f not in win else "no")
+              if f in lin and f in win and a != b:
                   mismatch.append(f)
               print(f"| {f} | {a[:16]} | {b[:16]} | {same} |")
-          print(f"\nbyte-identical: {len(lin) - len(mismatch)}/{len(lin)}")
-          # 名字集合必须一致；哈希不同只报告不阻断（首轮归因用）
-          if set(lin) != set(win):
-              print(f"variant set mismatch: lin-only={set(lin)-set(win)} win-only={set(win)-set(lin)}")
+          # windows sidecar builds the beacon subset only: win must be a subset
+          if not set(win) <= set(lin):
+              print(f"\nvariant set mismatch: win-only={set(win)-set(lin)}")
               raise SystemExit(1)
+          common = [f for f in win if f in lin]
+          print(f"\nbyte-identical: {len(common)-len(mismatch)}/{len(common)} common")
           EOF

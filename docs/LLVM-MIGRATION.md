@@ -128,6 +128,67 @@ Release 形态：x64 `/O1 /GS- /MT /Zc:* /Gy /Gw /GR-`、C++17、MinSpace、LTCG
 
 ---
 
+## 附录 A：Phase 0/1 结果（2026-10-25，HEAD `5759ff6` 线，CI run 全绿）
+
+**结论：clang-cl 19.1.7 + lld-link + xwin 0.10.0 全树编译链接成功；双主机
+（ubuntu-22.04 交叉 vs windows-2022 本机）产物 /Brepro 字节级一致；Windows
+对照轨 load_smoke 对三个 LLVM DLL 全过；MSVC vs LLVM 导出表一致。**
+
+### 产物与体积（x64，同提交对照）
+
+| 变体 | LLVM (bytes) | MSVC (bytes) | Δ |
+|---|---|---|---|
+| beacon (wininet) | 489472 | 561152 | **-12.8%** |
+| winhttpb | 489472 | — | |
+| beacon rl0k (BOFWIN) | 494080 | — | |
+| dnsb | 301568 | — | |
+| extc2 | 292864 | — | |
+| pivot | 293888 | — | |
+
+意外收获：未做任何定制 CRT，clang 产物已比 MSVC 小 12.8%（/O1 下 clang 的
+code sel + 更紧的 CRT 拉入）。体积对我们不是目标，但白赚。
+
+### 双主机确定性
+
+三个共同变体 sha256 **完全一致**（fd565ae8…、a52d3b69…、36c30fc4…）——
+同一 LLVM release + 同一 xwin SDK/CRT + `/Brepro` 下，Linux 交叉产物与
+Windows 本机产物逐比特相同。这是后续一切"TS 同机重编"信任链的基石。
+
+### 已验收门
+
+- [x] Phase 0：CI 双轨全变体编译链接（llvm-build.yml，llvm 分支每次 push）
+- [x] Phase 1：load_smoke ×3 LLVM DLL 全过（blob 补丁→LoadLibrary→CRT 初始化
+      →DllMain→settings 解析→ReflectiveLoader 导出→干净卸载）
+- [x] Phase 1：导出表对照（compare_exports.py，MSVC vs LLVM 名单一致）
+- [x] Phase 0：双主机字节 diff（byte-diff job，实验性转常规）
+- [ ] Phase 2：活体 A/B（需实验室基础设施：cs-gradle sleeve 替换 + 六通道矩阵
+      + PE-sieve/Moneta）——本线下一站
+- [ ] x86：build.py 已支持（Win32 平台名映射 + bw_heap 排除解析验证过），
+      待 x86 tomcrypt lib 供给（thirdparty/build_trimmed.ps1 产物）后开轨
+
+### 源码适配清单（全部对 MSVC 无害、已验证 MSVC CI 同绿）
+
+1. `#include` 大小写规范化：`Tlhelp32.h`×7 文件、`Windows.h`/`WinSock2.h`/
+   `Winsock2.h` 全量 → 小写规范名（NTFS 大小写不敏感掩盖了 14 年，Linux 一击即中）
+2. `strategy.cpp` 三处 `cond ? tokens[x] : ""` 的 const char* 收敛 → 显式
+   `(char *)""`（MSVC 宽容扩展，clang 报错）
+3. `ReflectiveLoader.h`：`__nop() → __asm nop`（clang 无 `__nop` 内建，5K 墙的
+   全部 nop 调用会变成未解析外部符号）；`register` 存储类移除（C++17 已删）
+
+### 基础设施要点（踩坑记录）
+
+- xwin 0.10：`--arch x86_64`（非 x64）且为**全局选项**须置于 `splat` 前；
+  splat 架构目录名也是 `x86_64`（build.py 探测两种拼写）
+- Windows 主机：xwin `--cache-dir` 必须与 splat 输出**同盘**（跨盘 vsix→splat
+  rename 报 os error 17）；runner 预装 LLVM 是失控版本，钉版安装走 NSIS
+  `/D=` 进缓存目录
+- workflow YAML：`run: |` 字面块内的多行 `python3 -c "..."` 续行若在第 0 列
+  会终止字面块、裸露内容变成顶层键——多行脚本一律独立文件（tools/llvm/*）
+- CI 缓存：`~/.llvm-cross`（LLVM+xwin splat，约 5GB），job 失败不回存
+  （actions/cache post-if: success()），首轮失败会反复重下
+
+---
+
 维护约定：本分支只做工具链迁移与 pass 管线；beacon 功能改动仍在 `feat/post-4.9.1`，
 本分支定期 rebase 其上（像 evasion-research 对 4.9.1 的关系）。Phase 4 通过后本分支
 使命终结，内容并回主线。
