@@ -45,10 +45,6 @@ static void register_exception_tables(HINSTANCE hinstDLL) {
 	 * beacon 主循环不依赖 SEH 展开——跳过注册。 */
 	(void)hinstDLL; return;
 #endif
-	/* A/B 实验：clang 的 .pdata 条目经 RtlAddFunctionTable 注册后疑似污染
-	   ntdll 函数表（怪寄存器崩溃）；此开关跳过注册以定责 */
-	(void)hinstDLL; return;
-#endif
 	fnRAFT fn;
 	unsigned char * img;
 	IMAGE_DOS_HEADER * dos;
