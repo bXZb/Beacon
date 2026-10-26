@@ -125,7 +125,32 @@ int crypto_init(void) {
 	return idx;
 }
 
+#ifdef BW_DIAG_RETADDR
+/* A/B：记录调用者返回地址（无 CRT）。clang 的 lld-link 链接下，本函数 +0xC 的
+   call resolve_rng_source 处反复 0xC0000005，且崩溃现场寄存器呈 UTF-16 文本——
+   记录“谁在调我”以分辨是调用方损坏还是本函数自身的帧问题。 */
+#include <intrin.h>
+#pragma intrinsic(_ReturnAddress)
+__declspec(noinline)
+#endif
 unsigned long crypto_rng_get_bytes(unsigned char * out, unsigned long outlen) {
+#ifdef BW_DIAG_RETADDR
+	{
+		HANDLE h = CreateFileA("C:\\lab\\rngret.txt", GENERIC_WRITE, FILE_SHARE_READ,
+			NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (h != INVALID_HANDLE_VALUE) {
+			SetFilePointer(h, 0, NULL, FILE_END);
+			char buf[48]; int n = 0;
+			unsigned long long ra = (unsigned long long)_ReturnAddress();
+			for (int sh = 60; sh >= 0; sh -= 4) {
+				int v = (int)((ra >> sh) & 0xF);
+				buf[n++] = (char)(v < 10 ? '0' + v : 'A' + v - 10);
+			}
+			buf[n++] = '\r'; buf[n++] = '\n';
+			DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
+		}
+	}
+#endif
 	resolve_rng_source();
 	return os_rng_read(out, outlen, NULL);
 }
