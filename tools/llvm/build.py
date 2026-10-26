@@ -180,7 +180,8 @@ def collect_files(root, props):
     return files
 
 
-def load_project(repo, name, platform, http, bofwin, pause, no_exc=False, diag_ret=False):
+def load_project(repo, name, platform, http, bofwin, pause, no_exc=False,
+                 diag_ret=False, plain_sleep=False):
     # vcxproj platform name for 32-bit is Win32; x86 is our CLI spelling
     msbuild_platform = "Win32" if platform == "x86" else platform
     props = {
@@ -194,6 +195,7 @@ def load_project(repo, name, platform, http, bofwin, pause, no_exc=False, diag_r
         "BeaconInjectPause": "true" if pause else "",
         "BeaconNoExcReg": "true" if no_exc else "",
         "BeaconDiagRetaddr": "1" if diag_ret else "",
+        "BeaconPlainSleep": "true" if plain_sleep else "",
         "CSOptimized": "MinSpace",
         # unset in the projects themselves; defines expand to "RefLoadSize="
         "RefLoadSize": "",
@@ -313,6 +315,9 @@ def main():
     ap.add_argument("--platform", default="x64", choices=["x64", "x86"])
     ap.add_argument("--http", default="wininet", choices=["wininet", "winhttp"])
     ap.add_argument("--bofwin", action="store_true")
+    ap.add_argument("--plain-sleep", action="store_true",
+                    help="force GargleSleep Sleep() passthrough (nook=0) - "
+                         "LLVM section layout breaks the gen3 mask table")
     ap.add_argument("--diag-retaddr", action="store_true",
                     help="define BW_DIAG_RETADDR: log RNG caller return addresses")
     ap.add_argument("--no-excreg", action="store_true",
@@ -332,7 +337,8 @@ def main():
     repo = os.path.abspath(args.repo).replace(os.sep, "/")
     xwin = os.path.abspath(args.xwin_dir).replace(os.sep, "/")
     proj = load_project(repo, args.project, args.platform, args.http,
-                        args.bofwin, args.pause, args.no_excreg, args.diag_retaddr)
+                        args.bofwin, args.pause, args.no_excreg, args.diag_retaddr,
+                        args.plain_sleep)
 
     variant = f"{args.project}-{args.platform}-{args.http}"
     if args.bofwin:

@@ -50,6 +50,8 @@ jobs:
           mv llvm-out-noex/beacon.x64.llvm.dll llvm-out/beacon.noexcreg.llvm.dll 2>/dev/null || true
           "${B[@]}" --project beacon --platform x64 --diag-retaddr --out-dir llvm-out-rng 2>/dev/null || true
           mv llvm-out-rng/beacon.x64.llvm.dll llvm-out/beacon.rngdiag.llvm.dll 2>/dev/null || true
+          "${B[@]}" --project beacon --platform x64 --plain-sleep --out-dir llvm-out-ps 2>/dev/null || true
+          mv llvm-out-ps/beacon.x64.llvm.dll llvm-out/beacon.plainsleep.llvm.dll 2>/dev/null || true
 
       - name: Size report
         shell: bash

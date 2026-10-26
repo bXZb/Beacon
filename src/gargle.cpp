@@ -44,6 +44,12 @@ static int kit_path_forced(void) {
 }
 
 void GargleSleep(DWORD time) {
+#ifdef BW_PLAIN_SLEEP
+	/* LLVM A/B：节布局差异使 gen3 掩码表错位（见 llvm 分支附录 B），
+	 * 强制纯 Sleep() 直通以隔离掩码子系统 */
+	Sleep(time);
+	return;
+#endif
 #if !defined(_M_IX86)
 	GARGLEF func;
 #endif
