@@ -268,3 +268,35 @@ Windows 本机产物逐比特相同。这是后续一切"TS 同机重编"信任�
 - cdb 10.0（用户安装的 WinDbg Preview）在
   C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\Microsoft.WinDbg_8wekyb3d8bbwe\cdbX64.exe。
 - payloads/g3x.exe 已重拼（llvmK plainsleep + llvmK .o loader + host template）。
+
+
+---
+
+## 附录 D：真死点终局定性（2026-10-26 晚，收口）
+
+### 决定性事实链（全部有 dump/cdb/字节级证据）
+1. 死点 RVA 在 LLVM 各构建间漂移（0x1cc6d/0x1d8a5/0x1cfdc…），但**内存中执行的
+   字节恒为同一形态**（movzx eax,[rbp+0xC8] / ff ????），而**文件字节恒为合法
+   call 链**（各构建的 crypto_rng_get_bytes 序言）→ **执行页内容 ≠ 交付 DLL 内容**，
+   与具体 build 无关。
+2. 牺牲模块 spwizimg 是**纯资源 DLL**（EP=0、仅 .rdata+.rsrc、无代码节）——
+   该地址的所有"代码"都是 loader stomp 写入的 beacon .text。
+3. 因此唯一自洽解释：**stomp 写入发生过（否则到不了 beacon 循环），之后该页内容
+   被还原/解映射**——dbg11 实录 ZwUnmapViewOfSection + "Unload module spwizimg"。
+   寄存器签名（Rax=0x1f800010001f、Rcx=UTF-16 "3++S"）跨所有崩溃一致，指向
+   spwizimg 原始资源数据页被执行/比较。
+4. MSVC 构建同机制 300+ 周期稳定 → 差异不在 stomp 逻辑本身，而在 **LLVM 构建
+   触发了某个 MSVC 构建不触发的 unmap 路径**（候选：http 失败降级路径里的
+   FreeLibrary；loader pFL 残留引用；或 spwizimg 引用计数归零的系统卸载）。
+
+### 下轮第一枪（管线全部就绪）
+- **延迟附加 watchpoint**：等 beacon 进 cycle 100 后再 `cdb -p <pid>` 附加，
+  `ba w4 spwizimg+0x1cfd8`（8B 对齐）→ 抓"还原者"的精确 RIP 与调用栈。
+- 或 `!vprot` 快照周期前后页状态（commit/RW → free = unmap 实锤）。
+- 定位 unmap 来源后的修复方向：禁用该路径（编译开关）或换牺牲策略。
+
+### 今晚已入库的确定性成果
+- lld EP 错位修复（/ENTRY，字节级验证）+ miniprintf/_snprintf 家族在 LLVM+
+  反射组合下的踩栈证据 + CRT-free 诊断技术 + cdb 10.0 自动化取证管线
+  （WinRM 驱动、PUT 日志回收、ba 数据断点、sxe first/second-chance）。
+- 附录 A/B/C/D 完整战报。所有诊断开关（diag/diag2/diag7~14）待根因修复后统一回滚。
