@@ -40,8 +40,28 @@ static DWORD bw_rva_to_raw(unsigned char *flat, DWORD lfanew, DWORD rva)
 
 #define BW_MAX_FILE 0x2000000 /* 32 MB ceiling for sanity */
 
+/* BW_DIAG: 失败码落盘（无 CRT）。code = bw_die 各出口编号，1..9 见下。 */
+static void bw_die_mark(DWORD code)
+{
+	HANDLE h = CreateFileA("C:\\lab\\he.txt", FILE_APPEND_DATA,
+		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	SetFilePointer(h, 0, NULL, FILE_END);
+	char buf[32]; int n = 0;
+	unsigned int t = GetTickCount();
+	for (int sh = 28; sh >= 0 && n < 8; sh -= 4)
+		buf[n++] = "0123456789ABCDEF"[(t >> sh) & 0xF];
+	buf[n++] = ' ';
+	for (int sh = 28; sh >= 0 && n < 14; sh -= 4)
+		buf[n++] = "0123456789ABCDEF"[(code >> sh) & 0xF];
+	buf[n++] = '\r'; buf[n++] = '\n';
+	DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
+}
+
 static void bw_die(DWORD code)
 {
+	bw_die_mark(code);
 	ExitThread(code);
 }
 
@@ -151,6 +171,7 @@ void bw_entry(void)
 	if (loader == NULL)
 		bw_die(9);
 
+	bw_die_mark(0xA0);
 	loader((LPVOID)flat); /* never returns (DllMain reason 4) */
 	bw_die(0);
 }

@@ -385,8 +385,27 @@ static __forceinline int bw_fix_extern_thunks(unsigned char * image, DWORD size_
  * emit if the helpers actually inline). */
 #pragma code_seg(".text$aaa")
 
+/* BW_DIAG: loader 阶段标记（无 CRT） */
+static void bw_ld(const char * stage)
+{
+	HANDLE h = CreateFileA("C:\\lab\\ld.txt", FILE_APPEND_DATA,
+		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	SetFilePointer(h, 0, NULL, FILE_END);
+	char buf[64]; int n = 0;
+	unsigned int t = (unsigned int)GetTickCount64();
+	for (int sh = 28; sh >= 0 && n < 8; sh -= 4)
+		buf[n++] = "0123456789ABCDEF"[(t >> sh) & 0xF];
+	buf[n++] = ' ';
+	while (*stage && n < 60) buf[n++] = *stage++;
+	buf[n++] = '\r'; buf[n++] = '\n';
+	DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
+}
+
 __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 {
+    bw_ld("enter");
     unsigned char * flat;
     unsigned long long kern;
     BW_LOADLIBA    pLoadLibraryA;
@@ -424,12 +443,12 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         kern = (unsigned long long)bw_find_module(kname);
     }
     if (kern == 0)
-        return 0;
+{ bw_ld("fail L446"); return 0; }
 
     pVA             = (BW_VALLOC)    bw_find_export_hash((void *)kern, BW_H_VIRTUALALLOC);
     pVQ             = (BW_VQUERY)    bw_find_export_hash((void *)kern, BW_H_VIRTUALQUERY);
     if (pVQ == NULL)
-        return 0;
+{ bw_ld("fail L451"); return 0; }
 
     /* this function runs FROM the wall (.text). Locate the image that owns
      * us: every real execution context (injectors, sRDI-style hosts, our
@@ -463,7 +482,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
             }
         }
         if (flat == NULL)
-            return 0;
+{ bw_ld("fail L485"); return 0; }
     }
 
     nth = flat + *(DWORD *)(flat + 0x3C);
@@ -483,7 +502,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     pGetCur         = (BW_GETCUR)    bw_find_export_hash((void *)kern, BW_H_GETCURPROC);
     if (pLoadLibraryA == NULL || pGetProcAddress == NULL || pVP == NULL ||
         pLLW == NULL)
-        return 0;
+{ bw_ld("fail L505"); return 0; }
 
     /* Map at the sacrificial HMODULE, not at its .text. RtlPcToFileHeader /
      * PEB walks still report the real module base; if we handed DllMain a
@@ -504,7 +523,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     sc_base = (unsigned char *)pVA(NULL, size_of_image,
                                    MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (sc_base == NULL || sc_base == flat)
-        return 0;
+{ bw_ld("fail L526"); return 0; }
     sc_span = size_of_image;
 #else
     for (k = 0; k < 4; k++) {
@@ -563,7 +582,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         break;
     }
     if (sc_base == NULL || sc_base == flat)
-        return 0;
+{ bw_ld("fail L585"); return 0; }
 
     /* Flip every committed page covering [base, base+SizeOfImage) to RW. */
     {
@@ -574,12 +593,12 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
             DWORD oldp = 0;
             SIZE_T chunk;
             if (!pVQ(p, &mbi, sizeof(mbi)))
-                return 0;
+{ bw_ld("fail L596"); return 0; }
             chunk = (SIZE_T)((unsigned char *)mbi.BaseAddress + mbi.RegionSize - p);
             if (p + chunk > end)
                 chunk = (SIZE_T)(end - p);
             if (!pVP(p, chunk, PAGE_READWRITE, &oldp))
-                return 0;
+{ bw_ld("fail L601"); return 0; }
             p += chunk;
         }
     }
@@ -596,16 +615,16 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     }
 
     if (!bw_process_reloc(sc_base, size_of_image))
-        return 0;
+{ bw_ld("fail L618"); return 0; }
     if (!bw_fill_iat(sc_base, pLoadLibraryA, pGetProcAddress))
-        return 0;
+{ bw_ld("fail L620"); return 0; }
 #ifndef BW_NO_THUNKFIX
     /* 2026-10-26 实测：fixer 的启发式扫描会改坏牺牲模块自身数据（spwizimg
      * unmap 异常/use-after-unmap）。lld 的“外置导入槽”论被推翻——0x68528 槽
      * 值指向模块自身 .text（reloc 可达），非导入。默认关闭。 */
 #ifdef BW_THUNKFIX
     if (!bw_fix_extern_thunks(sc_base, size_of_image, pLoadLibraryA, pGetProcAddress))
-        return 0;
+{ bw_ld("fail L627"); return 0; }
 #endif
 #endif
 
@@ -702,7 +721,9 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         dllmain((void *)sc_base, 0x0d, &ud);
     }
 #endif
+    bw_ld("pre_attach");
     dllmain((void *)sc_base, DLL_PROCESS_ATTACH, lpParameter);
+    bw_ld("attach_ret");
     {
         struct { DWORD magic; void *alloc; } ho;
         MEMORY_BASIC_INFORMATION mbi;
@@ -710,7 +731,8 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         ho.alloc = (void *)flat;
         if (pVQ(flat, &mbi, sizeof(mbi)) && mbi.AllocationBase != NULL)
             ho.alloc = mbi.AllocationBase;
-        dllmain((void *)sc_base, 4, &ho);
+        bw_ld("pre_r4");
+    dllmain((void *)sc_base, 4, &ho);
     }
     if (pET != NULL)
         pET(0);
