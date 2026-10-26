@@ -235,3 +235,36 @@ Windows 本机产物逐比特相同。这是后续一切"TS 同机重编"信任�
   前导链）、bw_diag_ch（wininet）、BW_DIAG_RETADDR（RNG 调用者）、
   BW_DIAG_RWX（loader 节保护实验开关）、BW_NO_EXC_REG（exreg 杀开关）。
   **根因定案后统一回滚**。
+
+
+---
+
+## 附录 C：重启后续战 + 根因收敛（2026-10-26 下午）
+
+### 新证据（cdb 10.0 first/second-chance + WER dump 双源）
+1. 异常类型其实是 Illegal instruction (c000001d)，不是 AV——之前所有 dump 的
+   c0000005 是 crashdiag VEH（用 CRT fprintf，LLVM 下自爆）抢先污染后的二次崩溃。
+   BW_PLAIN_SLEEP 下 disarm 后真身现形。
+2. 真死点 = spwizimg+0x1cfdc 附近，同一地址每轮一致；栈上调用链 =
+   VirtualQuery -> spwizimg+0x314e5 -> +0x316d5 -> +0x1bc83 -> 死点。
+   spwizimg 是纯资源 DLL（EP=0，.rdata+.rsrc，无代码节！）——所以
+   0x1cfdc 处的"代码"全部是被 stomp 进去的 beacon .text。
+3. 内存 vs 文件字节矛盾：文件里该处是合法 call 链，运行时取指为 0xff——
+   stomp 覆盖发生过（304 周期在跑）但某个时刻内存被改写/还原。
+   嫌疑集中：loader 的 pFL 失败清理路径 FreeLibrary、或系统级 unmap
+   （dbg11 抓到过 ZwUnmapViewOfSection + Unload module spwizimg）。
+4. 寄存器签名跨所有崩溃一致（Rax=0x1f800010001f、Rcx=UTF-16 "3++S"）：
+   = Unicode 比较例程特征，to_wide/资源名字符串处理路径。
+
+### 待下轮一击
+- cdb bu 在 spwizimg load 时对页提交前 998 失败 -> 需 sxe ld 精确时机或
+  sxe ld 后立即 ba w1（等 beacon stomp 后的第一次写改）。
+- 或者最暴力直接：用 cdb !vprot 对比崩溃前后该页属性变化即可判定 unmap
+  还是 reprotect。
+
+### 基建状态（重启后）
+- 宿主新 IP 192.168.20.169（rig/监听器/取件服务全部已切）。
+- Windows 189 无恙；Defender 服务重启后整 STOPPED（比排除更彻底）。
+- cdb 10.0（用户安装的 WinDbg Preview）在
+  C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\Microsoft.WinDbg_8wekyb3d8bbwe\cdbX64.exe。
+- payloads/g3x.exe 已重拼（llvmK plainsleep + llvmK .o loader + host template）。
