@@ -300,3 +300,42 @@ Windows 本机产物逐比特相同。这是后续一切"TS 同机重编"信任�
   反射组合下的踩栈证据 + CRT-free 诊断技术 + cdb 10.0 自动化取证管线
   （WinRM 驱动、PUT 日志回收、ba 数据断点、sxe first/second-chance）。
 - 附录 A/B/C/D 完整战报。所有诊断开关（diag/diag2/diag7~14）待根因修复后统一回滚。
+
+
+---
+
+## 附录 E：定向重写落地 + 残余 bug 精确刻画（2026-10-27 收口）
+
+### 定向重写已实现并编译（llvm 分支 HEAD）
+1. **loader 私有映射**（BW_LOADER_PRIVATE，udrl job 现已定义该宏）：
+   VirtualAlloc RWX 目标取代模块 stomp——候选枚举/页翻转/失败 FreeLibrary 全删。
+   stomp 架构的"寄生于系统映射"随机性（附录 C/D 的 unmap 根因）从结构上消除。
+2. **构建期自描述**（build.py --layout 两遍）：链接后解析最终镜像 → gen/layout.h
+   （固定尺寸区域表+校验回路）→ 重编消费者 → 重链 → 终验。gargle_own_sections
+   消费该表，删除运行时 PE 解析+节名猜测。
+3. **exreg 跳过**（BW_LLVM_LAYOUT）：clang .pdata 不再注册进 ntdll 动态函数表。
+4. **crashdiag 永久关闭**（同宏）：CRT-fprintf VEH 自爆源消除。
+5. **_vscprintf NULL-buffer 守卫**：core() 支持 buf=NULL 纯计数（UCRT inline
+   _vscprintf 以 (NULL,0) 调用我们的 __stdio_common_vsprintf）。
+
+### 实测里程碑（192.168.20.189 活体，全部有 cdb/dump 证据）
+- LLVM 构建（私有映射）**完整走通加载链**：hostexe 全阶段 → loader → CRT init →
+  DllMain(0x0d/1/4) → beacon() → gates → 主循环。
+- 首个 HTTP checkin 往返成功（process_message 收到 TS 响应并派发任务）。
+- 排查中额外修复：DONT_RESOLVE 卸载风险、loader 自包含契约破坏（diag15 的
+  CreateFileA 直调产生未解析 __imp——拼接不处理重定位）、_snprintf 手工拷贝、
+  workflow 的 map 上传缺失、plainsleep 变体缺 --layout、vcxproj 宏映射缺失
+  （BW_LLVM_LAYOUT/BW_LOADER_PRIVATE 曾从未编译——本轮多个"无效修复"的真因）。
+
+### 残余 bug（精确刻画）
+**症状**：beacon() 内 enter/gates 过后、首个 pre_http 前死；`call [reg+10h]` 落空
+（RIP=0）；死点稳定复现。窗口 = agent_init（crypto_rng/security_init/metadata
+builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProcess
+残留 = syscalls stub 机器（make_exec）；"pre_beacon" 字符串残留 = bw_diag2。
+**下一步（单轮可完成）**：cdb `bp` 在 agent_init 入口（私有基址+RVA 查 map）单步
+到 null call，读 [reg+0x10] 所属结构 → 修复该结构的初始化/重定位。
+
+### 基建资产（全可复用）
+- 192.168.20.189 活体：cdb 10.0、WER dump 管线、8123/8124 服务、WinRM 通道、
+  rig 三件套（TS+REST+harness，syscall_method=0 profile）。
+- 宿主：build.py 两遍构建、拼接管线、符号化脚本（pdata 函数边界 + lld map）。
