@@ -587,8 +587,15 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         return 0;
     if (!bw_fill_iat(sc_base, pLoadLibraryA, pGetProcAddress))
         return 0;
+#ifndef BW_NO_THUNKFIX
+    /* 2026-10-26 实测：fixer 的启发式扫描会改坏牺牲模块自身数据（spwizimg
+     * unmap 异常/use-after-unmap）。lld 的“外置导入槽”论被推翻——0x68528 槽
+     * 值指向模块自身 .text（reloc 可达），非导入。默认关闭。 */
+#ifdef BW_THUNKFIX
     if (!bw_fix_extern_thunks(sc_base, size_of_image, pLoadLibraryA, pGetProcAddress))
         return 0;
+#endif
+#endif
 
     for (i = 0; i < nsec; i++) {
         DWORD prot, oldp = 0, chars = sec[i].Characteristics;
