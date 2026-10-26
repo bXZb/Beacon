@@ -138,6 +138,11 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 
 extern "C" void __cdecl crashdiag_arm(void)
 {
+#ifdef BW_LLVM_LAYOUT
+	/* LLVM 线：本 VEH 注册在链首、处理器内部走 CRT fprintf——任何异常都会
+	 * 先在这里二次自爆并污染现场（llvm 分支附录 C 实证）。永久关闭。 */
+	return;
+#endif
 	g_cd.fired = 0;
 	if (InterlockedCompareExchange(&g_cd.armed, 1, 0) == 0) {
 		g_cdveh = AddVectoredExceptionHandler(1, cd_veh);

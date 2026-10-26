@@ -40,7 +40,7 @@ jobs:
           source "$HOME/.llvm-cross/toolpath.env"
           B=(python3 tools/llvm/build.py --clang-cl "$LLVM_CLANG"
              --lld-link "$LLVM_LLD" --xwin-dir "$XWIN_SPLAT")
-          "${B[@]}" --project beacon --platform x64
+          "${B[@]}" --layout --project beacon --platform x64
           "${B[@]}" --project beacon --platform x64 --http winhttp
           "${B[@]}" --project beacon --platform x64 --bofwin
           "${B[@]}" --project dnsb   --platform x64

