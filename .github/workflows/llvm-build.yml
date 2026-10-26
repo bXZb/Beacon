@@ -52,6 +52,7 @@ jobs:
           mv llvm-out-rng/beacon.x64.llvm.dll llvm-out/beacon.rngdiag.llvm.dll
           "${B[@]}" --jobs 3 --project beacon --platform x64 --plain-sleep --layout --out-dir llvm-out-ps
           mv llvm-out-ps/beacon.x64.llvm.dll llvm-out/beacon.plainsleep.llvm.dll
+          mv llvm-out-ps/beacon.x64.llvm.map llvm-out/beacon.plainsleep.llvm.map
 
       - name: Size report
         shell: bash
