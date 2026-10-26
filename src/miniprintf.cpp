@@ -49,7 +49,7 @@ static int itoa_s(long long v, char *buf) {
 static int core(char *buf, size_t bufsz, const char *fmt, va_list ap) {
     size_t i = 0;
     int count = 0;
-#define PUT(c) do { if (i + 1 < bufsz) buf[i] = (char)(c); i++; count++; } while (0)
+#define PUT(c) do { if (buf != NULL && i + 1 < bufsz) buf[i] = (char)(c); i++; count++; } while (0)
     while (*fmt) {
         if (*fmt != '%') { PUT(*fmt); fmt++; continue; }
         fmt++;
@@ -121,7 +121,7 @@ static int core(char *buf, size_t bufsz, const char *fmt, va_list ap) {
         if (left) for (int k = 0; k < pad; k++) PUT(' ');
     }
 #undef PUT
-    if (bufsz > 0) buf[i < bufsz ? i : bufsz - 1] = 0;
+    if (buf != NULL && bufsz > 0) buf[i < bufsz ? i : bufsz - 1] = 0;
     return count;
 }
 
@@ -130,6 +130,13 @@ int __cdecl __stdio_common_vsprintf(unsigned long long options, char *buffer,
         size_t bufsz, const char *fmt, _locale_t locale, va_list args) {
     (void)options; (void)locale;
     return core(buffer, bufsz, fmt, args);
+}
+
+/* _vscprintf (bformat_printf/boff 的长度估算): 不实现它链接器会拉 UCRT 的
+ * _vscprintf.obj → output.obj → 完整 printf 链回灌，其中 per-thread locale
+ * 路径在反射加载语境下未初始化（null 函数指针调用，RIP=0）。直接转发 core。 */
+int __cdecl _vscprintf(const char *fmt, va_list args) {
+    return core(NULL, (size_t)-1, fmt, args);
 }
 
 /* Secure variant (_s family: vsprintf_s/sprintf_s/_snprintf_s). Same formatter;
