@@ -330,7 +330,7 @@ def main():
     ap.add_argument("--repo", default=os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     ap.add_argument("--out-dir", default=None)
-    ap.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 4))
+    ap.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 2))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
