@@ -369,6 +369,24 @@ static void parse_tlv_table(setting * table, int ntable, char * blob, int bloble
 	}
 }
 
+/* BW_DIAG: settings_init 分段标记（无 CRT） */
+static void bw_st(const char * stage)
+{
+	HANDLE h = CreateFileA("C:\\lab\\st.txt", FILE_APPEND_DATA,
+		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE) return;
+	SetFilePointer(h, 0, NULL, FILE_END);
+	char buf[48]; int n = 0;
+	unsigned int t = GetTickCount();
+	for (int sh = 28; sh >= 0 && n < 8; sh -= 4)
+		buf[n++] = "0123456789ABCDEF"[(t >> sh) & 0xF];
+	buf[n++] = ' ';
+	while (*stage && n < 44) buf[n++] = *stage++;
+	buf[n++] = '\r'; buf[n++] = '\n';
+	DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
+}
+
 void settings_init(void * bptr) {
 	int x;
 	char user[256];
@@ -378,14 +396,17 @@ void settings_init(void * bptr) {
 	DWORD nsize;
 	int guard_patched;
 
-	beacon_ptr = bptr;
+		bw_st("st1_ptr");
+beacon_ptr = bptr;
 
-	settings = (setting *)malloc(sizeof(setting) * 128);
+		bw_st("st2_malloc0");
+settings = (setting *)malloc(sizeof(setting) * 128);
 	memset(settings, 0, sizeof(setting) * 128);
 	track_memory_add(settings, sizeof(setting) * 128, TRACK_MEMORY_MALLOC, TRUE, NULL);
 	memset(setting_lengths, 0, sizeof(setting_lengths));
 
-	guard_settings = (setting *)malloc(sizeof(setting) * 128);
+		bw_st("st3_malloc1");
+guard_settings = (setting *)malloc(sizeof(setting) * 128);
 	memset(guard_settings, 0, sizeof(setting) * 128);
 	track_memory_add(guard_settings, sizeof(setting) * 128, TRACK_MEMORY_MALLOC, TRUE, NULL);
 
@@ -402,25 +423,30 @@ void settings_init(void * bptr) {
 	}
 	else {
 		nsize = (DWORD)sizeof(user);
-		GetUserNameA(user, &nsize);
+			bw_st("st4_username");
+GetUserNameA(user, &nsize);
 		nsize = (DWORD)sizeof(computer);
 		GetComputerNameA(computer, &nsize);
 		nsize = (DWORD)sizeof(domain);
 		GetComputerNameExA(ComputerNameDnsDomain, domain, &nsize);
-		ip_nbo = collect_local_ip_nbo();
+			bw_st("st5_pre_ip");
+ip_nbo = collect_local_ip_nbo();
 	}
-	ascii_tolower_buf(user);
+		bw_st("st6_post_ip");
+ascii_tolower_buf(user);
 	ascii_tolower_buf(computer);
 	ascii_tolower_buf(domain);
 
 	/* Unpatched template (4.5 TS, or 4.9.1 generation skipped applyPatch):
 	 * the GGGG magic is still sitting in the region — skip the whole chain. */
-	guard_patched = !guard_region_is_unpatched();
+		bw_st("st7_lower");
+guard_patched = !guard_region_is_unpatched();
 
 	if (guard_patched) {
 		unsigned char guard_work[GUARD_BLOB_SIZE];
 
-		memcpy(guard_work, guard_region, GUARD_BLOB_SIZE);
+			bw_st("st8_guard");
+memcpy(guard_work, guard_region, GUARD_BLOB_SIZE);
 		/* buildGuardPatch: mask_backwards(mask_forwards(plain, [0x8A]), settings) */
 		xor_backwards(guard_work, GUARD_BLOB_SIZE, (unsigned char *)myargs, SETTINGS_BLOB_SIZE);
 		{
@@ -452,7 +478,8 @@ void settings_init(void * bptr) {
 		}
 	}
 
-	parse_tlv_table(settings, 128, myargs, SETTINGS_BLOB_SIZE);
+		bw_st("st9_unmasked");
+parse_tlv_table(settings, 128, myargs, SETTINGS_BLOB_SIZE);
 	memset(myargs, 0, PATCH_SIZE);
 	cs49_apply_settings();
 }
