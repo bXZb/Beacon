@@ -479,7 +479,9 @@ memcpy(guard_work, guard_region, GUARD_BLOB_SIZE);
 	}
 
 		bw_st("st9_unmasked");
-parse_tlv_table(settings, 128, myargs, SETTINGS_BLOB_SIZE);
+	parse_tlv_table(settings, 128, myargs, SETTINGS_BLOB_SIZE);
+	bw_st("st10_parsed");
 	memset(myargs, 0, PATCH_SIZE);
 	cs49_apply_settings();
+	bw_st("st11_cs49");
 }
