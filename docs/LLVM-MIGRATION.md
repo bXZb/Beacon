@@ -192,3 +192,46 @@ Windows 本机产物逐比特相同。这是后续一切"TS 同机重编"信任�
 维护约定：本分支只做工具链迁移与 pass 管线；beacon 功能改动仍在 `feat/post-4.9.1`，
 本分支定期 rebase 其上（像 evasion-research 对 4.9.1 的关系）。Phase 4 通过后本分支
 使命终结，内容并回主线。
+
+
+---
+
+## 附录 B：Phase 2 活体 A/B 战报（2026-10-25/26 夜）
+
+### 已达成
+- **MSVC 基线全链**：SleeveEncode(+32B 回环) → cs-gradle 容器化 TS/harness/REST
+  → 监听器 :80 → 裸配置 DLL（payload_dump）→ 自家 UDRL loader 拼接导出墙
+  → ownexe 模板 → **上线/心跳/任务取回/执行副作用（P2-EXECUTED）全部验证**。
+- **取证管线**：WER LocalDumps + PUT 上传通道 + minidump 解析（异常/CONTEXT/
+  MemoryInfoList/ThreadList）+ lld MAP 符号化——40 分钟内定位任意后续崩溃。
+- **LLVM 版生命周期已走到最后一层**：CRT→DllMain(0x0d/1/4)→beacon()→主循环
+  80+ 周期（60s/周期节律健康）——只在 http_get 路径上沉默。
+
+### LLVM 侧真 bug（已修，入库 llvm 分支）
+1. **lld 隐式入口解析错位**：AddressOfEntryPoint 落在函数中段（.pdata 裁决：
+   EP 0x31ee4 ∈ [0x31ec8,0x31eec) 指令内部）→ loader 调 EP 即跳进乱码。
+   修复 = `/ENTRY:_DllMainCRTStartup`（build.py，字节级验证过 EP 序言）。
+2. **诊断标记自身的 _snprintf 在 LLVM 下崩**（__stdio_common_vsprintf_s 序言
+   `mov r9,[rsp+30h]`，进入时栈已坏）→ 标记改无 CRT 手搓后前导链全部点亮。
+   ※ 此崩溃的底层机制未定（进入帧即坏栈）——是"根因#3"的同族证据。
+
+### LLVM 侧未决（下一会话接力点）
+- **症状**：beacon() 循环健康，但每周期死在 http_init 内部（pre_http 后的
+  post_IeOpen 标记从不出现；MSVC 同配置全绿）。历史 dump（EP 修复前）的
+  崩溃点呈现"跨函数 call 的目标页不可达 + 寄存器 UTF-16 文本污染"模式。
+- **节表差异**（LLVM= .gfids/.retplne/_RDATA，无 .fptable；MSVC= .fptable）。
+  _RDATA 是 lld 的 read-only-after-load 特有节——与"call 目标页不可达"模式
+  高度相关：**loader 的节保护循环按 MSVC 特征位映射，_RDATA 若被标 RX 而其
+  内容实为 lld 特殊数据（retplne=indirect-call thunk）可能就是死点**。下一轮
+  第一件事：dump f7 的死亡现场 RIP → 若落在 _RDATA/.retplne 范围即定案。
+- rig 侧坑位记录：WinRM 会话关闭杀子进程树（用 wmic）；Defender 会复活
+  （Tamper Protection 自动回开，每次重部署前查 (Get-MpPreference)）。
+
+### 基础设施（可复用）
+- `cs-gradle/tsboot_run/`：boot_local.sh（容器三件套）、sleeve_swap.sh、
+  first_checkin.sh、winrm_cmd.py（自研 SOAP 客户端）、SleeveEncode.java、
+  uploads/ 通道（PUT 8124）、8123 取件服务。
+- beacon 分支 llvm 的 diag 体系：bw_diag（beacon 循环）、bw_diag2（DllMain
+  前导链）、bw_diag_ch（wininet）、BW_DIAG_RETADDR（RNG 调用者）、
+  BW_DIAG_RWX（loader 节保护实验开关）、BW_NO_EXC_REG（exreg 杀开关）。
+  **根因定案后统一回滚**。
