@@ -132,12 +132,6 @@ int __cdecl __stdio_common_vsprintf(unsigned long long options, char *buffer,
     return core(buffer, bufsz, fmt, args);
 }
 
-/* _vscprintf (bformat_printf/boff 的长度估算): 不实现它链接器会拉 UCRT 的
- * _vscprintf.obj → output.obj → 完整 printf 链回灌，其中 per-thread locale
- * 路径在反射加载语境下未初始化（null 函数指针调用，RIP=0）。直接转发 core。 */
-int __cdecl _vscprintf(const char *fmt, va_list args) {
-    return core(NULL, (size_t)-1, fmt, args);
-}
 
 /* Secure variant (_s family: vsprintf_s/sprintf_s/_snprintf_s). Same formatter;
    my core already null-terminates within bufsz, which is the secure contract.
