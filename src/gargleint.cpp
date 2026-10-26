@@ -20,7 +20,7 @@ GARGLEP * gparms = NULL;
  * exclusion for the mask function itself (the trampoline path executes
  * from our own .text and must never mask the code it is running). */
 #ifdef BW_LLVM_LAYOUT
-#include "gen/layout.h"
+#include "layout.h"
 #endif
 
 DWORD gargle_own_sections(GARGLEP * gp, void * xbegin, void * xend) {
