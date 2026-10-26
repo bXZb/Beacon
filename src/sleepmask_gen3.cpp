@@ -740,6 +740,13 @@ static void g3_mask_all_cb(void * vctx)
 
 BOOL gen3_sleep(DWORD time)
 {
+#ifdef BW_PLAIN_SLEEP
+	/* LLVM A/B：节布局差异使快照块枚举越界（cdb 实证 rep movsb 后立即
+	 * 非法指令，调用链 VirtualQuery→快照阶段），直接短路让调用方回落
+	 * 纯 Sleep——掩码子系统待节布局适配后单独重开 */
+	(void)time;
+	return FALSE;
+#endif
 	unsigned char key[16];
 	G3_BLOCK blocks[G3_MAX_BLOCKS];
 	G3_MASKCTX mctx;
