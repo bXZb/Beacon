@@ -38,7 +38,13 @@ static void settings_init_once(HINSTANCE hinstDLL) {
  * Resolved dynamically (no new import), idempotent, never removed. */
 static void register_exception_tables(HINSTANCE hinstDLL) {
 	typedef BOOL (WINAPI *fnRAFT)(void *, DWORD, ULONG64);
-#ifdef BW_NO_EXC_REG
+#if defined(BW_NO_EXC_REG) || defined(BW_LLVM_LAYOUT)
+	/* LLVM 线：clang 的 .pdata（1297 条，形状与 MSVC 不同）经
+	 * RtlAddFunctionTable 注册进 ntdll 动态函数表后，后续任何异常分发/
+	 * 栈展开都会落到坏条目上（实测 st1-st9 全过后死在本函数，附录 D）。
+	 * beacon 主循环不依赖 SEH 展开——跳过注册。 */
+	(void)hinstDLL; return;
+#endif
 	/* A/B 实验：clang 的 .pdata 条目经 RtlAddFunctionTable 注册后疑似污染
 	   ntdll 函数表（怪寄存器崩溃）；此开关跳过注册以定责 */
 	(void)hinstDLL; return;
