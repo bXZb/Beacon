@@ -339,7 +339,7 @@ static __forceinline int bw_fix_extern_thunks(unsigned char * image, DWORD size_
     }
 
     for (i = 0; i < nsec; i++) {
-        IMG_SECTION_HEADER * s = &sec[i];
+        IMG_SECTION * s = &sec[i];
         if (s->Characteristics & 0x20000000) continue;      /* exec sections: real code */
         if (!(s->Characteristics & 0x40000000)) continue;   /* must be readable */
         {
