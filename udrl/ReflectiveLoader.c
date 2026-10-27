@@ -385,8 +385,22 @@ static __forceinline int bw_fix_extern_thunks(unsigned char * image, DWORD size_
  * emit if the helpers actually inline). */
 #pragma code_seg(".text$aaa")
 
+#if defined(__clang__)
+/* LLVM 线：clang 的不可达代码消除把 .5k include 的 int3 墙折叠到 1280B，
+ * 而客户端拼接体 2897B 会越界覆盖墙后的真实函数。改用 volatile nop 墙
+ * (wall_llvm.h, 3200x1B, volatile asm 不可删除、可达必发射)。 */
+#define RefLoadSize 0
+#else
+/* MSVC 线: 保留官方 5K int3 墙 include */
+#define RefLoadSize 5
+#endif
 __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 {
+#if defined(__clang__)
+#include "wall_llvm.h"
+#elif RefLoadSize == 5
+#include "ReflectiveLoader.5k"
+#endif
     unsigned char * flat;
     unsigned long long kern;
     BW_LOADLIBA    pLoadLibraryA;
