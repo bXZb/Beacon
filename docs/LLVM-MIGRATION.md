@@ -417,3 +417,45 @@ builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProc
   **sc_base = r12+0x80000**（下一个 64K 分配）——现场测量务必先定基再算 RVA。
 - 布局双关陷阱：flat 文件偏移 ↔ RVA 差 0xC00（.text），两次"映射内容不匹配"的
   误判皆源于此。
+
+---
+
+## 附录 H：全功能闭环达成 + A/B 双绿 + 插桩回滚（2026-10-27/28，HEAD a2402a0）
+
+### 结论
+**LLVM 线全功能测试闭环达成，与 MSVC 基线完全对齐。** 三项验收（CHECKIN → 任务往返 →
+执行副作用）在同一 HEAD、同一 rig、同一条管线、同一测试序列下双轨全绿。
+诊断插桩已全部回滚并复验通过，收尾完成。
+
+### 闭环证据（全部来自 rig 活体 r1.log + VM 文件系统）
+| 构建 | 提交 | session | CHECKIN | 任务输出 | 副作用文件 |
+|------|------|---------|---------|----------|------------|
+| LLVM (plainsleep) | 83111f9 | 375544582 | 13:44:35 INITIAL | whoami → desktop-p8ldlua\administrator | P2-EXECUTED-LLVM-20261027 |
+| MSVC (Release) | 83111f9 | 193935888 | 15:13:05 INITIAL | whoami → desktop-p8ldlua\administrator | P2-EXECUTED-MSVC-20261027 |
+| LLVM (插桩回滚后) | a2402a0 | 250605836 | 16:34:41 INITIAL | whoami → desktop-p8ldlua\administrator | P2-EXECUTED-LLVM-CLEAN-20261028 |
+
+- LLVM beacon 首次 CHECKIN 后持续心跳 80+ 分钟无衰减（13:44 → 15:07+）。
+- A/B 两侧任务往返均为 `CHECKIN sent: 109/118 bytes` → `OUTPUT received output`。
+- 副作用文件经 WinRM 独立通道（不经 beacon）读取验证，内容逐字符匹配。
+
+### 插桩回滚（commit a2402a0，-117 行）
+- 删除：bw_diag2（DllMain 链 10 点）、bw_diag（主循环 8 点）、bw_st（settings 11 点）、
+  bw_diag_ch（channel 2 点）——四个无条件 CreateFileA 落盘标记器。
+- 顺带修复：beacon.cpp udc2_cycle 分支原为 dangling if（bw_diag 占位导致
+  process_payload 绕过 length>0 守卫无条件执行），回滚后守卫自然恢复。
+- 保留：hostexe bw_die 致命错误码报告（错误路径 API，仅 boot 一次）、
+  BW_DIAG_RETADDR（编译期门控的 CI 诊断变体 beacon.rngdiag）、全部真实根修复
+  （miniprintf NULL 守卫、BW_PLAIN_SLEEP 手工拷贝、layout 私有映射、exreg 跳过）。
+- 回滚版部署复验：闭环三项全部通过（session 250605836）——插桩移除无回归。
+
+### CI 双绿
+- 83111f9：llvm-build ✅ + build ✅（墙 8192 定版）
+- a2402a0：llvm-build ✅ + build ✅（回滚定版，最终状态）
+
+### 迁移状态总结（Phase 0-4 全部完成）
+1. 工具链：clang-cl + xwin + lld-link Linux 交叉编译，双主机 /Brepro 字节一致。
+2. 定向重写四件套：私有映射 loader / 构建期 layout 自描述 / exreg 跳过 / crashdiag 关闭。
+3. 拼接契约：volatile nop 墙 8192B（≥ TS 5120B 槽）；udrl loader 4129B 双 COMDAT。
+4. 交付管线：sleeve 双资源（DLL+loader .o）加密 → artifact_raw raw → host_template
+   包裹（artifact64big.exe 模板 311KB 槽不能承载 LLVM 488KB DLL）。
+5. 全功能对齐 MSVC 基线。后续优化项（backed-mapping 隐蔽形态、检测面专项）见附录 G。
