@@ -399,7 +399,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 #if defined(__clang__)
 #include "wall_llvm.h"
 #elif RefLoadSize == 5
-#include "ReflectiveLoader.5k"
+#include "../src/ReflectiveLoader.5k"
 #endif
     unsigned char * flat;
     unsigned long long kern;
