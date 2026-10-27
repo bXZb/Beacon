@@ -339,3 +339,36 @@ builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProc
 - 192.168.20.189 活体：cdb 10.0、WER dump 管线、8123/8124 服务、WinRM 通道、
   rig 三件套（TS+REST+harness，syscall_method=0 profile）。
 - 宿主：build.py 两遍构建、拼接管线、符号化脚本（pdata 函数边界 + lld map）。
+
+
+---
+
+## 附录 F：残余 bug 精确刻画 + 下一步（2026-10-27）
+
+### 当前状态（HEAD ea88ed3+ 私有映射重写版）
+- LLVM beacon（plainsleep 变体）完整加载链全过：hostexe → loader(私有映射) →
+  CRT → DllMain(0x0d/1/4) → beacon() → gates。
+- 5K 墙问题已修复：clang 把 .5k include 墙折叠到 1280B（不可达代码消除），
+  volatile nop 墙 (wall_llvm.h 3200B) 落地于导出函数开头（可达必发射）。
+  此前"拼接覆盖真实函数"的判定即由此而来——墙只有 1280B 时 2897B 拼接体
+  越界 1.6KB 覆盖 crypto_rng/security 等真实函数。
+
+### 残余 bug（每次进程死于主循环初期，符号随构建漂移）
+- c3new dump: AV at walk_parent+0xaa (recurse.cpp), call [rax+0x10]。
+- f4x dump: c0000409 fastfail, FAST_FAIL_FATAL_APP_EXIT(7)。
+- 寄存器签名跨构建一致: Rax=0x1f800010001f, Rcx=UTF-16 "3++S"。
+- 判定: 不是单一函数 bug——是【某个共用结构的字段偏移在 clang 下不同】或
+  【某全局初始化依赖 MSVC 零初始化顺序】。候选: bformat/formatp、track_memory
+  的全局链表、settings 数组指针。
+- 下一步（单步方案，避免再跑 CI 轮）: 用已装 WinDbg Preview 的 TTT
+  (Time Travel Debugging): `windbgx -ttt C:\lab\c3.exe` 录制全进程,
+  从 AV 逆行到第一个被污染写入。或 cdb `bp` 在 agent_init/strategy_setup
+  入口 + `pt` (step to return) 逐函数过。
+
+### 已修复并入库的根因（全部有证据）
+1. lld EP 错位 → /ENTRY (字节级验证)
+2. crashdiag VEH 自爆 → disarm
+3. miniprintf _snprintf 家族踩栈 → 无 CRT 标记
+4. stomp unmap → 私有映射
+5. 墙折叠 → volatile nop 墙 (3200B 实测)
+6. 宏映射缺失 → vcxproj 补全 (重写代码曾从未编译)
