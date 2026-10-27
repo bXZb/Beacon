@@ -1,8 +1,7 @@
 /* LLVM 线 volatile nop 墙：clang 的不可达代码消除会折叠 int3 墙，volatile asm 不可删除。
- * 尺寸依据：udrl loader .o 实际为 4129B（.text$mn 0x4D0 + /566 0xB51 两个 COMDAT 块），
- * 4.9.1 TS 拼接槽固定写 5120B（loader+填充）到导出起点 —— 墙必须 ≥ 槽尺寸，
- * 否则槽尾部覆盖墙后的真实函数（2026-10-27 实测：crashdiag_disarm @0x1D2CA 被覆盖，
- * DllMain 调进 miniprintf core 落空指针）。8192 = 5120 + 3KB 裕量。 */
+ * 尺寸契约: 4.9.1 TS 拼接槽从导出起点固定写 5120B (udrl loader 4129B=两个 COMDAT 块
+ * + 填充); 墙 < 槽会让槽尾覆盖墙后真实函数 (实测 crashdiag_disarm 被覆盖 -> DllMain
+ * 调用落进 miniprintf core 空指针)。8192 = 5120 槽 + 3KB 裕量。 */
 __asm__ volatile("nop");
 __asm__ volatile("nop");
 __asm__ volatile("nop");
