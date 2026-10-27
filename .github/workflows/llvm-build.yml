@@ -41,11 +41,11 @@ jobs:
           B=(python3 tools/llvm/build.py --clang-cl "$LLVM_CLANG"
              --lld-link "$LLVM_LLD" --xwin-dir "$XWIN_SPLAT")
           "${B[@]}" --layout --project beacon --platform x64
-          "${B[@]}" --project beacon --platform x64 --http winhttp
-          "${B[@]}" --project beacon --platform x64 --bofwin
-          "${B[@]}" --project dnsb   --platform x64
-          "${B[@]}" --project extc2  --platform x64
-          "${B[@]}" --project pivot  --platform x64
+          "${B[@]}" --layout --project beacon --platform x64 --http winhttp
+          "${B[@]}" --layout --project beacon --platform x64 --bofwin
+          "${B[@]}" --layout --project dnsb   --platform x64
+          "${B[@]}" --layout --project extc2  --platform x64
+          "${B[@]}" --layout --project pivot  --platform x64
           "${B[@]}" --jobs 3 --project beacon --platform x64 --no-excreg --out-dir llvm-out-noex
           mv llvm-out-noex/beacon.x64.llvm.dll llvm-out/beacon.noexcreg.llvm.dll
           "${B[@]}" --jobs 3 --project beacon --platform x64 --diag-retaddr --out-dir llvm-out-rng
