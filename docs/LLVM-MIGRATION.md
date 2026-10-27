@@ -372,3 +372,48 @@ builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProc
 4. stomp unmap → 私有映射
 5. 墙折叠 → volatile nop 墙 (3200B 实测)
 6. 宏映射缺失 → vcxproj 补全 (重写代码曾从未编译)
+
+---
+
+## 附录 G：拼接槽契约 + 交付管线的三处根因（2026-10-27 深夜，HEAD 7392ea3）
+
+### 根因 1：TS 拼接槽 = 从导出起点的固定 5120B 写入
+- udrl loader .o 实际 **4129B**：`.text$mn` 0x4D0 + `/566` 0xB51（长名走 string table）
+  两个 COMDAT 块。任何只取"单个 EXEC 节"的自制拼接（splice_final 系）只搬了 2897B
+  ——**截断的 loader**。
+- 4.9.1 TS（OBJExecutableSimple.getExeSect 聚合 .text$*）把完整 loader 写进导出槽，
+  槽总写入 = **5120B 固定**（loader + 填充）。墙 3200B < 5120B → 槽尾部 **~1.9KB
+  覆盖墙后真实函数**。实测受害者 `crashdiag_disarm`@RVA 0x1D2CA（被 loader 尾部
+  代码顶替）→ DllMain(reason4) 调用落进 miniprintf `core()`、`mov [rsi+rbp],25h`
+  双栈指针相加空指针 —— dbg46/47/50 全套现场由此而来。
+- **修复**：wall_llvm.h 3200→**8192** nops（5120 槽 + 3KB 裕量）。clang 分支的
+  导出函数体 = 墙 + return 0，墙必须独占覆盖整个槽。
+
+### 根因 2：artifact64big.exe 模板槽 ~311KB，LLVM DLL 488KB 溢出
+- artifact exe 的 payload 区在 .data raw 内（magic 起 16B 头 + XOR 载荷）。
+  MSVC beacon 245KB 放得下；**LLVM 488KB 撕穿 .rdata/.pdata/.idata/.CRT/.tls
+  的文件字节** → 头目录指向密文 → LdrInitializeThunk c000007B（能否活全凭密文运气，
+  beacon_msvc.exe 今天同样死亡即证）。
+- **交付定式**：`artifact_raw <listener> raw x64 <out.dll>` 拿 **TS 打补丁后的裸 DLL**
+  （settings/sleepmask/loader 拼接全含），再 host_template 包裹（append 模板无槽限制）。
+
+### 根因 3：sleeve 资源全体加密（含 loader .o）
+- `BeaconLoader.VA.x64.o` 也走 SleeveEncode（明文放入 → `[Sleeve] Bad HMAC` →
+  OBJParser 拿到解密垃圾 → `Invalid Machine header` → artifact_payload 返回 null）。
+- profile 无 `.stage.allocator` → 默认 **VA** 变体 → 替换 `BeaconLoader.VA.x64.o`。
+
+### 全管线定式（同批次产物铁律）
+1. CI（llvm-build + build 的 udrl job）同 SHA 产物：`beacon.plainsleep.llvm.dll`
+   (+map) + `ReflectiveLoader.x64.o` + `host_template_x64.exe`。
+2. `SleeveEncode` DLL→`sleeve/beacon.x64.dll`、.o→`sleeve/BeaconLoader.VA.x64.o`，
+   gradlew shadowJar，rig 重启 ~110s。
+3. inbox: `listener_create franken-http 80` → `artifact_raw franken-http raw x64 …dll`。
+4. 本地 host_template + patched_dll + 随机尾 → 落 VM `C:\lab`，wmic 脱离启动。
+5. 判收：r1.log CHECKIN → 任务往返 → 执行副作用（对齐 MSVC 基线）。
+
+### 排查基建增量
+- VM 侧 PUT 回传用 `C:\Windows\System32\curl.exe`（WebClient.UploadFile 走代理失败）。
+- cdb 寄存器相对转储（`db @r12 L2`）免 ASLR；r12=host flat 缓冲（identity 布局），
+  **sc_base = r12+0x80000**（下一个 64K 分配）——现场测量务必先定基再算 RVA。
+- 布局双关陷阱：flat 文件偏移 ↔ RVA 差 0xC00（.text），两次"映射内容不匹配"的
+  误判皆源于此。
