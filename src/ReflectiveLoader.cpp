@@ -1,8 +1,10 @@
 #include "ReflectiveLoader.h"
 #if defined(__clang__)
-/* LLVM 线: clang 的不可达代码消除把 .5k include 的 int3 墙折叠到 1280B,
- * 而客户端拼接体 2897B 会越界覆盖墙后的真实函数 (crypto_rng/security 等)。
- * 改用 volatile nop 墙 (wall_llvm.h, 3200x1B, volatile asm 不可删除、可达必发射)。 */
+/* LLVM 线: clang 的不可达代码消除把 .5k include 的 int3 墙折叠到 1280B。
+ * 改用 volatile nop 墙 (wall_llvm.h, 8192x1B, volatile asm 不可删除、可达必发射)。
+ * 尺寸契约: 4.9.1 TS 拼接槽从导出起点固定写 5120B (udrl loader 4129B=
+ * .text$mn 0x4D0 + /566 0xB51 两块, 其余填充), 墙 < 槽会覆盖墙后真实函数
+ * (实测 crashdiag_disarm 被覆盖 -> DllMain 调用落进 core() 空指针)。 */
 #define RefLoadSize 0
 #else
 #define RefLoadSize 5
