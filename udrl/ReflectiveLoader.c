@@ -715,17 +715,17 @@ return 0;
     if (pET != NULL)
         pET(0);
     return (ULONG_PTR)(DWORD_PTR)sc_base;
-
-#if defined(__clang__)
-    /* 定向重写关键件：8KB 不可消除的 INT3 墙。
-     *
-     * MSVC 构建的墙 = ReflectiveLoader.5k include（MSVC 保留每对 int3/nop）；
-     * clang 的不可达代码消除把同一 include 折叠到仅 1280B，而拼接体 2897B
-     * 会越过墙覆盖墙后的真实函数（crypto_rng/security 等——clean2/clean3
-     * 崩溃链的根因）。asm volatile 对优化器不透明，8192B 必然落地。
-     * 拼接体 2897B < 本函数体(~60B) + 8192B 墙 ✓ 永不越界。 */
-    __asm__ volatile(".rept 8192\n\tint3\n\t.endr");
-#endif
 }
 
 #pragma code_seg()
+
+#if defined(__clang__)
+/* 定向重写关键件：8KB 不可消除的 INT3 墙（模块级 asm 必然发射）。
+ *
+ * MSVC 构建的墙 = ReflectiveLoader.5k include；clang 的不可达代码消除把
+ * 同一 include 折叠到仅 1280B，而拼接体 2897B 会越过墙覆盖墙后的真实
+ * 函数（crypto_rng/security 等——clean2/clean3 崩溃链根因）。模块级 asm
+ * 落在本 TU 的 .text 贡献末尾 = ReflectiveLoader 体之后，拼接体
+ * 2897B < 本函数体 + 8192B 墙，永不越界。 */
+__asm__(".fill 8192, 1, 0xCC\n");
+#endif
