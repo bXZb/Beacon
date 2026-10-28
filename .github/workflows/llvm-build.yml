@@ -84,6 +84,12 @@ jobs:
           rm -rf llvm-out-obf
           "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf
           cp llvm-out-obf/beacon.x64.llvm.dll /tmp/obf_a.dll
+          # bogo-off variant for live bisect (same seed, sub-only shape)
+          export OBF_NO_BOGO=1
+          rm -rf llvm-out-obf
+          "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf
+          unset OBF_NO_BOGO
+          cp llvm-out-obf/beacon.x64.llvm.dll llvm-out/beacon.obfnobogo.llvm.dll
           A_SHA=$(sha256sum /tmp/obf_a.dll | cut -d' ' -f1)
           rm -rf llvm-out-obf
           "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf
@@ -147,6 +153,7 @@ jobs:
             llvm-out/*.dll
             llvm-out/*.map
             llvm-out/beacon.obf.sha256
+            llvm-out/beacon.obfnobogo.llvm.dll
             llvm-out/_sizes.json
 
   windows-x64:

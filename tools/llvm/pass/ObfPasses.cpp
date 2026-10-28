@@ -217,10 +217,12 @@ static bool hasInlineAsm(BasicBlock &BB) {
 
 struct ObfBogoPass : PassInfoMixin<ObfBogoPass> {
   uint64_t seed;
-  explicit ObfBogoPass(uint64_t s) : seed(s) {}
+  bool disabled;
+  explicit ObfBogoPass(uint64_t s)
+      : seed(s), disabled(getenv("OBF_NO_BOGO") != nullptr) {}
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
-    if (F.isDeclaration())
+    if (disabled || F.isDeclaration())
       return PreservedAnalyses::all();
     // splice-wall contract: the ReflectiveLoader export body is a fixed
     // volatile-nop wall the TS writes its loader into — never split it.
