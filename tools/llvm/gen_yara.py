@@ -81,8 +81,9 @@ def main():
     # unconditionally, so a window containing one is GUARANTEED to change.
     # x86-64 encodings: 83 /0 (add r32,imm8), REX.W 83 /0 (add r64,imm8),
     # 83 /5 (sub), 83 /7 (cmp), 81 /0 /5 (imm32 forms).
-    pats = [b"\x83\xc", b"\x48\x83\xc", b"\x83\xe", b"\x48\x83\xe",
-            b"\x83\xf", b"\x48\x83\xf", b"\x81\xc", b"\x48\x81\xc"]
+    # opcode prefixes: 83 /0 add r32 imm8, REX.W 83 /0 add r64 imm8, /5 sub,
+    # /7 cmp (modrm reg field picks the op; high nibble C/E/F covers them)
+    pfx = [(b"\x83", 1), (b"\x48\x83", 2), (b"\x81", 1), (b"\x48\x81", 2)]
 
     tname, tva, tvsz, trp, trsz = text
     sites = []
@@ -94,11 +95,22 @@ def main():
         if fo0 is None or fo1 is None or fo1 <= fo0:
             continue
         chunk = d[fo0:fo1]
-        for pat in pats:
-            j = chunk.find(pat)
-            if j != -1:
-                sites.append(fo0 + j)
+        hit = -1
+        for pat, moff in pfx:
+            j = 0
+            while True:
+                j = chunk.find(pat, j)
+                if j == -1:
+                    break
+                mi = j + moff
+                if mi < len(chunk) and (chunk[mi] >> 4) in (0xC, 0xE, 0xF):
+                    hit = j
+                    break
+                j += 1
+            if hit != -1:
                 break
+        if hit != -1:
+            sites.append(fo0 + hit)
     if len(sites) < 6:
         raise SystemExit("only %d transformable sites found (franges=%d)"
                          % (len(sites), len(franges)))
