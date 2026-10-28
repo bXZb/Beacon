@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(LLVM 19 REQUIRED CONFIG)
+find_package(LLVM REQUIRED CONFIG)  # no version arg: the tarball's config version-negotiation rejects "19" vs "19.1.7"
 message(STATUS "obfpasses: LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 include(AddLLVM)
