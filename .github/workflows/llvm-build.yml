@@ -140,6 +140,7 @@ jobs:
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
+        if: always()   # failing YARA/determinism gates must still ship the pair for offline forensics
         with:
           name: llvm-linux-x64
           path: |
