@@ -160,6 +160,34 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       changed = true;
     }
 
+    // xor-split: xor x, C -> xor (xor x, C1), C2 with C1 seeded and
+    // C1^C2 == C — behavior-identical, doubles the instruction, and it
+    // covers and/xor-heavy regions the add/icmp rewrites miss.
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : make_early_inc_range(BB)) {
+        auto *XO = dyn_cast<BinaryOperator>(&I);
+        if (XO == nullptr || XO->getOpcode() != Instruction::Xor) continue;
+        auto *C = dyn_cast<ConstantInt>(XO->getOperand(1));
+        if (C == nullptr) continue;
+        unsigned bits = C->getType()->getIntegerBitWidth();
+        if (bits != 32 && bits != 64) continue;
+        APInt v = C->getValue();
+        if (v.isZero() || v.isAllOnes()) continue;
+        uint64_t thisIdx = idx++;
+        uint64_t mix = mixFor(seed, F.getName(), thisIdx, 5);
+        APInt c1 = APInt(bits, mix & v.getZExtValue() | 1);
+        if ((c1 & v) == 0) c1 = APInt(bits, 1);
+        APInt c2 = v ^ c1;
+        if (c2.isZero()) continue;
+        IRBuilder<> B(XO);
+        Value *t = B.CreateXor(XO->getOperand(0), ConstantInt::get(C->getContext(), c1));
+        Value *res = B.CreateXor(t, ConstantInt::get(C->getContext(), c2));
+        XO->replaceAllUsesWith(res);
+        XO->eraseFromParent();
+        changed = true;
+      }
+    }
+
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
 };
