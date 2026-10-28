@@ -73,7 +73,13 @@ jobs:
           "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf-b
           A_SHA=$(sha256sum llvm-out-obf-a/beacon.x64.llvm.dll | cut -d' ' -f1)
           B_SHA=$(sha256sum llvm-out-obf-b/beacon.x64.llvm.dll | cut -d' ' -f1)
-          [ "$A_SHA" = "$B_SHA" ] || { echo "DETERMINISM FAIL: same seed gave different output"; exit 1; }
+          if [ "$A_SHA" != "$B_SHA" ]; then
+            echo "DETERMINISM FAIL: same seed gave different output"
+            echo "first differing bytes (offset octal, a, b):"
+            cmp -l llvm-out-obf-a/beacon.x64.llvm.dll llvm-out-obf-b/beacon.x64.llvm.dll | head -24 || true
+            echo "sizes: $(stat -c%s llvm-out-obf-a/beacon.x64.llvm.dll) vs $(stat -c%s llvm-out-obf-b/beacon.x64.llvm.dll)"
+            exit 1
+          fi
           echo "determinism OK: $A_SHA"
           # uniqueness: different seed => different shape
           export OBF_SEED=424242
@@ -86,6 +92,15 @@ jobs:
           BASE_SHA=$(sha256sum llvm-out/beacon.x64.llvm.dll | cut -d' ' -f1)
           [ "$BASE_SHA" != "$A_SHA" ] || { echo "BASELINE COLLISION: obf build equals baseline"; exit 1; }
           echo "obf differs from baseline OK"
+          # out-dir dependence discriminator: baseline again in another dir
+          "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --out-dir llvm-out-base-2
+          BASE2_SHA=$(sha256sum llvm-out-base-2/beacon.x64.llvm.dll | cut -d' ' -f1)
+          if [ "$BASE_SHA" != "$BASE2_SHA" ]; then
+            echo "BASELINE OUT-DIR DEPENDENT (determinism issue predates the pass)"
+            cmp -l llvm-out/beacon.x64.llvm.dll llvm-out-base-2/beacon.x64.llvm.dll | head -12 || true
+          else
+            echo "baseline out-dir independent OK"
+          fi
           mv llvm-out-obf-a/beacon.x64.llvm.dll llvm-out/beacon.obf.llvm.dll
           mv llvm-out-obf-a/beacon.x64.llvm.map llvm-out/beacon.obf.llvm.map
           echo "$A_SHA" > llvm-out/beacon.obf.sha256
