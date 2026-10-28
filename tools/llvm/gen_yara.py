@@ -120,7 +120,7 @@ def main():
         raise SystemExit("only %d transformable sites found (franges=%d)"
                          % (len(sites), len(franges)))
     # spread: take every len/8-th site up to 8
-    stride = max(1, len(sites) // 8)
+    stride = max(1, len(sites) // TARGET)
     picked = 0
     for k in range(0, len(sites), stride):
         if picked >= 8:
