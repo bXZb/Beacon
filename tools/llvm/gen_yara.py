@@ -120,15 +120,19 @@ def main():
         raise SystemExit("only %d transformable sites found (franges=%d)"
                          % (len(sites), len(franges)))
     # spread: take every len/8-th site up to 8
-    stride = max(1, len(sites) // TARGET)
     picked = 0
-    for k in range(0, len(sites), stride):
-        if picked >= 8:
+    min_gap = max(1, len(sites) // TARGET)  # keep windows spread apart
+    last = -min_gap
+    for k in range(len(sites)):
+        if picked >= TARGET:
             break
+        if sites[k] - last < min_gap:
+            continue
         fo = sites[k]
         w = d[fo - 16:fo + 16]
         if len(w) != 32 or not window_ok(w):
             continue
+        last = fo
         # recover the rva for the meta line
         rva = None
         for name, va, vsz, rp, rsz in secs:
