@@ -110,7 +110,19 @@ jobs:
           cmake --build build/obf --target beacon-x64-wininet-layout
           B_SHA=$(sha256sum build/obf/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll | cut -d' ' -f1)
           if [ "$A_SHA" != "$B_SHA" ]; then
-            echo "DETERMINISM FAIL: $A_SHA vs $B_SHA"
+            echo "DETERMINISM FAIL A vs B: $A_SHA vs $B_SHA"
+            cmp -l /tmp/obf_a.dll build/obf/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll 2>/dev/null | head -12 || true
+            # discriminator: rebuild C from B's converged gen/layout.h state
+            cmake --build build/obf --target beacon-x64-wininet-layout || true
+            rm -f gen/layout.h
+            cmake --build build/obf --target beacon-x64-wininet-layout || true
+            C_SHA=$(sha256sum build/obf/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll | cut -d' ' -f1)
+            echo "C_SHA=$C_SHA (B=$B_SHA)"
+            if [ "$B_SHA" = "$C_SHA" ]; then
+              echo "VERDICT: chain-converged difference (A built from a stale gen/layout.h; B/C stable) - fix = converge before the gate"
+            else
+              echo "VERDICT: true pass nondeterminism"
+            fi
             exit 1
           fi
           echo "determinism OK"
