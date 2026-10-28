@@ -125,8 +125,9 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       APInt v = C->getValue();
       if (v.isZero() || v.isMinSignedValue()) continue;
 
+      // UNCONDITIONAL transform (coverage contract: every sampled code
+      // window must be reshaped); only the DIRECTION is seed-coined.
       bool toSub = (BO->getOpcode() == Instruction::Add);
-      // seeded flip of direction for extra shape variety
       if (coin(seed, F.getName(), thisIdx, 1))
         toSub = !toSub;
 
@@ -143,7 +144,6 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
 
     for (ICmpInst *CI : icmps) {
       uint64_t thisIdx = idx++;
-      if (!coin(seed, F.getName(), thisIdx, 2)) continue;
       auto *C = dyn_cast<ConstantInt>(CI->getOperand(1));
       if (C == nullptr) continue;
       unsigned bits = C->getType()->getIntegerBitWidth();
