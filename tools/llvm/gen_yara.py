@@ -75,13 +75,13 @@ def main():
         raise SystemExit("no our-obj function ranges found in map")
 
     parts = []
-    step = max(1, len(franges) // 6)
     picked = 0
     i = len(franges) // 3
     dbg = {"small": 0, "nofile": 0, "badwin": 0}
     while i < len(franges) and picked < 4:
         start, end = franges[i]
-        i += step
+        i += 1  # linear scan: ICF-folded functions share RVAs (span 0),
+                # striding over them burns the sample budget
         span = end - start
         if span < 0x80:
             dbg["small"] += 1
