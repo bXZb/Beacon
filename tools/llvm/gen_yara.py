@@ -82,8 +82,11 @@ def main():
     # x86-64 encodings: 83 /0 (add r32,imm8), REX.W 83 /0 (add r64,imm8),
     # 83 /5 (sub), 83 /7 (cmp), 81 /0 /5 (imm32 forms).
     # opcode prefixes: 83 /0 add r32 imm8, REX.W 83 /0 add r64 imm8, /5 sub,
-    # /7 cmp (modrm reg field picks the op; high nibble C/E/F covers them)
+    # /7 cmp — obf-sub rewrites ONLY add/sub (reg 0/5) and the xor-test icmp
+    # (reg 7 with the const-operand shape); /4 and /6 (and/xor) are NOT
+    # touched, so the modrm reg field must be checked exactly.
     pfx = [(b"\x83", 1), (b"\x48\x83", 2), (b"\x81", 1), (b"\x48\x81", 2)]
+    ok_reg = (0, 5, 7)
 
     tname, tva, tvsz, trp, trsz = text
     sites = []
@@ -103,9 +106,11 @@ def main():
                 if j == -1:
                     break
                 mi = j + moff
-                if mi < len(chunk) and (chunk[mi] >> 4) in (0xC, 0xE, 0xF):
-                    hit = j
-                    break
+                if mi < len(chunk):
+                    modrm = chunk[mi]
+                    if modrm >> 6 == 3 and ((modrm >> 3) & 7) in ok_reg:
+                        hit = j
+                        break
                 j += 1
             if hit != -1:
                 break
