@@ -121,7 +121,7 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       IRBuilder<> B(BO);
       Value *op = BO->getOperand(0);
       APInt nv = toSub ? -v : -v; // the negated constant drives the other opcode
-      ConstantInt *NC = ConstantInt::get(cast<IntegerType>(C->getType()), nv);
+      ConstantInt *NC = cast<ConstantInt>(ConstantInt::get(C->getContext(), nv));
       Value *res = toSub ? B.CreateSub(op, NC, "", false, false)
                          : B.CreateAdd(op, NC, "", false, false);
       BO->replaceAllUsesWith(res);
