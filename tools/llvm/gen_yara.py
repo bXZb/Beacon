@@ -78,19 +78,23 @@ def main():
     step = max(1, len(franges) // 6)
     picked = 0
     i = len(franges) // 3
+    dbg = {"small": 0, "nofile": 0, "badwin": 0}
     while i < len(franges) and picked < 4:
         start, end = franges[i]
         i += step
         span = end - start
         if span < 0x80:
+            dbg["small"] += 1
             continue
         # window 0x40 bytes into the function (skip prologue), 32 bytes long
         rva = start + 0x40
         fo = rva_to_file(secs, rva)
         if fo is None:
+            dbg["nofile"] += 1
             continue
         w = d[fo:fo + 32]
         if len(w) != 32 or not window_ok(w):
+            dbg["badwin"] += 1
             continue
         hexpat = " ".join("%02X" % b for b in w)
         parts.append(
@@ -105,7 +109,9 @@ def main():
             '}\n' % (picked, rva, hexpat))
         picked += 1
     if picked < 3:
-        raise SystemExit("only %d windows sampled" % picked)
+        raise SystemExit("only %d windows sampled (franges=%d, dbg=%s, text=%s)"
+                         % (picked, len(franges), dbg,
+                            [(s[0], hex(s[1]), hex(s[2])) for s in secs[:3]]))
 
     open(out, "w").write("\n".join(parts))
     print("wrote %d rules (from %d our-obj functions) to %s" %
