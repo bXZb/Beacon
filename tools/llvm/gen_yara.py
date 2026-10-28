@@ -76,38 +76,59 @@ def main():
 
     parts = []
     TARGET = 8
+    # Sample windows CENTERED on add/sub/cmp-with-immediate instruction
+    # sites inside our functions: obf-sub rewrites exactly those
+    # unconditionally, so a window containing one is GUARANTEED to change.
+    # x86-64 encodings: 83 /0 (add r32,imm8), REX.W 83 /0 (add r64,imm8),
+    # 83 /5 (sub), 83 /7 (cmp), 81 /0 /5 (imm32 forms).
+    pats = [b"\x83\xc", b"\x48\x83\xc", b"\x83\xe", b"\x48\x83\xe",
+            b"\x83\xf", b"\x48\x83\xf", b"\x81\xc", b"\x48\x81\xc"]
+
+    tname, tva, tvsz, trp, trsz = text
+    sites = []
+    for start, endr in franges:
+        if endr - start < 0x60:
+            continue
+        fo0 = rva_to_file(secs, start + 0x20)
+        fo1 = rva_to_file(secs, endr - 0x20)
+        if fo0 is None or fo1 is None or fo1 <= fo0:
+            continue
+        chunk = d[fo0:fo1]
+        for pat in pats:
+            j = chunk.find(pat)
+            if j != -1:
+                sites.append(fo0 + j)
+                break
+    if len(sites) < 6:
+        raise SystemExit("only %d transformable sites found (franges=%d)"
+                         % (len(sites), len(franges)))
+    # spread: take every len/8-th site up to 8
+    stride = max(1, len(sites) // 8)
     picked = 0
-    i = len(franges) // 3
-    dbg = {"small": 0, "nofile": 0, "badwin": 0}
-    while i < len(franges) and picked < TARGET:
-        start, end = franges[i]
-        i += 1  # linear scan: ICF-folded functions share RVAs (span 0),
-                # striding over them burns the sample budget
-        span = end - start
-        if span < 0x80:
-            dbg["small"] += 1
-            continue
-        # window 0x40 bytes into the function (skip prologue), 32 bytes long
-        rva = start + 0x40
-        fo = rva_to_file(secs, rva)
-        if fo is None:
-            dbg["nofile"] += 1
-            continue
-        w = d[fo:fo + 32]
+    for k in range(0, len(sites), stride):
+        if picked >= 8:
+            break
+        fo = sites[k]
+        w = d[fo - 16:fo + 16]
         if len(w) != 32 or not window_ok(w):
-            dbg["badwin"] += 1
             continue
+        # recover the rva for the meta line
+        rva = None
+        for name, va, vsz, rp, rsz in secs:
+            if rp <= fo < rp + rsz:
+                rva = va + (fo - rp)
+                break
         hexpat = " ".join("%02X" % b for b in w)
         parts.append(
             'rule bw_sig_%d {\n'
             '  meta:\n'
             '    author = "beacon-llvm-matrix"\n'
-            '    desc = "self signature: our-code function @rva 0x%x (obj-backed)"\n'
+            '    desc = "self signature: transformable-op site @rva %s"\n'
             '  strings:\n'
             '    $a = { %s }\n'
             '  condition:\n'
             '    $a\n'
-            '}\n' % (picked, rva, hexpat))
+            '}\n' % (picked, hex(rva) if rva else "?", hexpat))
         picked += 1
     if picked < 6:
         raise SystemExit("only %d windows sampled (franges=%d, dbg=%s, text=%s)"
