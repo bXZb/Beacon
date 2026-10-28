@@ -60,6 +60,7 @@ jobs:
             -DVARIANTS="beacon:x64:wininet:layout"
           cmake --build build/base --target beacon-x64-wininet-layout
           cmake --build build/base --target beacon-x64-wininet-layout
+          cmake --build build/base --target beacon-x64-wininet-layout
           mkdir -p llvm-out
           cp build/base/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll llvm-out/beacon.x64.llvm.dll
           cp build/base/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.map llvm-out/beacon.x64.llvm.map
