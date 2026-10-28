@@ -42,8 +42,12 @@ def our_function_ranges(map_path):
         m = re.match(r"\s*([0-9a-f]{4}):([0-9a-f]+)\s+(\S+)\s+([0-9a-f]{12,16})\s+(\S.*)",
                      line)
         if m:
-            rva = int(m.group(2), 16)
+            # the RVA lives in the Rva+Base column (group 4, image base
+            # 0x180000000) — group 2 is only the section offset
+            rva = int(m.group(4), 16) - 0x180000000
             obj = m.group(5).strip()
+            if rva <= 0:
+                continue
             if "/obj/" in obj or obj.endswith(".obj"):
                 if cur is not None and cur[0] < rva:
                     ranges.append((cur[0], rva))
