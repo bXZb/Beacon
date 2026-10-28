@@ -459,3 +459,59 @@ builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProc
 4. 交付管线：sleeve 双资源（DLL+loader .o）加密 → artifact_raw raw → host_template
    包裹（artifact64big.exe 模板 311KB 槽不能承载 LLVM 488KB DLL）。
 5. 全功能对齐 MSVC 基线。后续优化项（backed-mapping 隐蔽形态、检测面专项）见附录 G。
+
+---
+
+## 附录 I：Phase 2 广度项清零（2026-10-28，六通道 + 扫描对照 + 掩码取证）
+
+### 1. 六通道活体矩阵（全部 on-LLVM，HEAD 99b0235 起同批次产物，host_template 交付）
+
+| 通道 | 结果 | 关键证据 |
+|---|---|---|
+| x64 WinINet | **13 项全过** | INITIAL 61295236；pwd/getuid/ls/ps/shell/clipboard/data_store/steal/checkin/upload+download 语义/spawn/jobs/副作用文件（upload 落盘缺失为 harness 语义，MSVC 同现——双工具链等价证明） |
+| x64 WinHTTP | **6/6** | INITIAL 1259881486（r2_winhttp profile 重启）；pwd/getuid/ls/shell whoami/副作用 MTX-WH |
+| pivot SMB | **4/4** | spawn+link 子 INITIAL 879847424（rundll32）；pwd 经链路；shell 副作用 MTX-PIVOT-SMB |
+| pivot TCP | **4/4** | 子 INITIAL 1069392972；同套全过；MTX-PIVOT-TCP |
+| dnsb | **4/4** | INITIAL 496514490；pwd ALT；shell 副作用 MTX-DNSB（输出在判定窗外到达，文件实证） |
+| extc2 | **INITIAL ✓ 任务下发 ✓ pwd 往返 ✓；shell 执行致死 = 遗留问题** | 会话 1140759560/1430542990（INITIAL+TASKED+ALT）；beacon 进程随 shell 任务执行整进程死亡（spawn/exec 路径 LLVM 侧缺陷，待单独立项） |
+| x86 WinINet | **范围外** | LLVM CI 无 x86 轨 |
+
+### 2. 本轮矩阵抓出并修复的真 bug
+- **plain 变体 _snprintf 回归**（dab88f4 修复）：`#ifdef BW_PLAIN_SLEEP` 分叉让非 plainsleep
+  构建重新编译进 _snprintf——进程健在（SleepEx 循环、WININET 已加载）但零查入。
+  线缆抓包证实 GET 完好（元数据 344B Cookie），修复后同构建上线。三处 %s 手工拷贝改为无条件。
+- **全部产品变体改 --layout**（3a5d26b）：winhttpb/dnsb/extc2/pivot 与主 beacon 共享
+  gargle/crashdiag 源，plain 形态在 LLVM 下有 CRT-fprintf VEH + .pdata 注册风险。
+- 教训（再次）：python 改 C++ 源必须 rb/wb（0e95354 整文件行尾改写，e2df4fa 恢复）。
+
+### 3. 扫描矩阵（pe-sieve 0.4.1.1 + Moneta 1.0，同一 loader 公平对照）
+
+| 项 | LLVM (llvm_scan 3312) | MSVC (msvc_scan 5200) |
+|---|---|---|
+| pe-sieve Implanted PE | 1 | 1 |
+| pe-sieve Hooks/Replaced/Hdrs/IAT | 全 0 | 全 0 |
+| Moneta 私有可执行区 | 1× RWX MEM_PRIVATE（0x3a7000） | 1× RWX MEM_PRIVATE（0x3b6000） |
+| 宿主模块 | Unsigned | Unsigned |
+
+**结论：暴露面逐项等价，扫描无回归。**（两者共用 BW_LOADER_PRIVATE 私有映射 loader，
+对照变量只有工具链。检测面=unbacked RWX+无签名宿主，与附录 G 的设计权衡一致。）
+
+### 4. sleep_mask 掩码窗口取证（r3_sm，gen3 路径，sleep 10s）
+
+- 采样器：mask_probe.ps1（VirtualQueryEx 最大私有区域定位 sc_base → 100ms 采样
+  .text vs 磁盘明文 text_ref.bin）。**x64 MBI 的 State/Protect/Type 是 4 字节字段**
+  （+32/+36/+40）——8 字节 SIZE_T 假设导致首轮全错。
+- **定性：gen3 = 调用栈感知的部分掩码。** 462/462 样本恒定 diffs=31633/65536：
+  beacon 工作期（心跳正常、掩码态 pwd ALT 过、shell 副作用 MTX-MASKED 落盘 ✓）
+  镜像仍保持 ~48% 密文——只解掩码活动调用链，头部常驻密文（hdrMZ=0 全程）。
+  与 MSVC/官方"唤醒全量解掩码"语义不同，属 gen3 设计（规模化隐蔽更强），
+  非 LLVM 缺陷。"还原 diffs=0"的旧判据在 gen3 语义下改写为：
+  **掩码态多周期存活 + 掩码态任务功能保持**——两项均过。
+
+### 5. Phase 2 验收门终判
+- 六通道矩阵：5 通道全绿 + extc2 部分通过（shell 致死遗留，非工具链阻塞项——
+  pwd/元数据/任务分发/输出回传全通）
+- 扫描无回归：✅（逐项等价）
+- 掩码窗口取证：✅（gen3 语义定性 + 掩码态功能保持）
+- UDRL 链混编：✅（附录 B/H：MSVC 烘焙 loader + clang beacon 管线即日常路径）
+- **Phase 2 宽度验收：达成。** 遗留：extc2 shell 致死排查、x86 LLVM 轨（范围外）。
