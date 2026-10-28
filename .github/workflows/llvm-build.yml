@@ -115,7 +115,7 @@ jobs:
 
           # ---- Phase 3: YARA self-check ----
           sudo apt-get install -y yara >/dev/null 2>&1
-          python3 tools/llvm/gen_yara.py llvm-out/beacon.x64.llvm.dll llvm-out/bw_baseline.yar
+          python3 tools/llvm/gen_yara.py llvm-out/beacon.x64.llvm.dll llvm-out/beacon.x64.llvm.map llvm-out/bw_baseline.yar
           # baseline must MATCH (rules are valid signatures)
           if yara -w llvm-out/bw_baseline.yar llvm-out/beacon.x64.llvm.dll | grep -q bw_sig; then
             echo "yara baseline MATCH ok"
