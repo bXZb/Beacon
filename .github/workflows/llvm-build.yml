@@ -95,15 +95,8 @@ jobs:
           echo "determinism OK: $A_SHA"
           # did the pass actually run? its volatile seed global carries the
           # seed value into .data; scan for it and compare sizes vs baseline
-          python3 - <<'PYEOF'
-import struct
-def scan(path, seed):
-    d = open(path,'rb').read()
-    pat = struct.pack('<Q', (seed ^ 0xB70C1A2E4D9F8C37) & 0xFFFFFFFFFFFFFFFF)
-    return d.count(pat)
-print("seed-global hits baseline:", scan("llvm-out/beacon.x64.llvm.dll", 0))
-print("seed-global hits obf(1337):", scan("/tmp/obf_a.dll", 1337))
-PYEOF
+          echo "seed-global hits baseline: $(python3 tools/llvm/scan_seed.py llvm-out/beacon.x64.llvm.dll 0)"
+          echo "seed-global hits obf(1337): $(python3 tools/llvm/scan_seed.py /tmp/obf_a.dll 1337)"
           echo "sizes: baseline=$(stat -c%s llvm-out/beacon.x64.llvm.dll) obf=$(stat -c%s /tmp/obf_a.dll)"
           [ "$BASE_SHA" != "$A_SHA" ] || { echo "BASELINE COLLISION: obf build equals baseline - PASS DID NOT RUN"; exit 1; }
           export OBF_SEED=424242
