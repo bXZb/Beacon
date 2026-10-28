@@ -69,6 +69,10 @@ foreach(V ${VARIANTS})
     endif()
   endforeach()
 
+  set(OBF_ARGS "")
+  if(OBF_SO)
+    list(APPEND OBF_ARGS "--obf=${OBF_SO}")
+  endif()
   add_custom_target(${TNAME}
     COMMAND ${CMAKE_COMMAND} -E env
             python3 ${CMAKE_CURRENT_SOURCE_DIR}/dump_manifest.py
@@ -78,7 +82,7 @@ foreach(V ${VARIANTS})
             python3 ${CMAKE_CURRENT_SOURCE_DIR}/layout_two_pass.py
             --manifest ${REPO}/gen/manifest_last.json --repo ${REPO}
             --xwin-dir ${XWIN_DIR} --out-dir "${OUT_DIR}/${TNAME}"
-            $<$<BOOL:${OBF_SO}>:--obf=${OBF_SO}> --jobs ${JOBS}
+            ${OBF_ARGS} --jobs ${JOBS}
     WORKING_DIRECTORY ${REPO}
     COMMENT "variant ${TNAME}"
     VERBATIM)
