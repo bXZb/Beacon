@@ -125,15 +125,15 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       APInt v = C->getValue();
       if (v.isZero() || v.isMinSignedValue()) continue;
 
-      // UNCONDITIONAL transform (coverage contract: every sampled code
-      // window must be reshaped); only the DIRECTION is seed-coined.
+      // UNCONDITIONAL transform: add x,C <-> sub x,-C is the ONLY
+      // value-equivalent opcode swap here. (An earlier "seeded direction
+      // flip" rewrote add x,C into add x,-C — a live-matrix crash — the
+      // coin only ever chose whether to BREAK the value.)
       bool toSub = (BO->getOpcode() == Instruction::Add);
-      if (coin(seed, F.getName(), thisIdx, 1))
-        toSub = !toSub;
 
       IRBuilder<> B(BO);
       Value *op = BO->getOperand(0);
-      APInt nv = toSub ? -v : -v; // the negated constant drives the other opcode
+      APInt nv = -v; // the negated constant drives the other opcode
       ConstantInt *NC = cast<ConstantInt>(ConstantInt::get(C->getContext(), nv));
       Value *res = toSub ? B.CreateSub(op, NC, "", false, false)
                          : B.CreateAdd(op, NC, "", false, false);
