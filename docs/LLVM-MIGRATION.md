@@ -552,3 +552,58 @@ builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProc
   命名空间致盲（gle=2 恒定）；Task-per-read 超时弃读会在线程/队列堆积。
 - VM 侧 PowerShell 均为 64 位；Add-Type 必须用 C#5 语法（无 out-var 内联、
   未用变量即错误）。
+
+---
+
+## 附录 K：Phase 3 完成 + Phase 4 决策（2026-10-29，HEAD e1e5566 双绿）
+
+### Phase 3：pass 变形管线 MVP —— 全部验收达成
+
+**管线**（tools/llvm/pass/，CMake+AddLLVM 构建 = 路线图的 Phase 3 CMake 引入点）：
+- **obf-sub**：add x,C ↔ sub x,-C 无条件 opcode 互换（唯一等价形式）+
+  icmp eq/ne x,C → xor-test 重写 + xor x,C 拆分（C1 种子化，C1^C2=C）。
+- **obf-bogo**：不透明谓词块分裂——(x<<1)+x != x*3 对一切 i64 恒假，
+  由 volatile 全局 bw_obf_seed 供数（ISel 不可折叠），每个合格函数
+  1-2 次种子随机位置分裂；ReflectiveLoader（拼接墙契约）排除。
+- 种子契约：OBF_SEED 环境变量（同种子 = /Brepro 字节复现；异种子 = 形状不同）。
+
+**验收门实测（CI llvm-build 87e8043/e1e5566 全绿）**：
+| 门 | 结果 |
+|---|---|
+| 确定性（同种子两次构建） | ✅ 字节一致 |
+| 唯一性（异种子） | ✅ 哈希不同 |
+| 基线发散 | ✅ obf ≠ baseline |
+| YARA 自查（16 个站点居中窗口） | ✅ 基线 16/16 命中；变形丢 15（94% 覆盖） |
+| 活体矩阵（变形产物） | ✅ CHECKIN + 11 项任务 battery + 副作用文件 + 扫描对照 |
+| 扫描对照（变形产物） | ✅ pe-sieve/Moneta 暴露面与基线逐项等价 |
+
+**管线开发中抓获/修复的真 bug**：
+1. **pass 从未执行**：clang-cl 静默忽略未知 -f 旗标（warning only）——
+   必须 /clang:-fpass-plugin= 前缀透传。
+2. **pass-2 消费者过滤器**："/gargle." 永远匹配不到真正的 layout.h 消费者
+   gargleint.cpp —— 修复前所有 DLL 烘焙的是零值占位表（verify_layout 是
+   节级检查所以恒过）。修复后掩码表首次真实入库。
+3. **种子化方向翻转 = 数值破坏**（活体矩阵抓获）：add x,C 被改写成
+   add x,-C（保 opcode 换常数）破坏 50% 的加法 → 变形信标越界读崩溃。
+   等价变换只有 opcode 翻转 + 常数取负，必须无条件。
+4. /Brepro 哈希覆盖输入路径：out-dir 属于可复现契约的一部分
+   （基线双构建判别器确证）。
+5. gen_yara 站点居中采样：窗口必须落在可变换指令站点上
+   （modrm reg 字段精确 = 0/5/7），任意窗口的覆盖是概率性的。
+
+### Phase 4：主线切换决策（决策点完成）
+
+**决策：llvm 分支内双轨并存——clang-cl/CMake 为 llvm 线权威构建，
+MSVC CI（build.yml）保留为对照轨；build.py 继续承担变体矩阵驱动
+（CMake 已按路线图接管 pass 管线，全变体移植列为后续项）。**
+
+**合并裁定：按用户指令，llvm 分支成果不合入 feat/post-4.9.1，llvm 分支
+作为长期分支存续。** 原 Phase 4 验收门（EVASION-ROADMAP Phase 0 双绿后
+合入主分支）的合入动作由用户显式豁免；双绿前置条件已满足
+（e1e5566: llvm-build ✅ + build ✅）。
+
+### 遗留清单（Phase 3/4 之后）
+- 全变体 CMake 移植（build.py 完全退役）——后续工程项
+- x86 LLVM 轨（范围外）
+- 变形覆盖扩展（and/or/sbb/relational-cmp 站点的等价变换）——
+  与检测面专项合并推进
