@@ -515,3 +515,40 @@ builder）或 hostcfg_init/strategy_setup。栈上 VirtualProtect+GetCurrentProc
 - 掩码窗口取证：✅（gen3 语义定性 + 掩码态功能保持）
 - UDRL 链混编：✅（附录 B/H：MSVC 烘焙 loader + clang beacon 管线即日常路径）
 - **Phase 2 宽度验收：达成。** 遗留：extc2 shell 致死排查、x86 LLVM 轨（范围外）。
+
+---
+
+## 附录 J：extc2 通道闭环 + "shell 致死"真因（2026-10-28 深夜，HEAD 5fe7932）
+
+### 真因：link 家族 accept 循环的 sleep-0 退出（与工具链无关的存量 bug）
+- `command_link_wait` / `command_tcp_bind_start` / dnsb 主循环全部
+  `while (sleep_time > 0)`——操作员执行 `sleep 0`（交互语义）即在本周期末
+  `safe_exit()`。矩阵取证时先 sleep 0 再 shell → shell 从未送达，"shell 致死"
+  实为 pwd 周期结束后的循环退出。主循环同型 bug 早在 beacon.cpp 修过并有注释记录，
+  链式家族三处漏修。MSVC 时代 extc2 测试用默认 60s sleep，从未触发。
+- **修复**：三循环改 `while (TRUE) + check_kill_date()` 门（5fe7932），
+  与 beacon.cpp 既有语义一致；顺带清除 smbx/lkmark 临时插桩。
+
+### extc2 通道终局验证（LLVM 构建 + 修复版）
+- **稳定模式**（默认 60s sleep）6/6：pwd/getuid/shell whoami/shell 副作用
+  （MTX-STABLE2 落盘）/连续任务存活。
+- **交互模式**（sleep 0）4/4：sleep 0 后信标存活、pwd ALT、shell 副作用
+  （MTX-INTERACTIVE 落盘）。
+- 至此六通道 **http/winhttp/SMB/TCP/dnsb/extc2 全部闭环**（x86 范围外）。
+
+### 交互协议（sleep 0 = 每连接一个周期）——控制器契约
+- beacon 每个任务周期末 `client_flush` +（sleep_time==0 时）`return` →
+  FlushFileBuffers + DisconnectNamedPipe → ConnectNamedPipe 等新连接。
+- 控制器必须在 EOF（PeekNamedPipe 失败）时重连并重读 metadata——TS 按
+  agentid 重绑同一会话，未完成任务在新连接上继续派发。
+- **round-18 协议教训再次生效**：任务帧写入后的清空窗口必须是非阻塞短窗
+  （0.4s peek）——beacon 无心跳回复义务；阻塞式等心跳 = 中继死锁。
+
+### 控制器（extc2_ctrl.ps1）终版形态
+- 单线程 + PeekNamedPipe 非阻塞可用性检查 + NamedPipeClientStream 字节读
+  （消息边界由 read 计数消化）；严格轮替 + 无条件帧前转 + 0.4s 清空窗 +
+  EOF 重连重元数据。
+- 历史教训：raw CreateFileW pinvoke 在 LoadLibrary 了 beacon 的进程内
+  命名空间致盲（gle=2 恒定）；Task-per-read 超时弃读会在线程/队列堆积。
+- VM 侧 PowerShell 均为 64 位；Add-Type 必须用 C#5 语法（无 out-var 内联、
+  未用变量即错误）。
