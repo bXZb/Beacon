@@ -33,6 +33,17 @@ jobs:
         shell: bash
         run: bash tools/llvm/setup-host.sh
 
+      - name: Build mutation pass plugin (CMake + AddLLVM, pinned LLVM)
+        shell: bash
+        run: |
+          set -e
+          source "$HOME/.llvm-cross/toolpath.env"
+          LLVM_DIR="$HOME/.llvm-cross/llvm/lib/cmake/llvm"
+          cmake -S tools/llvm/pass -B tools/llvm/pass/build \
+            -DLLVM_DIR="$LLVM_DIR" -DCMAKE_BUILD_TYPE=Release
+          cmake --build tools/llvm/pass/build -j 2
+          ls -la tools/llvm/pass/build/obfpasses.so
+
       - name: Build all x64 variants
         shell: bash
         run: |
@@ -54,6 +65,47 @@ jobs:
           mv llvm-out-ps/beacon.x64.llvm.dll llvm-out/beacon.plainsleep.llvm.dll
           mv llvm-out-ps/beacon.x64.llvm.map llvm-out/beacon.plainsleep.llvm.map
 
+          # ---- Phase 3: mutation pipeline ----
+          # determinism: same seed twice => byte-identical
+          export OBF_SEED=1337
+          "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf-a
+          export OBF_SEED=1337
+          "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf-b
+          A_SHA=$(sha256sum llvm-out-obf-a/beacon.x64.llvm.dll | cut -d' ' -f1)
+          B_SHA=$(sha256sum llvm-out-obf-b/beacon.x64.llvm.dll | cut -d' ' -f1)
+          [ "$A_SHA" = "$B_SHA" ] || { echo "DETERMINISM FAIL: same seed gave different output"; exit 1; }
+          echo "determinism OK: $A_SHA"
+          # uniqueness: different seed => different shape
+          export OBF_SEED=424242
+          "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf-c
+          C_SHA=$(sha256sum llvm-out-obf-c/beacon.x64.llvm.dll | cut -d' ' -f1)
+          [ "$A_SHA" != "$C_SHA" ] || { echo "UNIQUENESS FAIL: different seed gave identical output"; exit 1; }
+          echo "uniqueness OK: $A_SHA vs $C_SHA"
+          # baseline (no obf) must differ from both
+          export -n OBF_SEED
+          BASE_SHA=$(sha256sum llvm-out/beacon.x64.llvm.dll | cut -d' ' -f1)
+          [ "$BASE_SHA" != "$A_SHA" ] || { echo "BASELINE COLLISION: obf build equals baseline"; exit 1; }
+          echo "obf differs from baseline OK"
+          mv llvm-out-obf-a/beacon.x64.llvm.dll llvm-out/beacon.obf.llvm.dll
+          mv llvm-out-obf-a/beacon.x64.llvm.map llvm-out/beacon.obf.llvm.map
+          echo "$A_SHA" > llvm-out/beacon.obf.sha256
+
+          # ---- Phase 3: YARA self-check ----
+          sudo apt-get install -y yara >/dev/null 2>&1
+          python3 tools/llvm/gen_yara.py llvm-out/beacon.x64.llvm.dll llvm-out/bw_baseline.yar
+          # baseline must MATCH (rules are valid signatures)
+          if yara -w llvm-out/bw_baseline.yar llvm-out/beacon.x64.llvm.dll | grep -q bw_sig; then
+            echo "yara baseline MATCH ok"
+          else
+            echo "YARA FAIL: baseline does not match its own signatures"; exit 1
+          fi
+          # mutated build must NOT match (shape was reshaped in every window)
+          if yara -w llvm-out/bw_baseline.yar llvm-out/beacon.obf.llvm.dll | grep -q bw_sig; then
+            echo "YARA FAIL: mutated build still matches baseline signatures"; exit 1
+          else
+            echo "yara mutated NO-MATCH ok"
+          fi
+
       - name: Size report
         shell: bash
         run: |
@@ -71,6 +123,7 @@ jobs:
           path: |
             llvm-out/*.dll
             llvm-out/*.map
+            llvm-out/beacon.obf.sha256
             llvm-out/_sizes.json
 
   windows-x64:

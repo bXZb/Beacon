@@ -396,6 +396,11 @@ def main():
                     help="set BeaconNoExcReg=true (BW_NO_EXC_REG: skip "
                          "RtlAddFunctionTable registration)")
     ap.add_argument("--pause", action="store_true")
+    ap.add_argument("--obf", default=None, metavar="PASS_SO",
+                    help="enable Phase 3 mutation: load the pass plugin at "
+                         "compile time (-fpass-plugin). Shape is driven by the "
+                         "OBF_SEED env var (same seed = byte-identical, "
+                         "different seed = different shape).")
     ap.add_argument("--clang-cl", default="clang-cl")
     ap.add_argument("--lld-link", default="lld-link")
     ap.add_argument("--xwin-dir", required=True)
@@ -432,6 +437,8 @@ def main():
         is_c = src_rel.lower().endswith(".c")
         cmd = [args.clang_cl] + base_flags + per_file_flags(meta, proj, is_c) \
               + ["/Fo:" + obj, "/c", src]
+        if args.obf:
+            cmd += ["-fpass-plugin=" + args.obf]
         tasks.append((obj, src, cmd))
 
     dll = f"{out_dir}/{proj.target_name}.llvm.dll"
