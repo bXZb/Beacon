@@ -53,24 +53,7 @@ unsigned int genagentid() {
 	return bigger_rand() & 0x7FFFFFFF & ~1;
 }
 
-/* TEMP matrix diagnostic: CRT-free wall-clock markers. Removed with root fix.
- * NON-static: client_smb_common.h (pivot/extc2 shared) references it extern. */
-void lk_mark(const char * stage) {
-	HANDLE h = CreateFileA("C:\\lab\\lkmark.txt", FILE_APPEND_DATA,
-		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE) return;
-	SetFilePointer(h, 0, NULL, FILE_END);
-	char buf[96]; int n = 0;
-	SYSTEMTIME st; GetSystemTime(&st);
-	n += _snprintf(buf, 30, "%02d:%02d:%02d.%03d ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-	while (*stage && n < 80) buf[n++] = *stage++;
-	buf[n++] = '\r'; buf[n++] = '\n';
-	DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
-}
-
 void beacon(LPVOID lpReserved) {
-	lk_mark("beacon-enter");
 	char * buffer;
 	int    length;
 	unsigned int adjust = 0;
@@ -103,7 +86,5 @@ void beacon(LPVOID lpReserved) {
 	track_memory_add(buffer, MAX_GET, TRACK_MEMORY_MALLOC, FALSE, NULL);
 
 	/* initialize the agent */
-	lk_mark("pre-agent-init");
 	agent_init(buffer, MAX_GET);
-	lk_mark("post-agent-init");
 

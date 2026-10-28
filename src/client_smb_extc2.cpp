@@ -70,35 +70,14 @@ LCHANNEL lchannel_smb_gargle(HANDLE pipe) {
 	return channel;
 }
 
-/* TEMP matrix diagnostic (extc2 pipe flake): CRT-free one-line marker.
- * Removed in the same commit as the root fix. */
-static void smbx_mark(const char * stage, DWORD a, DWORD b) {
-	HANDLE h = CreateFileA("C:\\lab\\smbx.txt", FILE_APPEND_DATA,
-		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE) return;
-	SetFilePointer(h, 0, NULL, FILE_END);
-	char buf[128]; int n = 0;
-	unsigned int t = GetTickCount();
-	for (int sh = 28; sh >= 0 && n < 8; sh -= 4)
-		buf[n++] = "0123456789ABCDEF"[(t >> sh) & 0xF];
-	buf[n++] = ' ';
-	while (*stage && n < 60) buf[n++] = *stage++;
-	n += _snprintf(buf + n, 40, " %lu %lu", (unsigned long)a, (unsigned long)b);
-	buf[n++] = '\r'; buf[n++] = '\n';
-	DWORD w; WriteFile(h, buf, n, &w, NULL); CloseHandle(h);
-}
-
 /*
 *  init a named pipe
 */
 BOOL smb_init() {
 	HANDLE temps = INVALID_HANDLE_VALUE;
 
-	smbx_mark("init enter", setting_int(SETTING_SLEEPTIME), MAX_GET);
 	/* setup our named pipe please */
 	temps = CreateNamedPipe(setting_ptr(SETTING_PIPENAME), PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, PIPE_UNLIMITED_INSTANCES, MAX_GET, MAX_GET, 0, NULL);
-	smbx_mark("created", temps == INVALID_HANDLE_VALUE ? 0xDEAD : 0x600D, GetLastError());
 
 	/* check for errors and fail now... */
 	if (temps == INVALID_HANDLE_VALUE) {

