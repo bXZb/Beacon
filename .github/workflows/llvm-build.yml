@@ -60,6 +60,12 @@ jobs:
             -DVARIANTS="beacon:x64:wininet:layout"
           cmake --build build/base --target beacon-x64-wininet-layout
           cmake --build build/base --target beacon-x64-wininet-layout
+          rm -rf build/base   # convergence rebuild: gen/layout.h is now the
+                              # real table; a fresh dir rebuilds converged
+          cmake -S tools/llvm -B build/base \
+            -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
+            -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
+            -DVARIANTS="beacon:x64:wininet:layout"
           cmake --build build/base --target beacon-x64-wininet-layout
           mkdir -p llvm-out
           cp build/base/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll llvm-out/beacon.x64.llvm.dll
@@ -81,6 +87,11 @@ jobs:
             -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
             -DOBF_SO="$OBF_SO" -DOBF_SEED=1337 -DVARIANTS="$VARIANTS"
           cmake --build build/obf --target all-variants
+          rm -rf build/obf   # convergence rebuild (fresh dir, converged table)
+          cmake -S tools/llvm -B build/obf \
+            -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
+            -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
+            -DOBF_SO="$OBF_SO" -DOBF_SEED=1337 -DVARIANTS="$VARIANTS"
           cmake --build build/obf --target all-variants
           mkdir -p llvm-out
           for f in build/obf/out/*/out/*.llvm.dll; do
@@ -111,6 +122,11 @@ jobs:
             -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
             -DOBF_SO="$OBF_SO" -DOBF_SEED=1337 -DVARIANTS="$VARIANTS"
           cmake --build build/obf --target beacon-x64-wininet-layout
+          rm -rf build/obf   # convergence rebuild
+          cmake -S tools/llvm -B build/obf \
+            -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
+            -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
+            -DOBF_SO="$OBF_SO" -DOBF_SEED=1337 -DVARIANTS="$VARIANTS"
           cmake --build build/obf --target beacon-x64-wininet-layout
           B_SHA=$(sha256sum build/obf/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll | cut -d' ' -f1)
           if [ "$A_SHA" != "$B_SHA" ]; then
@@ -143,6 +159,11 @@ jobs:
             -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
             -DOBF_SO="$OBF_SO" -DOBF_SEED=424242 -DVARIANTS="beacon:x64:wininet:layout"
           cmake --build build/obf --target beacon-x64-wininet-layout
+          rm -rf build/obf   # convergence rebuild
+          cmake -S tools/llvm -B build/obf \
+            -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
+            -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
+            -DOBF_SO="$OBF_SO" -DOBF_SEED=424242 -DVARIANTS="beacon:x64:wininet:layout"
           cmake --build build/obf --target beacon-x64-wininet-layout
           C_SHA=$(sha256sum build/obf/out/beacon-x64-wininet-layout/out/beacon.x64.llvm.dll | cut -d' ' -f1)
           if [ "$A_SHA" = "$C_SHA" ]; then
