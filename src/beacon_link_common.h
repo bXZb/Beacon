@@ -53,8 +53,9 @@ unsigned int genagentid() {
 	return bigger_rand() & 0x7FFFFFFF & ~1;
 }
 
-/* TEMP matrix diagnostic: CRT-free wall-clock markers. Removed with root fix. */
-static void lk_mark(const char * stage) {
+/* TEMP matrix diagnostic: CRT-free wall-clock markers. Removed with root fix.
+ * NON-static: client_smb_common.h (pivot/extc2 shared) references it extern. */
+void lk_mark(const char * stage) {
 	HANDLE h = CreateFileA("C:\\lab\\lkmark.txt", FILE_APPEND_DATA,
 		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
 		FILE_ATTRIBUTE_NORMAL, NULL);
