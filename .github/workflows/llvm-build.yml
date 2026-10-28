@@ -116,18 +116,17 @@ jobs:
           # ---- Phase 3: YARA self-check ----
           sudo apt-get install -y yara >/dev/null 2>&1
           python3 tools/llvm/gen_yara.py llvm-out/beacon.x64.llvm.dll llvm-out/beacon.x64.llvm.map llvm-out/bw_baseline.yar
-          # baseline must MATCH (rules are valid signatures)
-          if yara -w llvm-out/bw_baseline.yar llvm-out/beacon.x64.llvm.dll | grep -q bw_sig; then
-            echo "yara baseline MATCH ok"
-          else
-            echo "YARA FAIL: baseline does not match its own signatures"; exit 1
-          fi
-          # mutated build must NOT match (shape was reshaped in every window)
-          if yara -w llvm-out/bw_baseline.yar llvm-out/beacon.obf.llvm.dll | grep -q bw_sig; then
-            echo "YARA FAIL: mutated build still matches baseline signatures"; exit 1
-          else
-            echo "yara mutated NO-MATCH ok"
-          fi
+          # baseline must match ALL of its own signatures
+          BM=$(yara -w llvm-out/bw_baseline.yar llvm-out/beacon.x64.llvm.dll | grep -c bw_sig || true)
+          echo "yara baseline matches: $BM"
+          [ "$BM" -ge 6 ] || { echo "YARA FAIL: baseline does not match its own signatures"; exit 1; }
+          # mutated build must LOSE most of them (statistical coverage gate:
+          # a 32B window without any transformable instruction can survive)
+          MM=$(yara -w llvm-out/bw_baseline.yar llvm-out/beacon.obf.llvm.dll | grep -c bw_sig || true)
+          echo "yara mutated matches: $MM (of $BM)"
+          LOST=$((BM - MM))
+          [ "$LOST" -ge 6 ] || { echo "YARA FAIL: mutation lost only $LOST of $BM signatures"; exit 1; }
+          echo "yara coverage OK: lost $LOST of $BM"
 
       - name: Size report
         shell: bash

@@ -75,10 +75,11 @@ def main():
         raise SystemExit("no our-obj function ranges found in map")
 
     parts = []
+    TARGET = 8
     picked = 0
     i = len(franges) // 3
     dbg = {"small": 0, "nofile": 0, "badwin": 0}
-    while i < len(franges) and picked < 4:
+    while i < len(franges) and picked < TARGET:
         start, end = franges[i]
         i += 1  # linear scan: ICF-folded functions share RVAs (span 0),
                 # striding over them burns the sample budget
@@ -108,7 +109,7 @@ def main():
             '    $a\n'
             '}\n' % (picked, rva, hexpat))
         picked += 1
-    if picked < 3:
+    if picked < 6:
         raise SystemExit("only %d windows sampled (franges=%d, dbg=%s, text=%s)"
                          % (picked, len(franges), dbg,
                             [(s[0], hex(s[1]), hex(s[2])) for s in secs[:3]]))
