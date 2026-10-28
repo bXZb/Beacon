@@ -438,7 +438,9 @@ def main():
         cmd = [args.clang_cl] + base_flags + per_file_flags(meta, proj, is_c) \
               + ["/Fo:" + obj, "/c", src]
         if args.obf:
-            cmd += ["-fpass-plugin=" + args.obf]
+            # clang-cl drops unknown -f flags with a warning; the /clang:
+            # prefix routes them to the underlying clang driver.
+            cmd += ["/clang:-fpass-plugin=" + args.obf]
         tasks.append((obj, src, cmd))
 
     dll = f"{out_dir}/{proj.target_name}.llvm.dll"
