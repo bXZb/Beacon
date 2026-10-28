@@ -63,6 +63,7 @@ def main():
         "files": files,
         "link": link,
     }
+    os.makedirs(os.path.join(repo, "gen"), exist_ok=True)
     out = os.path.join(repo, "gen", "manifest_last.json")
     json.dump(m, open(out, "w"), indent=1)
     print("manifest written to", out, "target", proj.target_name)
