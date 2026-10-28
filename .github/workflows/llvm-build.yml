@@ -95,13 +95,17 @@ jobs:
           cmake --build build/obf --target all-variants
           mkdir -p llvm-out
           for f in build/obf/out/*/out/*.llvm.dll; do
-            b=$(basename "$f" .llvm.dll)
-            case "$b" in
-              beacon.x64) cp "$f" llvm-out/beacon.obf.llvm.dll; cp "${f%.dll}.map" llvm-out/beacon.obf.llvm.map 2>/dev/null || true;;
-              winhttpb.x64) cp "$f" llvm-out/winhttpb.obf.llvm.dll;;
-              dnsb.x64) cp "$f" llvm-out/dnsb.obf.llvm.dll;;
-              extc2.x64) cp "$f" llvm-out/extc2.obf.llvm.dll;;
-              pivot.x64) cp "$f" llvm-out/pivot.obf.llvm.dll;;
+            tn=$(basename "$(dirname "$(dirname "$f")")")
+            case "$tn" in
+              beacon-x64-wininet-layout) cp "$f" llvm-out/beacon.obf.llvm.dll; cp "${f%.dll}.map" llvm-out/beacon.obf.llvm.map;;
+              beacon-x64-winhttp-layout) cp "$f" llvm-out/winhttpb.obf.llvm.dll;;
+              dnsb-x64-wininet-layout) cp "$f" llvm-out/dnsb.obf.llvm.dll;;
+              extc2-x64-wininet-layout) cp "$f" llvm-out/extc2.obf.llvm.dll;;
+              pivot-x64-wininet-layout) cp "$f" llvm-out/pivot.obf.llvm.dll;;
+              beacon-x64-wininet-plainsleep+layout) cp "$f" llvm-out/beacon.plainsleep.llvm.dll; cp "${f%.dll}.map" llvm-out/beacon.plainsleep.llvm.map;;
+              beacon-x64-wininet-noexcreg) cp "$f" llvm-out/beacon.noexcreg.llvm.dll;;
+              beacon-x64-wininet-diagretaddr) cp "$f" llvm-out/beacon.rngdiag.llvm.dll;;
+              beacon-x64-wininet-bofwin) cp "$f" llvm-out/beacon.x64.rl0k.llvm.dll;;
             esac
           done
           A_SHA=$(sha256sum llvm-out/beacon.obf.llvm.dll | cut -d' ' -f1)
