@@ -28,6 +28,7 @@ def main():
     ap.add_argument("--xwin-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--obf", default=None)
+    ap.add_argument("--lld-link", required=True)
     ap.add_argument("--jobs", type=int, default=3)
     args = ap.parse_args()
 
@@ -57,9 +58,9 @@ def main():
             cmd += ["/clang:-fpass-plugin=" + args.obf]
         tasks.append((obj, cmd))
 
-    # link command: rebuild from the manifest, substituting the real obj
-    # list and out paths (the manifest carries placeholders in file order)
-    link = []
+    # link command: lld-link first, then the manifest tokens with the real
+    # obj list and out paths substituted (placeholders are in file order)
+    link = [args.lld_link]
     oi = 0
     for tok in m["link"]:
         if tok.startswith("<OBJ>/"):

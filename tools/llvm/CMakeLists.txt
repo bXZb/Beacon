@@ -82,6 +82,7 @@ foreach(V ${VARIANTS})
             python3 ${CMAKE_CURRENT_SOURCE_DIR}/layout_two_pass.py
             --manifest ${REPO}/gen/manifest_last.json --repo ${REPO}
             --xwin-dir ${XWIN_DIR} --out-dir "${OUT_DIR}/${TNAME}"
+            --lld-link ${LLD_LINK}
             ${OBF_ARGS} --jobs ${JOBS}
     WORKING_DIRECTORY ${REPO}
     COMMENT "variant ${TNAME}"
