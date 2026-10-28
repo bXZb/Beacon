@@ -607,3 +607,46 @@ MSVC CI（build.yml）保留为对照轨；build.py 继续承担变体矩阵驱�
 - x86 LLVM 轨（范围外）
 - 变形覆盖扩展（and/or/sbb/relational-cmp 站点的等价变换）——
   与检测面专项合并推进
+
+---
+
+## 附录 L：Phase 3-4 终局收口（2026-10-29，HEAD dd47a55 双绿）
+
+### 变形产物六通道矩阵（全部 on-obf，通道完整覆盖）
+
+| 通道 | 变形 DLL | 结果 | 证据 |
+|---|---|---|---|
+| x64 WinINet | beacon.obf | ✅ | 1898698186：11 项 battery + 副作用（首发的 shell 任务丢失为任务队列竞态，重下发 try0 即执行）+ pe-sieve/Moneta 对照等价 |
+| x64 WinHTTP | winhttpb.obf | ✅ 6/6 | 1844949532（r2_winhttp 轮换；首轮 4 分钟慢连）；pwd/getuid/whoami/副作用 MTX-OBF-WH2/存活 |
+| pivot SMB | pivot.obf | ✅ | spawn+link 子 1368845096：pwd + MTX-OBF-SMB 落盘 |
+| pivot TCP | pivot.obf | ✅ | spawn+link 子 1053356780：pwd + MTX-OBF-TCP 落盘 |
+| dnsb | dnsb.obf | ✅ | 1499445234：INITIAL + pwd + MTX-OBF-DNS2（dns 慢循环，重下发即执行） |
+| extc2 | extc2.obf | ✅ 7/7 | 967098602：sleep 0 交互 + pwd/getuid/whoami/副作用/存活全过 |
+| x86 | — | 范围外 | LLVM CI 无 x86 轨 |
+
+### Phase 4 build.py 退役（CMake 全变体移植）
+- **架构**：`dump_manifest.py`（唯一 vcxproj/props 解析器，import build.py 的
+  解析逻辑）→ manifest JSON；`layout_two_pass.py`（编译/链接/两遍布局循环/
+  验证，接管 build.py 的 main()）；`tools/llvm/CMakeLists.txt`（变体驱动器，
+  "+"记号变体旗标：layout/plainsleep/noexcreg/diagretaddr/bofwin/pause）。
+- **CI（llvm-build.yml）**：9 个变体全部 CMake 产出（5 产品 obf + baseline +
+  plainsleep/noexcreg/diagretaddr/bofwin）；build.py 的 CLI 不再被调用
+  （解析器作为库存续——一个解析器，两个前端）。
+- **收敛契约**：obj 依赖 gen/layout.h；每个产物取"第二次构建"（首次构建
+  收敛 layout.h 表）——同秒 mtime 粒度使原地二次构建成为 no-op，必须
+  rm+重 configure+重建。
+- **跨运行复现实证**：/Brepro 在同 commit 上跨 CI 运行 sha 完全一致
+  （4fa22012/bcfc8132 分别在两轮运行中重复出现）。
+
+### CI 陷阱补录（CMake 移植轮）
+1. dump_manifest 需 makedirs gen/（fresh checkout 无未跟踪目录）。
+2. genex `$<$<BOOL:...>:...>` 空展开会成为空参数——用条件 list。
+3. manifest 的 link 数组不含 lld-link 本体——驱动端前置。
+4. 四个 beacon 变体共享 TargetName beacon.x64——artifact 分发必须按
+   TNAME 子目录键控，否则 glob 字母序让 noexcreg 覆盖主产物
+   （A_SHA 曾是 noexcreg 构建且每轮稳定——跨运行复现的副作用）。
+
+### 终态
+- **Phase 3 全验收达成**（管线 + 门 + 变形产物六通道）。
+- **Phase 4 决策完成**：llvm 分支内双轨并存；CMake 为 llvm 线权威构建；
+  合入主分支按操作员指令豁免；CI dd47a55 双绿（llvm-build + build）。
