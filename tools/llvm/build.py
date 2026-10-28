@@ -503,7 +503,14 @@ def main():
             print(f"==> {variant}: layout changed, pass 2 (rebuild consumers)")
             for task in tasks:
                 srcf = task[1]
-                if "/gargle." in srcf or srcf.endswith("gargle.cpp"):
+                # the layout.h CONSUMER is gargleint.cpp (gargle_own_sections
+                # consumes bw_layout_reg) — the old "/gargle." filter never
+                # matched it, so every shipped DLL baked the ZERO placeholder
+                # table (verify_layout passes regardless: fixed-size arrays
+                # keep section sizes identical). Also caught live by the
+                # Phase 3 determinism gate: A/B builds chained different
+                # stale tables through pass-1.
+                if "gargle" in srcf:
                     subprocess.run(task[2], capture_output=True, text=True,
                                    cwd=repo, errors="replace")
             r2 = subprocess.run(link_cmd, capture_output=True, text=True,
