@@ -222,12 +222,13 @@ struct ObfBogoPass : PassInfoMixin<ObfBogoPass> {
     if (cands.empty())
       return PreservedAnalyses::all();
 
+    // UNCONDITIONAL split (coverage contract: every eligible function gets
+    // >=1 opaque branch); count is seed-coined.
     uint64_t limit = 1 + (mixFor(seed, F.getName(), 0, 7) % 2); // 1-2 splits/fn
     bool changed = false;
     uint64_t idx = 0;
     for (BasicBlock *BB : cands) {
       if (limit == 0) break;
-      if (!coin(seed, F.getName(), idx++, 3)) continue;
       limit--;
 
       // split before the last non-terminator instruction (PHI region safe)
