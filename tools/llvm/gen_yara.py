@@ -75,7 +75,7 @@ def main():
         raise SystemExit("no our-obj function ranges found in map")
 
     parts = []
-    TARGET = 8
+    TARGET = 16
     # Sample windows CENTERED on add/sub/cmp-with-immediate instruction
     # sites inside our functions: obf-sub rewrites exactly those
     # unconditionally, so a window containing one is GUARANTEED to change.

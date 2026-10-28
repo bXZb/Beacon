@@ -119,13 +119,13 @@ jobs:
           # baseline must match ALL of its own signatures
           BM=$(yara -w llvm-out/bw_baseline.yar llvm-out/beacon.x64.llvm.dll | grep -c bw_sig || true)
           echo "yara baseline matches: $BM"
-          [ "$BM" -ge 6 ] || { echo "YARA FAIL: baseline does not match its own signatures"; exit 1; }
+          [ "$BM" -ge 12 ] || { echo "YARA FAIL: baseline does not match its own signatures"; exit 1; }
           # mutated build must LOSE most of them (statistical coverage gate:
-          # a 32B window without any transformable instruction can survive)
+          # and/xor/sbb/ult-cmp sites are outside the transform set)
           MM=$(yara -w llvm-out/bw_baseline.yar llvm-out/beacon.obf.llvm.dll | grep -c bw_sig || true)
           echo "yara mutated matches: $MM (of $BM)"
           LOST=$((BM - MM))
-          [ "$LOST" -ge 6 ] || { echo "YARA FAIL: mutation lost only $LOST of $BM signatures"; exit 1; }
+          [ "$LOST" -ge 10 ] || { echo "YARA FAIL: mutation lost only $LOST of $BM signatures"; exit 1; }
           echo "yara coverage OK: lost $LOST of $BM"
 
       - name: Size report
