@@ -29,8 +29,10 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -42,6 +44,16 @@ namespace {
 
 static uint64_t loadSeed() {
   const char *e = getenv("OBF_SEED");
+  if (e == NULL || *e == '\0') {
+    // env fallback: some cc1 spawn paths have surprised us — read the seed
+    // file the CI step writes next to the plugin (same contract, no env).
+    if (FILE *f = fopen("tools/llvm/pass/seed.txt", "r")) {
+      char buf[32] = {0};
+      size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+      fclose(f);
+      if (n > 0) e = buf;
+    }
+  }
   if (e == NULL || *e == '\0')
     return 0;
   uint64_t v = 0;
@@ -274,6 +286,7 @@ static uint64_t g_seed = loadSeed();
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
+  errs() << "[obfpasses] loaded, seed=" << g_seed << "\n";
   return {LLVM_PLUGIN_API_VERSION, "obfpasses", "0.1",
           [](PassBuilder &PB) {
             // LLVM 17+: the OptimizerLast extension point is module-level

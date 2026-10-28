@@ -80,6 +80,7 @@ jobs:
 
           # A/B/C all in the SAME out-dir (cleared between runs)
           export OBF_SEED=1337
+          echo 1337 > tools/llvm/pass/seed.txt
           rm -rf llvm-out-obf
           "${B[@]}" --jobs 3 --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf
           cp llvm-out-obf/beacon.x64.llvm.dll /tmp/obf_a.dll
@@ -100,6 +101,7 @@ jobs:
           echo "sizes: baseline=$(stat -c%s llvm-out/beacon.x64.llvm.dll) obf=$(stat -c%s /tmp/obf_a.dll)"
           [ "$BASE_SHA" != "$A_SHA" ] || { echo "BASELINE COLLISION: obf build equals baseline - PASS DID NOT RUN"; exit 1; }
           export OBF_SEED=424242
+          echo 424242 > tools/llvm/pass/seed.txt
           rm -rf llvm-out-obf
           "${B[@]}" --project beacon --platform x64 --layout --obf tools/llvm/pass/build/obfpasses.so --out-dir llvm-out-obf
           C_SHA=$(sha256sum llvm-out-obf/beacon.x64.llvm.dll | cut -d' ' -f1)
