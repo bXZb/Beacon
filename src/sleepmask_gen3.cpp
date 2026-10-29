@@ -17,11 +17,6 @@
 #include "gargleint.h"
 #include "track_memory.h"
 
-/* TEMP 1a' diag: force the round-12..17 trace chain back on to find
- * why gen3 falls back to the official path on the LLVM line (removed
- * with the root fix). */
-#define G3_TRACE 1
-
 /* ================= shared gen3 primitives (both arches) ================= */
 
 typedef struct _G3_USTRING {
@@ -106,6 +101,8 @@ static G3_SF032 g_sf032;
 
 #if defined(G3_TRACE) /* trace IO layer: rounds 12-17, off in production */
 
+/* TEMP 1a' diag: forced trace (removed with the root fix) */
+#define G3_TRACE 1
 typedef struct {
 	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
