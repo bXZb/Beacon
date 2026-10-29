@@ -1,3 +1,5 @@
+/* TEMP 1a' diag: forced trace (removed with the root fix) */
+#define G3_TRACE 1
 /* Phase 1 Gen3 sleep chain - see sleepmask_gen3.h.
  *
  * Callstack-spoof mechanism ported from Cobalt-Strike/CallStackMasker
@@ -79,6 +81,18 @@ static BOOL g3_page_writable(void * p)
 	                       PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
 }
 
+#if defined(G3_TRACE) /* trace IO layer: rounds 12-17, off in production */
+typedef struct {
+	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
+	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
+	BOOL   (WINAPI *pCloseHandle)(HANDLE);
+	char   path[64];
+	int    ok;
+} G3_IO;
+
+static G3_IO g_io;
+#endif
+
 typedef struct {
 	G3_BLOCK * blocks;
 	int nblocks;
@@ -100,19 +114,6 @@ static G3_SF032 g_sf032;
 #include <stdlib.h>
 
 #if defined(G3_TRACE) /* trace IO layer: rounds 12-17, off in production */
-
-/* TEMP 1a' diag: forced trace (removed with the root fix) */
-#define G3_TRACE 1
-typedef struct {
-	HANDLE (WINAPI *pCreateFileA)(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
-	BOOL   (WINAPI *pWriteFile)(HANDLE, const void *, DWORD, DWORD *, void *);
-	BOOL   (WINAPI *pCloseHandle)(HANDLE);
-	char   path[64];
-	int    ok;
-} G3_IO;
-
-static G3_IO g_io;
-
 void g3_log(const char * msg, long v)
 {
 	/* only ever called outside the masked window - reading the g_io copy
