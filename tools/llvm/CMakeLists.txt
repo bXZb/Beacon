@@ -41,14 +41,18 @@ foreach(V ${VARIANTS})
     message(FATAL_ERROR "frozen manifest missing: ${MANIFEST}")
   endif()
 
+  set(OBF_ARGS "")
+  if(OBF_SO)
+    list(APPEND OBF_ARGS "--obf=${OBF_SO}")
+  endif()
+
   add_custom_target(${V}
     COMMAND ${CMAKE_COMMAND} -E env OBF_SEED=${OBF_SEED}
             python3 ${CMAKE_CURRENT_SOURCE_DIR}/layout_two_pass.py
             --manifest ${MANIFEST} --repo ${REPO}
             --xwin-dir ${XWIN_DIR} --out-dir "${OUT_DIR}/${V}"
             --clang-cl ${CLANG_CL} --lld-link ${LLD_LINK}
-            $<$<BOOL:${OBF_SO}>:--obf=${OBF_SO}>
-            --jobs ${JOBS}
+            ${OBF_ARGS} --jobs ${JOBS}
     WORKING_DIRECTORY ${REPO}
     COMMENT "variant ${V}"
     VERBATIM)
