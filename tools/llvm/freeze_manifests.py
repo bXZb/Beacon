@@ -52,6 +52,7 @@ def main():
             t = t.replace(xwin, "$(XWIN)")
             t = t.replace(repo + "/", "$(REPO)/")
             return t
+        m["base_flags"] = [tok(t) for t in m["base_flags"]]
         m["link"] = [tok(t) for t in m["link"]]
         for f in m["files"]:
             f["flags"] = [tok(t) for t in f["flags"]]

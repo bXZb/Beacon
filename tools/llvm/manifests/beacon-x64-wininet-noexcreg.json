@@ -33,13 +33,13 @@
   "/DUSE_LTM",
   "/DWIN32_LEAN_AND_MEAN",
   "/DBEACON_TIER3",
-  "/I/root/beacon/tomcrypt-headers",
-  "/I/root/beacon/src",
-  "/I/root/beacon/gen",
-  "/I/root/.llvm-cross/xwin-splat/crt/include",
-  "/I/root/.llvm-cross/xwin-splat/sdk/include/ucrt",
-  "/I/root/.llvm-cross/xwin-splat/sdk/include/um",
-  "/I/root/.llvm-cross/xwin-splat/sdk/include/shared"
+  "/I$(REPO)/tomcrypt-headers",
+  "/I$(REPO)/src",
+  "/I$(REPO)/gen",
+  "/I$(XWIN)/crt/include",
+  "/I$(XWIN)/sdk/include/ucrt",
+  "/I$(XWIN)/sdk/include/um",
+  "/I$(XWIN)/sdk/include/shared"
  ],
  "files": [
   {
