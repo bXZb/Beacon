@@ -140,9 +140,11 @@ def main():
             cmd += ["/clang:-fpass-plugin=" + args.obf]
         tasks.append((obj, cmd))
 
-    # link command: lld-link first, then the manifest tokens with the real
+    # link command: the linker binary first (lld-link for clang mode,
+    # link.exe for the MSVC track), then the manifest tokens with the real
     # obj list and out paths substituted (placeholders are in file order)
-    link = [args.lld_link]
+    linker = args.lld_link if args.lld_link else args.link_exe
+    link = [linker]
     oi = 0
     for tok in m["link"]:
         tok = xw(tok)
