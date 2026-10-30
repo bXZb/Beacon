@@ -269,8 +269,9 @@ jobs:
       - name: CMake MSVC baseline beacon (TOOLCHAIN=msvc)
         shell: bash
         run: |
+          mkdir -p msvc-stub/xwin
           cmake -S tools/llvm -B build/msvc-base \
-            -DREPO="$PWD" -DTOOLCHAIN=msvc \
+            -DREPO="$PWD" -DTOOLCHAIN=msvc -DXWIN_DIR="$PWD/msvc-stub/xwin" \
             -DPYTHON=python -DVARIANTS="beacon-x64-wininet-layout"
           cmake --build build/msvc-base --target beacon-x64-wininet-layout
           mkdir -p llvm-out
