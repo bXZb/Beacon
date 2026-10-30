@@ -240,40 +240,31 @@ jobs:
       - name: Setup LLVM + xwin
         run: bash tools/llvm/setup-host.sh
 
-      - name: Build llvm sidecar (beacon subset, CMake+obf, same pipeline as linux)
-        shell: bash
-        run: |
-          set -e
-          source "$HOME/.llvm-cross/toolpath.env"
-          PY=python; [[ -n "$(command -v python3)" ]] && PY=python3
-          LLVM_DIR="$HOME/.llvm-cross/llvm/lib/cmake/llvm"
-          cmake -S tools/llvm/pass -B tools/llvm/pass/build-win \
-            -DLLVM_DIR="$LLVM_DIR" -DCMAKE_BUILD_TYPE=Release
-          cmake --build tools/llvm/pass/build-win -j 2
-          export OBF_SEED=1337
-          echo 1337 > tools/llvm/pass/seed.txt
-          VARIANTS="beacon-x64-wininet-layout;beacon-x64-winhttp-layout;beacon-x64-wininet-bofwin"
-          cmake -S tools/llvm -B build/win \
-            -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
-            -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
-            -DOBF_SO="$PWD/tools/llvm/pass/build-win/obfpasses.dll" \
-            -DOBF_SEED=1337 -DVARIANTS="$VARIANTS"
-          cmake --build build/win --target all-variants
-          cmake --build build/win --target all-variants
-          mkdir -p llvm-out
-          for f in build/win/out/*/out/*.llvm.dll; do
-            tn=$(basename "$(dirname "$(dirname "$f")")")
-            case "$tn" in
-              beacon-x64-wininet-layout) cp "$f" llvm-out/beacon.x64.llvm.dll; cp "${f%.dll}.map" llvm-out/beacon.x64.llvm.map 2>/dev/null || true;;
-              beacon-x64-winhttp-layout) cp "$f" llvm-out/winhttpb.x64.llvm.dll;;
-              beacon-x64-wininet-bofwin) cp "$f" llvm-out/beacon.x64.rl0k.llvm.dll;;
-            esac
-          done
-          # MSVC baseline beacon stays for the export-table diff (MSVC vs LLVM)
       - name: Setup MSVC (baseline + smoke harness)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Build llvm sidecar (beacon subset, CMake driver)
+        shell: bash
+        run: |
+          set -e
+          source "$HOME/.llvm-cross/toolpath.env"
+          VARIANTS="beacon-x64-wininet-layout;beacon-x64-winhttp-layout;beacon-x64-wininet-bofwin"
+          cmake -S tools/llvm -B build/win \
+            -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
+            -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
+            -DPYTHON=python -DVARIANTS="$VARIANTS"
+          cmake --build build/win --target beacon-x64-wininet-layout beacon-x64-winhttp-layout beacon-x64-wininet-bofwin
+          cmake --build build/win --target beacon-x64-wininet-layout beacon-x64-winhttp-layout beacon-x64-wininet-bofwin
+          mkdir -p llvm-out
+          for f in build/win/out/*/out/*.llvm.dll; do
+            tn=$(basename "$(dirname "$(dirname "$f")")")
+            case "$tn" in
+              beacon-x64-wininet-layout) cp "$f" llvm-out/beacon.x64.llvm.dll; cp "${f%.dll}.map" llvm-out/beacon.x64.llvm.map;;
+              beacon-x64-winhttp-layout) cp "$f" llvm-out/winhttpb.x64.llvm.dll;;
+              beacon-x64-wininet-bofwin) cp "$f" llvm-out/beacon.x64.rl0k.llvm.dll;;
+            esac
+          done
 
       - name: Build MSVC baseline beacon
         shell: pwsh
