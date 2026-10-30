@@ -20,6 +20,7 @@ set(OBF_SO "" CACHE FILEPATH "mutation pass plugin (optional)")
 set(OBF_SEED "1337" CACHE STRING "mutation seed")
 set(OUT_DIR "" CACHE PATH "output root (defaults to <binary>/out)")
 set(JOBS "3" CACHE STRING "parallel compile jobs")
+set(PYTHON "python3" CACHE STRING "python interpreter (windows runners: python)")
 
 set(VARIANTS "" CACHE STRING "semicolon list of manifest basenames (tools/llvm/manifests/<name>.json)")
 if(NOT VARIANTS)
@@ -46,13 +47,23 @@ foreach(V ${VARIANTS})
     list(APPEND OBF_ARGS "--obf=${OBF_SO}")
   endif()
 
+  set(TOOL_ARGS "")
+  if(TOOLCHAIN STREQUAL "msvc")
+    # cl.exe/link.exe come from the msvc-dev-cmd environment; the manifest
+    # flags are clang-cl-style which cl.exe accepts verbatim, and the
+    # /libpath:$(XWIN) tokens are dropped (MSVC link resolves SDK libs
+    # from its own env).
+    list(APPEND TOOL_ARGS "--cc=cl" "--link-exe=link")
+  else()
+    list(APPEND TOOL_ARGS "--clang-cl=${CLANG_CL}" "--lld-link=${LLD_LINK}")
+  endif()
+
   add_custom_target(${V}
     COMMAND ${CMAKE_COMMAND} -E env OBF_SEED=${OBF_SEED}
-            python3 ${CMAKE_CURRENT_SOURCE_DIR}/layout_two_pass.py
+            ${PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/layout_two_pass.py
             --manifest ${MANIFEST} --repo ${REPO}
             --xwin-dir ${XWIN_DIR} --out-dir "${OUT_DIR}/${V}"
-            --clang-cl ${CLANG_CL} --lld-link ${LLD_LINK}
-            ${OBF_ARGS} --jobs ${JOBS}
+            ${TOOL_ARGS} --jobs ${JOBS}
     WORKING_DIRECTORY ${REPO}
     COMMENT "variant ${V}"
     VERBATIM)

@@ -29,15 +29,26 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--obf", default=None)
     ap.add_argument("--lld-link", required=True)
+    ap.add_argument("--link-exe", default=None,
+                    help="override the linker (link.exe for the MSVC track)")
     ap.add_argument("--clang-cl", default=None,
                     help="override the manifest's clang_cl entry (CI passes "
                          "the pinned binary)")
+    ap.add_argument("--cc", default=None,
+                    help="override the compiler executable entirely (cl.exe "
+                         "for the MSVC track); manifest flags are "
+                         "clang-cl-style which cl.exe accepts verbatim")
     ap.add_argument("--jobs", type=int, default=3)
     args = ap.parse_args()
 
     m = json.load(open(args.manifest))
     if args.clang_cl:
         m["clang_cl"] = args.clang_cl
+    if args.cc:
+        m["clang_cl"] = args.cc
+    if args.link_exe:
+        m["link"] = [args.link_exe] + [t for t in m["link"]
+                                       if not t.startswith("/libpath:$(XWIN)")]
     target = m["target_name"]
     repo = args.repo.replace(os.sep, "/")
     xwin = os.path.abspath(args.xwin_dir).replace(os.sep, "/")
