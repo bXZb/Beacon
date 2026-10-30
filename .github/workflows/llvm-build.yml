@@ -163,7 +163,9 @@ jobs:
             -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
             -DOBF_SO="$OBF_SO" -DOBF_SEED=424242 -DVARIANTS="beacon-x64-wininet-layout"
           cmake --build build/obf --target beacon-x64-wininet-layout
-          rm -rf build/obf   # convergence rebuild
+          rm -rf build/obf   # uniqueness rebuild: fresh dir + new seed
+                             # (the A-build objects must never be reused,
+                             # otherwise the new seed compiles nothing)
           cmake -S tools/llvm -B build/obf \
             -DREPO="$PWD" -DXWIN_DIR="$XWIN_SPLAT" \
             -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" \
