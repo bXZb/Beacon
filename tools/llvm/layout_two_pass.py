@@ -47,9 +47,10 @@ def main():
     os.makedirs(f"{out_dir}/out", exist_ok=True)
 
     def xw(tok):
-        # frozen manifests tokenize the xwin splat as $(XWIN); live
-        # dump_manifest output embeds real paths (no-op here)
-        return tok.replace("$(XWIN)", xwin)
+        # frozen manifests tokenize the xwin splat as $(XWIN) and the repo
+        # root as $(REPO); live dump_manifest output embeds real paths
+        # (both no-ops there)
+        return tok.replace("$(XWIN)", xwin).replace("$(REPO)", repo)
 
     dll = f"{out_dir}/out/{target}.llvm.dll"
     mmap = f"{out_dir}/out/{target}.llvm.map"
