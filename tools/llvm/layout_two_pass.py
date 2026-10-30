@@ -13,6 +13,7 @@ Usage:
 import argparse
 import json
 import os
+import struct
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
