@@ -45,11 +45,16 @@ def main():
             sys.exit(f"freeze failed for {proj}-{plat}-{http}-{tag}")
         src = os.path.join(repo, "gen", "manifest_last.json")
         m = bp.json.load(open(src))
-        # normalize: strip the toolchain paths so the JSON is host-independent
+        # normalize: tokenize ALL host paths (xwin splat + repo root) so the
+        # JSON is host-independent and CI-checkout-path independent
         m["clang_cl"] = "clang-cl"
-        m["link"] = [t.replace(xwin, "$(XWIN)") for t in m["link"]]
+        def tok(t):
+            t = t.replace(xwin, "$(XWIN)")
+            t = t.replace(repo + "/", "$(REPO)/")
+            return t
+        m["link"] = [tok(t) for t in m["link"]]
         for f in m["files"]:
-            f["flags"] = [t.replace(xwin, "$(XWIN)") for t in f["flags"]]
+            f["flags"] = [tok(t) for t in f["flags"]]
         out = os.path.join(outdir, f"{proj}-{plat}-{http}-{tag}.json")
         bp.json.dump(m, open(out, "w"), indent=1)
         print(f"frozen {tag}: {m['target_name']} ({len(m['files'])} TUs) -> {os.path.basename(out)}")
