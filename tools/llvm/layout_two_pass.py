@@ -29,10 +29,15 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--obf", default=None)
     ap.add_argument("--lld-link", required=True)
+    ap.add_argument("--clang-cl", default=None,
+                    help="override the manifest's clang_cl entry (CI passes "
+                         "the pinned binary)")
     ap.add_argument("--jobs", type=int, default=3)
     args = ap.parse_args()
 
     m = json.load(open(args.manifest))
+    if args.clang_cl:
+        m["clang_cl"] = args.clang_cl
     target = m["target_name"]
     repo = args.repo.replace(os.sep, "/")
     xwin = os.path.abspath(args.xwin_dir).replace(os.sep, "/")
@@ -40,6 +45,11 @@ def main():
     obj_dir = f"{out_dir}/obj/{target}"
     os.makedirs(obj_dir, exist_ok=True)
     os.makedirs(f"{out_dir}/out", exist_ok=True)
+
+    def xw(tok):
+        # frozen manifests tokenize the xwin splat as $(XWIN); live
+        # dump_manifest output embeds real paths (no-op here)
+        return tok.replace("$(XWIN)", xwin)
 
     dll = f"{out_dir}/out/{target}.llvm.dll"
     mmap = f"{out_dir}/out/{target}.llvm.map"
@@ -52,7 +62,8 @@ def main():
             die(f"source missing: {src}")
         obj = f"{obj_dir}/{i}.obj"
         link_objs.append(obj)
-        cmd = [m["clang_cl"]] + m["base_flags"] + f["flags"] \
+        cmd = [m["clang_cl"]] + [xw(t) for t in m["base_flags"]] \
+              + [xw(t) for t in f["flags"]] \
               + ["/Fo:" + obj, "/c", src]
         if args.obf:
             cmd += ["/clang:-fpass-plugin=" + args.obf]
@@ -63,6 +74,7 @@ def main():
     link = [args.lld_link]
     oi = 0
     for tok in m["link"]:
+        tok = xw(tok)
         if tok.startswith("<OBJ>/"):
             link.append(link_objs[oi])
             oi += 1
