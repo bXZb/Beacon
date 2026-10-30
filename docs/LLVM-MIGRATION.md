@@ -692,3 +692,16 @@ MSVC CI（build.yml）保留为对照轨；build.py 继续承担变体矩阵驱�
 - Phase 4 决策不变：llvm 分支双轨并存，不合入 feat/post-4.9.1。
 - 遗留（非阻塞）：vcxproj 彻底退役（manifest 冻结方案已评估）、
   x86 LLVM 轨、变形覆盖扩展。
+
+### 附录 L 补遗：变形 extc2 通道确认 + 中继生命周期教训（2026-10-30）
+- **变形 extc2 通道 7/7 确认**（会话 967098602：sleep-0 交互、pwd、getuid、
+  whoami、副作用 MTX-OBFX 落盘、任务后存活）。后续一轮的失败全部是
+  中继生命周期噪音：WinRM 超时杀死控制器 powershell 后，僵尸进程持有
+  B1ExtC2 侦听实例与日志锁——新连接被陈旧实例抢走/日志写入失败。
+- 教训入库：僵尸清理必须用 WMI `process where ProcessId=X delete`
+  （taskkill 对跨会话进程返回静默失败）；任务队列竞态下首发的 shell
+  任务在所有通道上都可能丢（dnsb/SMB 同现象），重发一次即执行——
+  判定副作用以文件落盘为准，不以单次 TASKED-OUTPUT 往返为准。
+- build.py 退役后的字节级等价：CMake 驱动产物通过同一活体矩阵
+  （六通道 + 任务 battery），构建确定性/唯一性/YARA 门同批全绿
+  （dd47a55 llvm-build ✅ build ✅）——功能等价即退役判据。
