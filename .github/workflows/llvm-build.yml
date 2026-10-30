@@ -266,9 +266,20 @@ jobs:
             esac
           done
 
-      - name: Build MSVC baseline beacon
-        shell: pwsh
-        run: ./build.ps1 -Project beacon -Toolset v143
+      - name: CMake MSVC baseline beacon (TOOLCHAIN=msvc)
+        shell: cmd
+        run: |
+          cmake -S tools/llvm -B build/msvc-base ^
+            -DREPO="%CD%" -DTOOLCHAIN=msvc ^
+            -DPYTHON=python -DVARIANTS="beacon-x64-wininet-layout"
+          cmake --build build/msvc-base --target beacon-x64-wininet-layout
+          mkdir -p llvm-out
+          for f in build/msvc-base/out/*/out/*.llvm.dll; do
+            tn=$(basename "$(dirname "$(dirname "$f")")")
+            case "$tn" in
+              beacon-x64-wininet-layout) cp "$f" msvc-out/beacon.x64.llvm.dll;;
+            esac
+          done
 
       - name: Compile load_smoke harness
         shell: pwsh
@@ -278,7 +289,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "load_smoke build failed" }
 
       - name: load_smoke — MSVC baseline (sanity)
-        run: ./tests/_build/load_smoke.exe x64/Release/beacon.x64.dll
+        run: ./tests/_build/load_smoke.exe msvc-out/beacon.x64.llvm.dll
 
       - name: load_smoke — LLVM build (Phase 1 gate)
         run: |
@@ -289,13 +300,13 @@ jobs:
       - name: Export table diff (MSVC vs LLVM)
         run: |
           source "$HOME/.llvm-cross/toolpath.env"
-          python tools/llvm/compare_exports.py "$LLVM_READOBJ" x64/Release/beacon.x64.dll llvm-out/beacon.x64.llvm.dll
+          python tools/llvm/compare_exports.py "$LLVM_READOBJ" msvc-out/beacon.x64.llvm.dll llvm-out/beacon.x64.llvm.dll
 
       - name: Size report
         shell: pwsh
         run: |
           $rows = (Get-ChildItem llvm-out/*.llvm.dll | ForEach-Object { "| $($_.Name) | $($_.Length) |" }) -join "`n"
-          $msvc = Get-Item x64/Release/beacon.x64.dll
+          $msvc = Get-Item msvc-out/beacon.x64.llvm.dll
           "### llvm windows-x64 sidecar`n`n| dll | bytes |`n|---|---|`n$rows`n| MSVC baseline beacon.x64.dll | $($msvc.Length) |`n" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Upload artifacts
