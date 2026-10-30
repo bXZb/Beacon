@@ -47,6 +47,7 @@ foreach(V ${VARIANTS})
             --manifest ${MANIFEST} --repo ${REPO}
             --xwin-dir ${XWIN_DIR} --out-dir "${OUT_DIR}/${V}"
             --clang-cl ${CLANG_CL} --lld-link ${LLD_LINK}
+            $<$<BOOL:${OBF_SO}>:--obf=${OBF_SO}>
             --jobs ${JOBS}
     WORKING_DIRECTORY ${REPO}
     COMMENT "variant ${V}"
