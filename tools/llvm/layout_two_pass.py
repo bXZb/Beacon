@@ -87,7 +87,7 @@ def main():
     ap.add_argument("--xwin-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--obf", default=None)
-    ap.add_argument("--lld-link", required=True)
+    ap.add_argument("--lld-link", default=None)
     ap.add_argument("--link-exe", default=None,
                     help="override the linker (link.exe for the MSVC track)")
     ap.add_argument("--clang-cl", default=None,
