@@ -57,6 +57,7 @@ foreach(V ${VARIANTS})
   else()
     list(APPEND TOOL_ARGS "--clang-cl=${CLANG_CL}" "--lld-link=${LLD_LINK}")
   endif()
+  list(APPEND TOOL_ARGS ${OBF_ARGS})
 
   add_custom_target(${V}
     COMMAND ${CMAKE_COMMAND} -E env OBF_SEED=${OBF_SEED}
