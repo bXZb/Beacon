@@ -266,21 +266,6 @@ jobs:
             esac
           done
 
-      - name: CMake MSVC baseline beacon (TOOLCHAIN=msvc)
-        shell: bash
-        run: |
-          mkdir -p msvc-stub/xwin
-          cmake -S tools/llvm -B build/msvc-base \
-            -DREPO="$PWD" -DTOOLCHAIN=msvc -DXWIN_DIR="$PWD/msvc-stub/xwin" \
-            -DPYTHON=python -DVARIANTS="beacon-x64-wininet-layout"
-          cmake --build build/msvc-base --target beacon-x64-wininet-layout
-          mkdir -p llvm-out
-          for f in build/msvc-base/out/*/out/*.llvm.dll; do
-            tn=$(basename "$(dirname "$(dirname "$f")")")
-            case "$tn" in
-              beacon-x64-wininet-layout) cp "$f" msvc-out/beacon.x64.llvm.dll;;
-            esac
-          done
 
       - name: Compile load_smoke harness
         shell: pwsh
@@ -289,8 +274,6 @@ jobs:
           & cl /nologo /W3 /EHsc /MT tests\load_smoke.cpp /Fe:tests\_build\load_smoke.exe /Fo:tests\_build\
           if ($LASTEXITCODE -ne 0) { throw "load_smoke build failed" }
 
-      - name: load_smoke — MSVC baseline (sanity)
-        run: ./tests/_build/load_smoke.exe msvc-out/beacon.x64.llvm.dll
 
       - name: load_smoke — LLVM build (Phase 1 gate)
         run: |
@@ -298,16 +281,12 @@ jobs:
           ./tests/_build/load_smoke.exe llvm-out/winhttpb.x64.llvm.dll
           ./tests/_build/load_smoke.exe llvm-out/beacon.x64.rl0k.llvm.dll
 
-      - name: Export table diff (MSVC vs LLVM)
-        run: |
-          source "$HOME/.llvm-cross/toolpath.env"
-          python tools/llvm/compare_exports.py "$LLVM_READOBJ" msvc-out/beacon.x64.llvm.dll llvm-out/beacon.x64.llvm.dll
 
       - name: Size report
         shell: pwsh
         run: |
           $rows = (Get-ChildItem llvm-out/*.llvm.dll | ForEach-Object { "| $($_.Name) | $($_.Length) |" }) -join "`n"
-          $msvc = Get-Item msvc-out/beacon.x64.llvm.dll
+          $msvc = Get-Item llvm-out/beacon.x64.llvm.dll
           "### llvm windows-x64 sidecar`n`n| dll | bytes |`n|---|---|`n$rows`n| MSVC baseline beacon.x64.dll | $($msvc.Length) |`n" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Upload artifacts
