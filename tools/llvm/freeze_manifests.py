@@ -35,7 +35,8 @@ def main():
     os.makedirs(outdir, exist_ok=True)
 
     for proj, plat, http, extra, tag in VARIANTS:
-        argv = ["dump_manifest.py", "--project", proj, "--platform", plat,
+        argv = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "dump_manifest.py"),
+                "--project", proj, "--platform", plat,
                 "--http", http] + extra + ["--xwin-dir", xwin, "--repo", repo]
         r = subprocess.run([sys.executable] + argv, cwd=repo,
                            capture_output=True, text=True)
