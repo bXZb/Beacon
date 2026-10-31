@@ -1,5 +1,3 @@
-/* TEMP 1a' diag: forced trace (removed with the root fix) */
-#define G3_TRACE 1
 /* Phase 1 Gen3 sleep chain - see sleepmask_gen3.h.
  *
  * Callstack-spoof mechanism ported from Cobalt-Strike/CallStackMasker
