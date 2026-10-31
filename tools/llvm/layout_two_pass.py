@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""layout_two_pass.py — Phase 4 build driver (build.py's CLI retires).
+"""layout_two_pass.py — the build driver (build.py/dump_manifest retired).
 
-Compiles a variant from its manifest (dump_manifest.py output), links,
-runs the two-pass layout self-description loop, and verifies. The vcxproj
-parsing stays in build.py (imported); everything build.py's main() used to
-drive lives here, invoked by the CMake variant driver.
+Compiles a variant from its FROZEN manifest (tools/llvm/manifests/*.json
+— the sole project-definition source), links, runs the two-pass layout
+self-description loop, and verifies. Invoked by the CMake variant driver
+per variant.
 
 Usage:
   layout_two_pass.py --manifest gen/manifest_last.json --repo R \
