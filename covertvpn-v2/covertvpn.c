@@ -155,6 +155,10 @@ struct bpf_program_kernel {
 /* Active backend tracking */
 static int g_active_backend = -1;  /* 0=Npcap, 1=WinDivert */
 
+/* BPF runtime — defined in the filter section below, used by read paths */
+static unsigned int bpf_run(const unsigned char *pkt, unsigned int buflen);
+static unsigned int g_bpf_prog_len;
+
 /* ---- Npcap pcap API backend (L2 Ethernet frames) ---- */
 /* We dynamically load wpcap.dll from system32 (Npcap WinPcap-compat mode) */
 static HMODULE g_wpcap = NULL;
@@ -329,6 +333,15 @@ typedef struct _WD_ADDRESS {
 #define WD_FACCEPT 0x7FFE
 #define WD_FREJECT 0x7FFF
 
+/* WINDIVERT_FILTER_FLAG_*: these are NOT just hints — they select which
+ * WFP callouts the driver installs (zero flags = zero callouts = the
+ * handle never sees a single packet). Capture-all wants all four. */
+#define WD_FF_INBOUND   0x0000000000000010ULL
+#define WD_FF_OUTBOUND  0x0000000000000020ULL
+#define WD_FF_IP        0x0000000000000040ULL
+#define WD_FF_IPV6      0x0000000000000080ULL
+#define WD_FF_CAPTURE_ALL (WD_FF_INBOUND | WD_FF_OUTBOUND | WD_FF_IP | WD_FF_IPV6)
+
 /* Address flag1 bits (bit N = 1<<N in flags1) */
 #define WD_ADDR_OUTBOUND  (1u << 17)
 #define WD_ADDR_IMPOSTOR  (1u << 19)
@@ -385,9 +398,11 @@ vpn_windivert_open(void)
         return INVALID_HANDLE_VALUE;
     }
 
-    /* 2. STARTUP: no filter hints (capture all), 2-instruction filter */
+    /* 2. STARTUP: filter hints select the WFP callouts to install
+     * (all four = capture inbound+outbound, v4+v6); 2-instruction
+     * "!loopback" filter */
     memset(&io, 0, sizeof(io));
-    io.startup.flags = 0;
+    io.startup.flags = WD_FF_CAPTURE_ALL;
     if (!DeviceIoControl(h, IOCTL_WD_STARTUP, &io, sizeof(io),
                          filt, sizeof(filt), NULL, NULL)) {
         CloseHandle(h);
@@ -557,7 +572,7 @@ vpn_close_device(HANDLE fd)
 
 /* Reconstructed program for pcap_setfilter (needs a contiguous array) */
 static struct bpf_insn_kernel g_bpf_insns[VPN_BPF_MAX];
-static unsigned int g_bpf_prog_len = 0;
+/* g_bpf_prog_len: tentatively declared above the device layer */
 
 /* User-mode BPF interpreter — classic Berkeley filter semantics.
  * Only the opcodes compileBpfFilter emits are implemented; any load
