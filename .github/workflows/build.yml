@@ -370,12 +370,13 @@ jobs:
           }
 
           # Link as kernel driver
-          & link /nologo /DRIVER /SUBSYSTEM:NATIVE `
+          & link /nologo /DRIVER /SUBSYSTEM:NATIVE /ENTRY:DriverEntry `
+            /NODEFAULTLIB `
             /OUT:_build\ndisprot.sys `
             /MACHINE:X64 `
             $objs `
             /LIBPATH:"$libPath\km\x64" `
-            ndis.lib
+            ndis.lib ntoskrnl.lib hal.lib
           if ($LASTEXITCODE -ne 0) { throw "link failed" }
 
           $sys = Get-Item _build\ndisprot.sys
