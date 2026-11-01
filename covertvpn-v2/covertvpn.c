@@ -59,6 +59,20 @@ static void vpn_dbg(const char *msg)
     CloseHandle(f);
 }
 
+static void vpn_dbg_n(const char *msg, int v)
+{
+    char buf[96];
+    int i = 0;
+    while (*msg && i < 80) buf[i++] = *msg++;
+    if (v < 0) { buf[i++] = '-'; v = -v; }
+    { char num[12]; int n = 0; int t = v;
+      if (t == 0) num[n++] = '0';
+      while (t) { num[n++] = (char)('0' + (t % 10)); t /= 10; }
+      while (n) buf[i++] = num[--n]; }
+    buf[i] = 0;
+    vpn_dbg(buf);
+}
+
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -312,11 +326,14 @@ vpn_npcap_open(void)
         }
     }
 
-    if (!dev) return -1;
+    if (!dev) { vpn_dbg("npcap: no device found"); return -1; }
+    vpn_dbg("npcap dev:");
+    vpn_dbg(dev);
 
     /* Open the device via pcap API: promiscuous, 1s read timeout */
     g_pcap_handle = p_pcap_open_live(dev, 65535, 1, 1000, errbuf);
-    if (!g_pcap_handle) return -1;
+    if (!g_pcap_handle) { vpn_dbg("pcap_open_live FAIL"); vpn_dbg(errbuf); return -1; }
+    vpn_dbg("pcap_open_live ok");
 
     g_active_backend = 0;  /* Npcap */
     return 0;
@@ -718,7 +735,10 @@ vpn_set_filter(HANDLE fd)
         struct bpf_program_kernel prog;
         prog.bf_len   = g_bpf_prog_len;
         prog.bf_insns = g_bpf_insns;
-        return p_pcap_setfilter(g_pcap_handle, &prog) == 0 ? 0 : -1;
+        { int rc = p_pcap_setfilter(g_pcap_handle, &prog);
+          vpn_dbg_n("pcap_setfilter rc=", rc);
+          vpn_dbg_n("prog_len=", (int)g_bpf_prog_len);
+          return rc == 0 ? 0 : -1; }
     }
 
     /* WinDivert: no kernel hook — vpn_read_frame runs bpf_run() in user
@@ -1203,9 +1223,14 @@ vpn_main_loop(LPVOID param)
          * [u16 + 'A' pad] the crypto layer prepends/appends) */
         len = vpn_read_frame(adapter_fd, frame_buf, sizeof(frame_buf));
         if (len > 0) {
+            vpn_dbg_n("GOTFRAME len=", len);
             enc_len = vpn_aes_encrypt(channel_buf, frame_buf, len);
             if (enc_len > 0) {
-                channel_send(channel_buf, enc_len);
+                { int sr = channel_send(channel_buf, enc_len);
+                  if (sr < 0) vpn_dbg_n("SENDFAIL r=", sr);
+                  else vpn_dbg_n("SENT blob=", enc_len); }
+            } else {
+                vpn_dbg_n("ENCRYPTFAIL r=", enc_len);
             }
         }
     }
