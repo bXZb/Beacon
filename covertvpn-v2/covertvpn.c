@@ -164,6 +164,7 @@ static unsigned int g_bpf_prog_len;
 /* We dynamically load wpcap.dll from system32 (Npcap WinPcap-compat mode) */
 static HMODULE g_wpcap = NULL;
 static void *g_pcap_handle = NULL;  /* pcap_t* from pcap_open_live */
+static int g_pcap_fail = 0;         /* consecutive pcap_next_ex errors */
 
 /* Function pointers resolved via GetProcAddress */
 typedef void *(*pcap_open_live_t)(const char *, int, int, int, char *);
@@ -507,7 +508,27 @@ vpn_read_frame(HANDLE fd, unsigned char *buf, int len)
          * dropped excluded traffic if a filter was set) */
         void *hdr = NULL, *pkt = NULL;
         int ret = p_pcap_next_ex(g_pcap_handle, &hdr, &pkt);
-        if (ret != 1 || !pkt) return -1;
+        if (ret == 0) {
+            g_pcap_fail = 0;         /* clean timeout - handle healthy */
+            return -1;
+        }
+        if (ret != 1 || !pkt) {
+            /* PCAP_ERROR / dead handle: the NIC or vSwitch port resets
+             * under us (observed live: a handle delivers for ~25s then
+             * goes silent while the thread keeps waiting on it). Reopen
+             * the device and re-apply the filter. */
+            if (++g_pcap_fail > 12) {
+                g_pcap_fail = 0;
+                p_pcap_close(g_pcap_handle);
+                g_pcap_handle = NULL;
+                g_active_backend = -1;
+                if (vpn_npcap_open() == 0) {
+                    vpn_set_filter(fd);
+                }
+            }
+            return -1;
+        }
+        g_pcap_fail = 0;
         /* pcap_pkthdr: {ts(8B); caplen(4B); len(4B)} - caplen at offset 8 */
         int caplen = *(int *)((char *)hdr + 8);
         if (caplen > len) caplen = len;
@@ -699,15 +720,26 @@ bpf_load_from_config(void)
 static int
 vpn_set_filter(HANDLE fd)
 {
-    if (g_bpf_prog_len == 0) return 0;  /* no filter — nothing to do */
-
+    /* Npcap handles on some adapters (observed on a Hyper-V vNIC) deliver
+     * NOTHING until pcap_setfilter has been called on them - even for a
+     * pass-all program. So ALWAYS push a program: the real one when the
+     * TS compiled a filter, otherwise a 1-insn pass-all. */
     if (g_active_backend == 0 && g_pcap_handle && p_pcap_setfilter) {
-        /* Npcap: push the program into the kernel */
         struct bpf_program_kernel prog;
+        if (g_bpf_prog_len == 0) {
+            /* pass-all: ret #65535 */
+            g_bpf_insns[0].code = 0x06;
+            g_bpf_insns[0].jt   = 0;
+            g_bpf_insns[0].jf   = 0;
+            g_bpf_insns[0].k    = 65535;
+            g_bpf_prog_len      = 1;
+        }
         prog.bf_len   = g_bpf_prog_len;
         prog.bf_insns = g_bpf_insns;
         return p_pcap_setfilter(g_pcap_handle, &prog) == 0 ? 0 : -1;
     }
+
+    if (g_bpf_prog_len == 0) return 0;  /* WinDivert path: no filter needed */
 
     /* WinDivert: no kernel hook — vpn_read_frame runs bpf_run() in user
      * mode, so just report success here. */
