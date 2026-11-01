@@ -269,6 +269,41 @@ jobs:
             udrl\_build\ReflectiveLoader.x64.o
             udrl\_build\host_template_x64.exe
 
+  covertvpn-v2:
+    name: Covert VPN v2 (NDIS 6, direct I/O)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Covert VPN v2: replaces the 677KB original (NDIS 5 + WinPcap) with a
+      # ~60KB DLL that talks directly to the kernel NPF device (no wpcap/
+      # packet wrapper DLLs). The BPF filter is pre-compiled on the TS side
+      # (VPNClient.compileBpfFilter) - no runtime compiler on the target.
+      - name: Compile covertvpn_v2.dll
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path covertvpn-v2\_build | Out-Null
+          & cl /nologo /W3 /O2 /GS- /Zl /LD `
+            /Fe:covertvpn-v2\_build\covertvpn_v2.dll `
+            /Fo:covertvpn-v2\_build\covertvpn.obj `
+            covertvpn-v2\covertvpn.c `
+            /link /DEF:covertvpn-v2\covertvpn.def `
+            advapi32.lib ws2_32.lib iphlpapi.lib wininet.lib bcrypt.lib
+          if ($LASTEXITCODE -ne 0) { throw "covertvpn_v2 build failed" }
+          $dll = Get-Item covertvpn-v2\_build\covertvpn_v2.dll
+          "covertvpn_v2 = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: covertvpn-v2
+          path: covertvpn-v2\_build\covertvpn_v2.dll
+
   dll-x86:
     name: beacon x86 Release
     runs-on: windows-2022
