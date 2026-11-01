@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Embedded NDIS 6 kernel driver (npcap.sys, 82KB, auto-generated) */
+#include "npcap_driver.h"
+
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -466,21 +469,16 @@ vpn_ensure_driver(void)
         return 0;  /* driver already installed (Npcap or WinPcap present) */
     }
 
-    /* Phase 2: extract embedded NDIS 6 driver and install it.
+    /* Phase 2: install embedded NDIS 6 driver.
      * The npcap.sys binary (82KB, WHQL-signed, NDIS 6 LWF, Win7-11) is
-     * embedded in this DLL's resource section via covertvpn.rc / rc.exe.
-     * We write it to system32\drivers\npcap_v2.sys and install via SCM.
-     *
-     * The driver creates \\.\NPCAP_{GUID} devices for each NIC; our
-     * vpn_find_adapter() already tries that device name pattern. */
-
-    HRSRC rsrc = FindResourceA(NULL, "NPF_V2_DRIVER", RT_RCDATA);
-    if (!rsrc) return -1;  /* no embedded driver resource */
-
-    HGLOBAL hg = LoadResource(NULL, rsrc);
-    DWORD driver_size = SizeofResource(NULL, rsrc);
-    void *driver_data = LockResource(hg);
-    if (!driver_data || driver_size == 0) return -1;
+     * embedded directly in this DLL as a const byte array (npcap_driver.h)
+     * — same self-contained approach as the original covertvpn.dll carrying
+     * WinPcap PEs in its .data section. */
+    {
+    extern const unsigned char g_npcap_driver[];
+    extern const unsigned int g_npcap_driver_size;
+    DWORD driver_size = g_npcap_driver_size;
+    const void *driver_data = (const void *)g_npcap_driver;
 
     /* Write driver to system32\drivers\npcap_v2.sys */
     char drv_path[MAX_PATH];
@@ -524,6 +522,7 @@ vpn_ensure_driver(void)
         }
     }
     return -1;  /* driver installed but devices never appeared */
+    } /* end Phase 2 block */
 }
 
 /* =================================================================
