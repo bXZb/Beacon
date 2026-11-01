@@ -74,8 +74,6 @@ typedef struct _VPN_CONFIG {
 #pragma pack(pop)
 
 /* The actual config instance — discoverable by the TS patcher */
-/* Note: MSVC doesn't allow __declspec(allocate()) without #pragma data_seg.
- * We use a plain global; VPNClient finds it by the marker string. */
 VPN_CONFIG g_config = {
     'b', {0,0,0}, 0, {0,0},
     "VPN_REMOTEHOST_MARKER_______________________",
@@ -86,6 +84,11 @@ VPN_CONFIG g_config = {
     "VPN_ADAPTER_HINT_MARKER_____________________",
     "VPN_CONFIG_MARKER_0000000000"
 };
+
+/* Compatibility markers — VPNClient.exportClient patches these in the
+ * compiled binary (same contract as the original covertvpn.dll). */
+const char g_marker_main[]  = "AAAABBBBCCCCDDDDEEEEFFFF";
+const char g_marker_ua[]    = "AAABBBCCCDDDEEEFFFGGGHHHIIIJJJKKKLLLMMMNNNOOO";
 
 /* =================================================================
  * BPF IOCTL constants (same as NPF driver interface)
