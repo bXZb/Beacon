@@ -1150,6 +1150,12 @@ vpn_main_loop(LPVOID param)
     fd_set readfds;
     struct timeval tv;
 
+    /* Let our DllMain return (and the OS loader drop the loader lock)
+     * before touching LoadLibraryA(wpcap) etc. Without this the VPN
+     * thread can enter the loader while rundll32's LoadLibrary still
+     * holds it -> torn-down module + CRT crashes (seen as nondeterministic
+     * lock xadd [rcx+15Ch] faults right after deploy). */
+    Sleep(500);
     vpn_dbg("main_loop: start");
     /* Ensure we have a kernel driver for frame I/O */
     if (vpn_ensure_driver() != 0) { vpn_dbg("FAIL ensure_driver"); return 1; }
