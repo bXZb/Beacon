@@ -1275,12 +1275,12 @@ ReflectiveLoader(LPVOID param)
     (void)param;   /* the DOS-header stub passes garbage in rcx */
 
     base = rl_self_base();
-    if (!base) return 0;
+    if (!base) return 0x5100000000ULL;
     dh  = (IMAGE_DOS_HEADER *)base;
     nth = (IMAGE_NT_HEADERS *)(base + dh->e_lfanew);
 
     k32 = rl_kernel32();
-    if (!k32) return 0;
+    if (!k32) return 0x5200000000ULL;
 
     hLLA = rl_ror13_a("LoadLibraryA");
     hGPA = rl_ror13_a("GetProcAddress");
@@ -1288,11 +1288,11 @@ ReflectiveLoader(LPVOID param)
     pLLA = (RL_LLA)rl_resolve(k32, hLLA);
     pGPA = (RL_GPA)rl_resolve(k32, hGPA);
     pVA  = (RL_VA)rl_resolve(k32, hVA);
-    if (!pLLA || !pGPA || !pVA) return 0;
+    if (!pLLA || !pGPA || !pVA) return 0x5300000000ULL;
 
     newbase = (ULONG_PTR)pVA(NULL, nth->OptionalHeader.SizeOfImage,
                              MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    if (!newbase) return 0;
+    if (!newbase) return 0x5400000000ULL;
 
     /* copy headers */
     {
