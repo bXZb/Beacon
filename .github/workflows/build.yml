@@ -56,5 +56,14 @@ jobs:
             udrl\_build\ReflectiveLoader.x64.o
             udrl\_build\ReflectiveLoader.rwx.x64.o
             udrl\_build\host_template_x64.exe
+  covertvpn-v2:
+    name: Covert VPN v2 (NDIS 6, direct I/O)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
 
-
+  ndisprot-driver:
+    name: NDIS 6 Protocol Driver (L2, SCM-installable)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
