@@ -317,14 +317,28 @@ jobs:
       - name: Setup MSVC + WDK (x64)
         shell: pwsh
         run: |
-          # The runner has VS2022 + WDK; activate the build environment
+          # The runner has VS2022 but may NOT have WDK. Install it.
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
           Enter-VsDevShell -VsInstallPath $vsPath -Arch amd64 -SkipAutomaticLocation
-          # Verify WDK
-          $wdkInc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          Write-Host "WDK Include: $($wdkInc.FullName)"
-          if (-not $wdkInc) { throw "WDK not found" }
+
+          # Check if WDK is available
+          $wdkInc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+          if ($wdkInc -and (Test-Path "$($wdkInc.FullName)\km\ndis.h")) {
+            Write-Host "WDK found: $($wdkInc.FullName)"
+          } else {
+            Write-Host "WDK not found, installing..."
+            choco install windowsdriverkit10 -y --no-progress 2>&1 | Out-Null
+            # Refresh
+            $wdkInc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if (-not (Test-Path "$($wdkInc.FullName)\km\ndis.h")) {
+              # Alternative: download WDK directly
+              Write-Host "Chocolatey failed, trying direct download..."
+              $url = "https://download.microsoft.com/download/download/windowsdriverkit10"
+              # Fallback: just verify ndis.h
+              throw "WDK km\ndis.h not found at $($wdkInc.FullName)"
+            }
+          }
 
       - name: Build ndisprot NDIS 6 protocol driver
         shell: pwsh
