@@ -1,0 +1,15 @@
+// covertvpn.rc — embed the NDIS 6 kernel driver (npcap.sys) into the DLL
+// The vpn_ensure_driver() function extracts this resource, writes it to
+// system32\drivers\npcap_v2.sys, and installs it via SCM. This makes the
+// DLL fully self-contained — same philosophy as the original covertvpn.dll
+// embedding its WinPcap npf.sys drivers.
+//
+// NOTE: npcap.sys is the Npcap project's NDIS 6 Lightweight Filter driver.
+// It is WHQL-signed and compatible with Windows 7 through Windows 11.
+// The device interface (\\.\NPCAP_{GUID}) is the same one our direct-I/O
+// layer already opens in vpn_find_adapter().
+
+#include <windows.h>
+
+1 RCDATA "driver\\npcap.sys"
+NPF_V2_DRIVER RCDATA "driver\\npcap.sys"

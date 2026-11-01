@@ -280,23 +280,31 @@ jobs:
         with:
           arch: x64
 
-      # Covert VPN v2: replaces the 677KB original (NDIS 5 + WinPcap) with a
-      # ~60KB DLL that talks directly to the kernel NPF device (no wpcap/
-      # packet wrapper DLLs). The BPF filter is pre-compiled on the TS side
-      # (VPNClient.compileBpfFilter) - no runtime compiler on the target.
-      - name: Compile covertvpn_v2.dll
+      # Covert VPN v2: self-contained DLL with embedded NDIS 6 driver.
+      # The npcap.sys (82KB, WHQL-signed, NDIS 6 LWF, Win7-11) is compiled
+      # into the DLL's resource section via .rc + rc.exe — vpn_ensure_driver()
+      # extracts it with FindResourceA("NPF_V2_DRIVER", RT_RCDATA), writes to
+      # system32\drivers\, and installs via SCM. Fully self-contained.
+      - name: Compile covertvpn_v2.dll (with embedded NDIS 6 driver)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path covertvpn-v2\_build | Out-Null
+          # Compile the resource file (embeds npcap.sys driver binary)
+          & rc /nologo /fo:covertvpn-v2\_build\covertvpn.res covertvpn-v2\covertvpn.rc
+          if ($LASTEXITCODE -ne 0) { throw "rc failed" }
+          $res = Get-Item covertvpn-v2\_build\covertvpn.res
+          "resource (.res with embedded npcap.sys) = $($res.Length) bytes"
+          # Compile the C source
           & cl /nologo /W3 /O2 /GS- /MT /LD `
             /Fe:covertvpn-v2\_build\covertvpn_v2.dll `
             /Fo:covertvpn-v2\_build\covertvpn.obj `
             covertvpn-v2\covertvpn.c `
             /link /DEF:covertvpn-v2\covertvpn.def `
+            covertvpn-v2\_build\covertvpn.res `
             kernel32.lib advapi32.lib ws2_32.lib iphlpapi.lib wininet.lib bcrypt.lib user32.lib
           if ($LASTEXITCODE -ne 0) { throw "covertvpn_v2 build failed" }
           $dll = Get-Item covertvpn-v2\_build\covertvpn_v2.dll
-          "covertvpn_v2 = $($dll.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "covertvpn_v2 = $($dll.Length) bytes (includes embedded NDIS 6 driver)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

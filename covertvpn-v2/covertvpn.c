@@ -466,22 +466,26 @@ vpn_ensure_driver(void)
         return 0;  /* driver already installed (Npcap or WinPcap present) */
     }
 
-    /* Phase 2: install embedded NDIS 6 driver
-     * The driver binary is embedded in the DLL's resources (RCDATA).
-     * Extract to system32\drivers\npf_v2.sys, create service, start. */
+    /* Phase 2: extract embedded NDIS 6 driver and install it.
+     * The npcap.sys binary (82KB, WHQL-signed, NDIS 6 LWF, Win7-11) is
+     * embedded in this DLL's resource section via covertvpn.rc / rc.exe.
+     * We write it to system32\drivers\npcap_v2.sys and install via SCM.
+     *
+     * The driver creates \\.\NPCAP_{GUID} devices for each NIC; our
+     * vpn_find_adapter() already tries that device name pattern. */
 
     HRSRC rsrc = FindResourceA(NULL, "NPF_V2_DRIVER", RT_RCDATA);
-    if (!rsrc) return -1;  /* no embedded driver */
+    if (!rsrc) return -1;  /* no embedded driver resource */
 
     HGLOBAL hg = LoadResource(NULL, rsrc);
     DWORD driver_size = SizeofResource(NULL, rsrc);
     void *driver_data = LockResource(hg);
     if (!driver_data || driver_size == 0) return -1;
 
-    /* Write driver to system32\drivers\ */
+    /* Write driver to system32\drivers\npcap_v2.sys */
     char drv_path[MAX_PATH];
     GetSystemDirectoryA(drv_path, MAX_PATH);
-    lstrcatA(drv_path, "\\drivers\\npf_v2.sys");
+    lstrcatA(drv_path, "\\drivers\\npcap_v2.sys");
 
     HANDLE f = CreateFileA(drv_path, GENERIC_WRITE, 0, NULL,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -491,26 +495,35 @@ vpn_ensure_driver(void)
     CloseHandle(f);
     if (written != driver_size) return -1;
 
-    /* Create and start the service */
+    /* Create and start the kernel driver service */
     SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
     if (!scm) return -1;
 
-    SC_HANDLE svc = CreateServiceA(scm, "npf_v2", "NPF V2 Driver",
+    SC_HANDLE svc = CreateServiceA(scm, "npcap_v2", "Npcap V2 Packet Driver",
                                    SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
                                    SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
                                    drv_path, NULL, NULL, NULL, NULL, NULL);
     if (!svc) {
-        /* maybe already exists */
-        svc = OpenServiceA(scm, "npf_v2", SERVICE_START);
+        /* maybe already exists from a prior run */
+        svc = OpenServiceA(scm, "npcap_v2", SERVICE_START);
         if (!svc) { CloseServiceHandle(scm); return -1; }
     }
     StartServiceA(svc, 0, NULL);
     CloseServiceHandle(svc);
     CloseServiceHandle(scm);
 
-    /* Wait for device to appear */
-    Sleep(2000);
-    return 0;
+    /* Wait for driver to initialize and create device nodes.
+     * NDIS driver registration is asynchronous — device objects appear
+     * after NDIS calls DriverEntry → NdisRegisterFilterDriver → FilterAttach. */
+    for (int i = 0; i < 10; i++) {
+        Sleep(1000);
+        HANDLE test = vpn_find_adapter();
+        if (test != INVALID_HANDLE_VALUE) {
+            CloseHandle(test);
+            return 0;  /* driver is up, device nodes ready */
+        }
+    }
+    return -1;  /* driver installed but devices never appeared */
 }
 
 /* =================================================================
