@@ -536,9 +536,45 @@ vpn_read_frame(HANDLE fd, unsigned char *buf, int len)
          * dropped excluded traffic if a filter was set) */
         void *hdr = NULL, *pkt = NULL;
         int ret = p_pcap_next_ex(g_pcap_handle, &hdr, &pkt);
-        if (ret != 1 || !pkt) return -1;
+        if (ret != 1 || !pkt) {
+            { static int ticks = 0;
+              if ((++ticks & 0x7F) == 0) vpn_dbg_n("pcap idle ticks=", ticks); }
+            return -1;
+        }
         /* pcap_pkthdr: {ts(8B); caplen(4B); len(4B)} → caplen at offset 8 */
         int caplen = *(int *)((char *)hdr + 8);
+        {
+            /* TEMP: log every delivered frame: len, dst[0], ethertype */
+            unsigned char *pp = (unsigned char *)pkt;
+            char msg[80];
+            int i = 0;
+            const char *hex = "0123456789abcdef";
+            const char *pre = "PKT ";
+            while (*pre) msg[i++] = *pre++;
+            { int v = caplen; char num[8]; int n = 0;
+              if (v == 0) num[n++] = '0';
+              while (v) { num[n++] = hex[v % 10]; v /= 10; }
+              while (n) msg[i++] = num[--n]; }
+            msg[i++] = ' ';
+            msg[i++] = 'd';
+            msg[i++] = 's';
+            msg[i++] = 't';
+            msg[i++] = '=';
+            for (int q = 0; q < 6 && i < 70; q++) {
+                msg[i++] = hex[pp[q] >> 4];
+                msg[i++] = hex[pp[q] & 0xF];
+            }
+            msg[i++] = ' ';
+            msg[i++] = 'e';
+            msg[i++] = 't';
+            msg[i++] = '=';
+            msg[i++] = hex[pp[12] >> 4];
+            msg[i++] = hex[pp[12] & 0xF];
+            msg[i++] = hex[pp[13] >> 4];
+            msg[i++] = hex[pp[13] & 0xF];
+            msg[i] = 0;
+            vpn_dbg(msg);
+        }
         if (caplen > len) caplen = len;
         memcpy(buf, pkt, caplen);
         return caplen;
