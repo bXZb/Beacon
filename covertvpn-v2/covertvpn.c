@@ -235,31 +235,80 @@ vpn_npcap_open(void)
         dev = g_config.npcap_device;
     }
 
-    /* Option B: enumerate devices and pick first non-loopback */
+    /* Option B: enumerate devices. Prefer the one whose address matches
+     * the TS-patched adapter_hint (the GUI's selected interface IP);
+     * otherwise the first non-loopback, non-WAN-Miniport device. The
+     * naive first-non-loopback pick lands on "WAN Miniport" virtual
+     * adapters that never see a single frame. */
     if (!dev) {
         pcap_findalldevs_t p_findalldevs = (pcap_findalldevs_t)GetProcAddress(g_wpcap, "pcap_findalldevs");
         pcap_freealldevs_t p_freealldevs = (pcap_freealldevs_t)GetProcAddress(g_wpcap, "pcap_freealldevs");
+        char fallback[160];
+        unsigned long want_ip = 0;
+        int have_hint = 0;
+
+        fallback[0] = 0;
+        if (g_config.adapter_hint[0] != 0 && g_config.adapter_hint[0] != 'V' &&
+            strncmp(g_config.adapter_hint, "VPN_", 4) != 0) {
+            want_ip = inet_addr(g_config.adapter_hint);
+            have_hint = (want_ip != INADDR_NONE && want_ip != 0);
+        }
+
         if (p_findalldevs) {
             void *devs = NULL;
             if (p_findalldevs(&devs, errbuf) == 0 && devs) {
-                /* Walk linked list: pcap_if is {next*, name*, desc*, addr*, flags}
-                 * — name sits at offset 8 on both x86 and x64. */
+                /* pcap_if: {next*, name*, desc*, addr*, flags} — name at
+                 * +8, addr list head at +24 on x64. */
                 char *p = (char *)devs;
-                for (int i = 0; i < 10 && p; i++) {
+                for (int i = 0; i < 16 && p; i++) {
                     char **name_ptr = (char **)(p + 8);
-                    if (name_ptr && *name_ptr) {
-                        /* Skip Npcap's software loopback adapter */
-                        if (strstr(*name_ptr, "Loopback") == NULL &&
-                            strstr(*name_ptr, "loopback") == NULL) {
-                            lstrcpynA(device, *name_ptr, sizeof(device));
-                            dev = device;
-                            break;
+                    char *name = (name_ptr ? *name_ptr : NULL);
+                    int usable = 0;
+
+                    if (name &&
+                        strstr(name, "Loopback") == NULL &&
+                        strstr(name, "loopback") == NULL &&
+                        strstr(name, "WAN Miniport") == NULL) {
+                        /* desc lives at +16 — WAN Miniport only shows in
+                         * the description, so screen there too */
+                        char **desc_ptr = (char **)(p + 16);
+                        char *desc = (desc_ptr ? *desc_ptr : NULL);
+                        if (desc && strstr(desc, "WAN Miniport")) usable = 0;
+                        else usable = 1;
+                    }
+
+                    if (usable) {
+                        if (have_hint) {
+                            /* walk pcap_addr list: {next*, sockaddr* addr,
+                             * netmask, broad, dst} — IPv4 sockaddr sin_addr
+                             * at offset 4 of the sockaddr */
+                            char *ap = *(char **)(p + 24);
+                            while (ap) {
+                                struct sockaddr *sa = *(struct sockaddr **)(ap + 8);
+                                if (sa && sa->sa_family == AF_INET) {
+                                    unsigned long a = *(unsigned long *)((char *)sa + 4);
+                                    if (a == want_ip) break;
+                                }
+                                ap = *(char **)ap;
+                            }
+                            if (ap) {
+                                lstrcpynA(device, name, sizeof(device));
+                                dev = device;
+                                break;
+                            }
+                        }
+                        if (!fallback[0]) {
+                            lstrcpynA(fallback, name, sizeof(fallback));
                         }
                     }
                     p = *(char **)p;  /* next pointer at offset 0 */
                 }
-                if (p_freealldevs) p_freealldevs(devs);  /* device was copied */
+                if (p_freealldevs) p_freealldevs(devs);  /* names were copied */
             }
+        }
+        if (!dev && fallback[0]) {
+            lstrcpynA(device, fallback, sizeof(device));
+            dev = device;
         }
     }
 
