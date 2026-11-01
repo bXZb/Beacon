@@ -45,6 +45,9 @@ Revision History:
 #elif defined(NDIS630)
 #  define NDIS_PROT_MAJOR_VERSION             6
 #  define NDIS_PROT_MINOR_VERSION            30
+#elif defined(NDIS61)
+#  define NDIS_PROT_MAJOR_VERSION             6
+#  define NDIS_PROT_MINOR_VERSION            30
 #else
 #  error Unsupported NDIS version
 #endif
