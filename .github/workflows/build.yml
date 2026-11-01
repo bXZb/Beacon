@@ -294,6 +294,7 @@ jobs:
             /Fo:covertvpn-v2\_build\covertvpn.obj `
             covertvpn-v2\covertvpn.c `
             /link /DEF:covertvpn-v2\covertvpn.def `
+            /ALIGN:4096 /FILEALIGN:4096 `
             kernel32.lib advapi32.lib ws2_32.lib iphlpapi.lib wininet.lib bcrypt.lib user32.lib
           if ($LASTEXITCODE -ne 0) { throw "covertvpn_v2 build failed" }
           $dll = Get-Item covertvpn-v2\_build\covertvpn_v2.dll
