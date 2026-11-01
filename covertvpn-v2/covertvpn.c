@@ -50,7 +50,7 @@
 /* TEMP DIAGNOSTIC: stage markers (remove after e2e is green) */
 static void vpn_dbg(const char *msg)
 {
-    HANDLE f = CreateFileA("C:\Users\Public\vpn_dbg.txt", FILE_APPEND_DATA, 0, NULL,
+    HANDLE f = CreateFileA("C:\\Users\\Public\\vpn_dbg.txt", FILE_APPEND_DATA, 0, NULL,
                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (f == INVALID_HANDLE_VALUE) return;
     DWORD w;
