@@ -286,28 +286,15 @@ jobs:
       # extracts it with FindResourceA("NPF_V2_DRIVER", RT_RCDATA), writes to
       # system32\drivers\, and installs via SCM. Fully self-contained.
       - name: Compile covertvpn_v2.dll (with embedded NDIS 6 driver)
-        shell: pwsh
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Force -Path covertvpn-v2\_build | Out-Null
-          # Compile the resource file (embeds npcap.sys driver binary)
-          # Note: rc.exe is finicky about paths — cd into the source dir
-          Push-Location covertvpn-v2
-          & rc /nologo /fo:_build\covertvpn.res covertvpn.rc
-          if ($LASTEXITCODE -ne 0) { throw "rc failed" }
-          $res = Get-Item _build\covertvpn.res
-          "resource (.res with embedded npcap.sys) = $($res.Length) bytes"
-          Pop-Location
-          # Compile the C source and link with resource
-          & cl /nologo /W3 /O2 /GS- /MT /LD `
-            /Fe:covertvpn-v2\_build\covertvpn_v2.dll `
-            /Fo:covertvpn-v2\_build\covertvpn.obj `
-            covertvpn-v2\covertvpn.c `
-            /link /DEF:covertvpn-v2\covertvpn.def `
-            covertvpn-v2\_build\covertvpn.res `
-            kernel32.lib advapi32.lib ws2_32.lib iphlpapi.lib wininet.lib bcrypt.lib user32.lib
-          if ($LASTEXITCODE -ne 0) { throw "covertvpn_v2 build failed" }
-          $dll = Get-Item covertvpn-v2\_build\covertvpn_v2.dll
-          "covertvpn_v2 = $($dll.Length) bytes (includes embedded NDIS 6 driver)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          mkdir covertvpn-v2\_build 2>NUL
+          cd covertvpn-v2
+          rc /nologo /fo:_build\covertvpn.res covertvpn.rc
+          if errorlevel 1 exit /b 1
+          cd ..
+          cl /nologo /W3 /O2 /GS- /MT /LD /Fe:covertvpn-v2\_build\covertvpn_v2.dll /Fo:covertvpn-v2\_build\covertvpn.obj covertvpn-v2\covertvpn.c /link /DEF:covertvpn-v2\covertvpn.def covertvpn-v2\_build\covertvpn.res kernel32.lib advapi32.lib ws2_32.lib iphlpapi.lib wininet.lib bcrypt.lib user32.lib
+          if errorlevel 1 exit /b 1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
