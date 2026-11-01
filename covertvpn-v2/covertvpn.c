@@ -16,8 +16,10 @@
  *          wininet.lib bcrypt.lib
  */
 
-#include <windows.h>
+/* winsock2.h MUST come before windows.h (the classic include-order trap:
+ * windows.h pulls in winsock.h v1 which conflicts with winsock2.h v2) */
 #include <winsock2.h>
+#include <windows.h>
 #include <iphlpapi.h>
 #include <wininet.h>
 #include <bcrypt.h>
@@ -58,11 +60,10 @@ typedef struct _VPN_CONFIG {
     /* pre-compiled BPF filter (TS generates, target just passes to kernel) */
     unsigned short bpf_len;      /* number of BPF instructions */
     char     _pad3[6];
-    struct {
-        unsigned short code;
-        unsigned char  jt, jf;
-        unsigned int   k;
-    } bpf_insn[16];              /* max 16 instructions = 128 bytes */
+    unsigned char bpf_code[16];  /* BPF opcode per insn */
+    unsigned char bpf_jt[16];   /* true-jump per insn */
+    unsigned char bpf_jf[16];   /* false-jump per insn */
+    unsigned int   bpf_k[16];   /* immediate per insn */
 
     /* adapter selection hint (optional, empty = first non-loopback) */
     char     adapter_hint[64];
@@ -72,14 +73,16 @@ typedef struct _VPN_CONFIG {
 } VPN_CONFIG;
 #pragma pack(pop)
 
-/* The actual config instance — placed in .rdata with a discoverable marker */
-__declspec(allocate(".rdata")) VPN_CONFIG g_config = {
+/* The actual config instance — discoverable by the TS patcher */
+/* Note: MSVC doesn't allow __declspec(allocate()) without #pragma data_seg.
+ * We use a plain global; VPNClient finds it by the marker string. */
+VPN_CONFIG g_config = {
     'b', {0,0,0}, 0, {0,0},
     "VPN_REMOTEHOST_MARKER_______________________",
     "VPN_USERAGENT_MARKER_________________________",
     { 0 }, /* key */
     12, {0,0,0,0,0,0},
-    { { {0,0,0,0} } }, /* bpf instructions */
+    { 0 }, { 0 }, { 0 }, { 0 }, /* bpf arrays */
     "VPN_ADAPTER_HINT_MARKER_____________________",
     "VPN_CONFIG_MARKER_0000000000"
 };
@@ -159,10 +162,10 @@ vpn_set_bpf_filter(HANDLE fd)
 
     struct bpf_insn_kernel insns[16];
     for (int i = 0; i < g_config.bpf_len; i++) {
-        insns[i].code = g_config.bpf_insn[i].code;
-        insns[i].jt   = g_config.bpf_insn[i].jt;
-        insns[i].jf   = g_config.bpf_insn[i].jf;
-        insns[i].k    = g_config.bpf_insn[i].k;
+        insns[i].code = (unsigned short)g_config.bpf_code[i];
+        insns[i].jt   = g_config.bpf_jt[i];
+        insns[i].jf   = g_config.bpf_jf[i];
+        insns[i].k    = g_config.bpf_k[i];
     }
     struct bpf_program_kernel prog = { g_config.bpf_len, insns };
     DWORD ret;
