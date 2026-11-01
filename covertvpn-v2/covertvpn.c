@@ -1242,7 +1242,7 @@ rl_self_base(ULONG_PTR from)
  * rax as the payload entry. Returning this keeps that calling thread
  * (and therefore the patsy) alive while the VPN thread runs - the same
  * lifetime the original covertvpn.dll had. */
-static DWORD WINAPI
+__declspec(dllexport) DWORD WINAPI
 rl_park(LPVOID param)
 {
     (void)param;
