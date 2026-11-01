@@ -290,11 +290,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path covertvpn-v2\_build | Out-Null
           # Compile the resource file (embeds npcap.sys driver binary)
-          & rc /nologo /fo:covertvpn-v2\_build\covertvpn.res covertvpn-v2\covertvpn.rc
+          # Note: rc.exe is finicky about paths — cd into the source dir
+          Push-Location covertvpn-v2
+          & rc /nologo /fo:_build\covertvpn.res covertvpn.rc
           if ($LASTEXITCODE -ne 0) { throw "rc failed" }
-          $res = Get-Item covertvpn-v2\_build\covertvpn.res
+          $res = Get-Item _build\covertvpn.res
           "resource (.res with embedded npcap.sys) = $($res.Length) bytes"
-          # Compile the C source
+          Pop-Location
+          # Compile the C source and link with resource
           & cl /nologo /W3 /O2 /GS- /MT /LD `
             /Fe:covertvpn-v2\_build\covertvpn_v2.dll `
             /Fo:covertvpn-v2\_build\covertvpn.obj `
