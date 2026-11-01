@@ -363,7 +363,7 @@ jobs:
             $objs += $obj
             & cl /nologo /W3 /O2 /GS- /Zl /kernel `
               /I"$incPath\km" /I"$incPath\shared" /I"." `
-              /D_WIN64 /DAMD64 /D_KERNEL_MODE `
+              /D_AMD64_ /D_WIN64 /D_KERNEL_MODE /DNDIS61 `
               /c /Fo:$obj $f
             if ($LASTEXITCODE -ne 0) { throw "compile failed: $f" }
             Write-Host "  compiled: $f"
