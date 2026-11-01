@@ -308,6 +308,75 @@ jobs:
           name: covertvpn-v2
           path: covertvpn-v2\_build\covertvpn_v2.dll
 
+  ndisprot-driver:
+    name: NDIS 6 Protocol Driver (L2, SCM-installable)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC + WDK (x64)
+        shell: pwsh
+        run: |
+          # The runner has VS2022 + WDK; activate the build environment
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vsPath -Arch amd64 -SkipAutomaticLocation
+          # Verify WDK
+          $wdkInc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          Write-Host "WDK Include: $($wdkInc.FullName)"
+          if (-not $wdkInc) { throw "WDK not found" }
+
+      - name: Build ndisprot NDIS 6 protocol driver
+        shell: pwsh
+        run: |
+          # Activate VS dev shell
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vsPath -Arch amd64 -SkipAutomaticLocation
+
+          $sdkVer = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name
+          $kitPath = "C:\Program Files (x86)\Windows Kits\10"
+          $incPath = "$kitPath\Include\$sdkVer"
+          $libPath = "$kitPath\Lib\$sdkVer"
+
+          Write-Host "SDK: $sdkVer"
+
+          New-Item -ItemType Directory -Force -Path covertvpn-v2\ndisprot\_build | Out-Null
+          Set-Location covertvpn-v2\ndisprot
+
+          # Compile all .c files
+          $srcFiles = @("ntdisp.c","ndisbind.c","recv.c","send.c","debug.c","excallbk.c")
+          $objs = @()
+          foreach ($f in $srcFiles) {
+            $obj = "_build\$($f -replace '\.c$','.obj')"
+            $objs += $obj
+            & cl /nologo /W3 /O2 /GS- /Zl /kernel `
+              /I"$incPath\km" /I"$incPath\shared" /I"$incPath\um" `
+              /D_WIN64 /DAMD64 /D_KERNEL_MODE `
+              /c /Fo:$obj $f
+            if ($LASTEXITCODE -ne 0) { throw "compile failed: $f" }
+            Write-Host "  compiled: $f"
+          }
+
+          # Link as kernel driver
+          & link /nologo /DRIVER /SUBSYSTEM:NATIVE `
+            /OUT:_build\ndisprot.sys `
+            /MACHINE:X64 `
+            $objs `
+            /LIBPATH:"$libPath\km\x64" `
+            ndis.lib kernel_mode_library.lib hal.lib wmilib.lib bufferoverflowfastfailk.lib ntstrsafe.lib
+          if ($LASTEXITCODE -ne 0) { throw "link failed" }
+
+          $sys = Get-Item _build\ndisprot.sys
+          Write-Host "ndisprot.sys = $($sys.Length) bytes"
+          "NDIS 6 Protocol Driver (L2, SCM-installable) = $($sys.Length) bytes" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ndisprot-driver
+          path: covertvpn-v2\ndisprot\_build\ndisprot.sys
+
   dll-x86:
     name: beacon x86 Release
     runs-on: windows-2022
