@@ -1,3 +1,4 @@
 LIBRARY covertvpn_v2
 EXPORTS
     DllMain
+    Park=rl_park
