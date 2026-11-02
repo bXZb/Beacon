@@ -46,3 +46,6 @@ checks.json
 r1_inbox.txt
 _re/dec_tsi_beacons.py
 llvm-out/
+__pycache__/
+*.pyc
+gen/
