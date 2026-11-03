@@ -1541,16 +1541,25 @@ void command_inline_execute_object(char * buffer, int length) {
 		if (ok491) {
 			formatp rep;
 			bformat_init(&rep, c491.length + rd491.length + da491.length
-			                   + rl491.length + 128);
+			                   + rl491.length + 256);
+			/* BOF-runner blob shape: [int bssSize][int len][code][int len]
+			 * [rdata][int len][data][int len][xdata][int len][pdata][int len]
+			 * [relocs] - command_inline_execute_object_parsed reads exactly
+			 * bssSize + six length-prefixed extracts (entry/args arrive as
+			 * parameters). The old assembly omitted the code/rdata/data/
+			 * relocs length prefixes, so every extract misaligned and the
+			 * object never ran (rlen=0x28000000 garbage, 2026-11-03). */
 			bformat_int(&rep, 4096); /* bssSize (official task omits .bss) */
+			bformat_int(&rep, c491.length);
 			bformat_copy(&rep, (char *)c491.buffer, c491.length);
+			bformat_int(&rep, rd491.length);
 			bformat_copy(&rep, (char *)rd491.buffer, rd491.length);
+			bformat_int(&rep, da491.length);
 			bformat_copy(&rep, (char *)da491.buffer, da491.length);
 			bformat_int(&rep, 0);    /* xdata: empty */
 			bformat_int(&rep, 0);    /* pdata: empty */
+			bformat_int(&rep, rl491.length);
 			bformat_copy(&rep, (char *)rl491.buffer, rl491.length);
-			bformat_int(&rep, entry491);
-			bformat_copy(&rep, (char *)ar491.buffer, ar491.length);
 
 			/* args blob = 4-byte callback id (BE, CommandBuilder.addInt) */
 			g_obj_callback = ((DWORD)ar491.buffer[0] << 24)
