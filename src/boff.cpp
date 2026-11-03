@@ -801,6 +801,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	if (pdata.buffer) memcpy(pdata_dst, pdata.buffer, pdata.length);
 
 	data_init(&relocsparser, relocs.buffer, relocs.length);
+	spawn_log("bofload sizeof=", (long)sizeof(OBJ_RELOC));
+	spawn_log("bofload rlen=", (long)relocsparser.length);
+	spawn_log("bofload r0dw0=", (long)(int)*(int *)(void *)relocs.buffer);
+	spawn_log("bofload r0dw3=", (long)(int)*(int *)(void *)(relocs.buffer + 12));
 	while (TRUE) {
 		char * src;
 		char * dst;
@@ -809,9 +813,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		int seclen;
 		reloc = (OBJ_RELOC *)data_ptr(&relocsparser, sizeof(OBJ_RELOC));
 		if (reloc == NULL) {
-			spawn_log("bofload relocs exhausted at off=", (long)(relocs.length - relocsparser.length));
+			spawn_log("bofload relocs exhausted plen=", (long)relocsparser.length);
 			break;
 		}
+		spawn_log("bofload it plen=", (long)relocsparser.length);
+		spawn_log("bofload it sec=", (long)reloc->section);
+		spawn_log("bofload it sym=", (long)reloc->symbol);
+		spawn_log("bofload it typ=", (long)reloc->type);
+		spawn_log("bofload it off=", (long)reloc->offset);
 		if (reloc->symbol == SYMBOL_END) {
 			spawn_log("bofload end reached entries=", (long)relocsparser.length);
 			success = TRUE;
