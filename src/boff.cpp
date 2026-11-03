@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include "commands.h"
+#include "spawn_trace.h"
 #include "beacon.h"
 #include "parse.h"
 #include "inject.h"
@@ -1461,7 +1462,6 @@ cleanup:
 }
 
 void command_inline_execute_object(char * buffer, int length) {
-	extern void spawn_log(const char * msg, long v);
 	spawn_log("cmd100: entry len=", (long)length);
 	datap parser;
 	datap_buffer code, relocs;
