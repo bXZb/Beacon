@@ -1517,6 +1517,7 @@ void command_inline_execute_object(char * buffer, int length) {
 			bformat_free(&rep);
 			return;
 		}
+	}
 
 	/* --- legacy BOF / BOFPE shapes --- */
 	data_init(&parser, buffer, length);
