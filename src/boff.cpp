@@ -1556,8 +1556,10 @@ void command_inline_execute_object(char * buffer, int length) {
 			bformat_copy(&rep, (char *)rd491.buffer, rd491.length);
 			bformat_int(&rep, da491.length);
 			bformat_copy(&rep, (char *)da491.buffer, da491.length);
-			bformat_int(&rep, 0);    /* xdata: empty */
-			bformat_int(&rep, 0);    /* pdata: empty */
+			bformat_int(&rep, xd491.length);
+			bformat_copy(&rep, (char *)xd491.buffer, xd491.length);
+			bformat_int(&rep, pd491.length);
+			bformat_copy(&rep, (char *)pd491.buffer, pd491.length);
 			bformat_int(&rep, rl491.length);
 			bformat_copy(&rep, (char *)rl491.buffer, rl491.length);
 
