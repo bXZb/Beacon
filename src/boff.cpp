@@ -1461,6 +1461,8 @@ cleanup:
 }
 
 void command_inline_execute_object(char * buffer, int length) {
+	extern void spawn_log(const char * msg, long v);
+	spawn_log("cmd100: entry len=", (long)length);
 	datap parser;
 	datap_buffer code, relocs;
 	DWORD entry;
@@ -1488,6 +1490,10 @@ void command_inline_execute_object(char * buffer, int length) {
 		if (ar491.length != 4) ok491 = FALSE;
 		if (c491.length == 0 || (DWORD)c491.length <= entry491) ok491 = FALSE;
 		if (rd491.length == 0 || rl491.length == 0) ok491 = FALSE;
+		spawn_log("cmd100 official ok491=", (long)ok491);
+		spawn_log("cmd100 c_len=", (long)c491.length);
+		spawn_log("cmd100 args_len=", (long)ar491.length);
+		spawn_log("cmd100 entry=", (long)entry491);
 
 		if (ok491) {
 			formatp rep;
