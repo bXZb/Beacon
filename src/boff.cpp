@@ -1509,7 +1509,8 @@ void command_inline_execute_object(char * buffer, int length) {
 			               | ((DWORD)ar491.buffer[2] << 8)
 			               | (DWORD)ar491.buffer[3];
 
-			command_inline_execute_object_parsed(rep.buffer, rep.length,
+			command_inline_execute_object_parsed(bformat_string(&rep),
+			                                     bformat_length(&rep),
 			                                     entry491, ar491.buffer,
 			                                     ar491.length, 0);
 			g_obj_callback = 0;
