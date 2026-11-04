@@ -5,7 +5,6 @@
 #include "link.h"
 #include "build.h"
 #include "parse.h"
-#include "spawn_trace.h"
 #include "bformat.h"
 #include "datastore.h"
 #ifdef BEACON_TIER3

@@ -2,7 +2,6 @@
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
-#include "spawn_trace.h"
 #include "beacon.h"
 #include "strategy.h"
 #include "link.h"

