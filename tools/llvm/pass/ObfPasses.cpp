@@ -261,20 +261,22 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
         continue;
       }
 
-      // relational sites: operand-swap with predicate flip (always exact),
-      // or a boundary shift x P v -> x NP v±1 guarded against the wrap edge
+      // relational sites: boundary shift x P v -> x NP (v±1), guarded
+      // against the wrap-edge constants. The operand-swap alternative was
+      // removed: swap+flip is IR-exact but ISel canonicalizes the constant
+      // back to operand 1 and re-emits the IDENTICAL cmp x,C; jcc — a
+      // machine-code no-op that let YARA windows survive (sig_2, rva 0x1646:
+      // the beacon() loop bound cmp r8,0x7e stayed byte-identical under
+      // seed 1337 because the coin drew swap). Shift-eligible sites now
+      // shift unconditionally; edge-guarded sites stay as-is (no exact
+      // machine-visible rewrite exists for them at IR level).
       CmpInst::Predicate NP = P;
       APInt NV = C->getValue();
-      bool canShift = relShift(P, C->getValue(), NP, NV);
+      if (!relShift(P, C->getValue(), NP, NV))
+        continue;
       IRBuilder<> B(CI);
-      ICmpInst *NI;
-      if (canShift && coin(seed, F.getName(), thisIdx, 17)) {
-        NI = cast<ICmpInst>(B.CreateICmp(NP, CI->getOperand(0),
-                                         ConstantInt::get(C->getType(), NV)));
-      } else {
-        NI = cast<ICmpInst>(B.CreateICmp(CmpInst::getSwappedPredicate(P),
-                                         C, CI->getOperand(0)));
-      }
+      ICmpInst *NI = cast<ICmpInst>(B.CreateICmp(NP, CI->getOperand(0),
+                                                 ConstantInt::get(C->getType(), NV)));
       NI->takeName(CI);
       CI->replaceAllUsesWith(NI);
       CI->eraseFromParent();
