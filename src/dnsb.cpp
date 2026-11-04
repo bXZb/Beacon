@@ -236,6 +236,10 @@ void beacon(LPVOID lpReserved) {
 		if (check_kill_date())
 			safe_exit();
 
+		/* exit task arrived this cycle: terminate before sleeping */
+		if (beacon_dying)
+			safe_exit();
+
 		/* check for max retry strategy, adjust sleep_time if threshold is met. */
 		if (check_max_retry(failedHost, &maxRetryCount, &sleep_time, &maxOrigSleepTime))
 			safe_exit();
