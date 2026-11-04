@@ -3,9 +3,15 @@
 // Two function passes registered at OptimizerLast (after clang's main opt
 // pipeline, before codegen — nothing folds our shapes back):
 //
-//   obf-sub   instruction substitution: add/sub constant-negation swaps and
-//             icmp eq/ne x,C -> xor-test rewrites, applied with a
-//             seed-derived per-instruction probability.
+//   obf-sub   instruction substitution, every rewrite value-exact for ALL
+//             inputs: add/sub constant-negation opcode flip OR seeded
+//             const-split (x+d = (x+s1)+s2, the IR-level sbb site); icmp
+//             eq/ne x,C -> xor-test; relational cmp -> operand-swap with
+//             predicate flip or guarded boundary shift (x<v -> x<=v-1,
+//             guards exclude the wrap-edge constants); and-split (x&C =
+//             (x&(C|A))&C, A a seeded subset of ~C); or-split ((x|C1)|C2,
+//             C1|C2 == C disjoint partition). Shape coins are seed-derived;
+//             the VALUES are never seeded.
 //   obf-bogo  opaque-predicate block splitting: (x<<1)+x != x*3 is false for
 //             ALL i64 values (modular arithmetic, no overflow), fed from a
 //             volatile global so neither our pass nor ISel can fold it. The
@@ -89,6 +95,31 @@ static uint64_t mixFor(uint64_t seed, StringRef fname, uint64_t idx, int salt) {
   return splitmix64(seed ^ hashStr(fname) ^ splitmix64(idx * 0xD1B54A32D192ED03ULL + (uint64_t)salt));
 }
 
+// one part of a constant split: add x,s or sub x,-s — both add s to x
+static Value *emitArithPart(IRBuilder<> &B, Value *X, const APInt &s,
+                            uint64_t seed, StringRef fn, uint64_t idx, int salt) {
+  if (coin(seed, fn, idx, salt))
+    return B.CreateAdd(X, ConstantInt::get(X->getType(), s), "", false, false);
+  return B.CreateSub(X, ConstantInt::get(X->getType(), -s), "", false, false);
+}
+
+// x P v  ==>  x NP (v-1 or v+1): exact for ALL x when the edge guard holds
+// (the guards exclude exactly the constants where v-1/v+1 wraps)
+static bool relShift(CmpInst::Predicate P, const APInt &v,
+                     CmpInst::Predicate &NP, APInt &NV) {
+  switch (P) {
+  case CmpInst::ICMP_ULT: if (v.isZero()) return false;          NP = CmpInst::ICMP_ULE; NV = v - 1; return true;
+  case CmpInst::ICMP_ULE: if (v.isAllOnes()) return false;       NP = CmpInst::ICMP_ULT; NV = v + 1; return true;
+  case CmpInst::ICMP_UGT: if (v.isAllOnes()) return false;       NP = CmpInst::ICMP_UGE; NV = v + 1; return true;
+  case CmpInst::ICMP_UGE: if (v.isZero()) return false;          NP = CmpInst::ICMP_UGT; NV = v - 1; return true;
+  case CmpInst::ICMP_SLT: if (v.isMinSignedValue()) return false; NP = CmpInst::ICMP_SLE; NV = v - 1; return true;
+  case CmpInst::ICMP_SLE: if (v.isMaxSignedValue()) return false; NP = CmpInst::ICMP_SLT; NV = v + 1; return true;
+  case CmpInst::ICMP_SGT: if (v.isMaxSignedValue()) return false; NP = CmpInst::ICMP_SGE; NV = v + 1; return true;
+  case CmpInst::ICMP_SGE: if (v.isMinSignedValue()) return false; NP = CmpInst::ICMP_SGT; NV = v - 1; return true;
+  default: return false;
+  }
+}
+
 // ---- obf-sub --------------------------------------------------------------
 
 struct ObfSubPass : PassInfoMixin<ObfSubPass> {
@@ -102,16 +133,20 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
     uint64_t idx = 0;
 
     SmallVector<BinaryOperator *, 16> arith;
+    SmallVector<BinaryOperator *, 16> ands;
+    SmallVector<BinaryOperator *, 16> ors;
     SmallVector<ICmpInst *, 16> icmps;
     for (BasicBlock &BB : F) {
       for (Instruction &I : BB) {
         if (auto *BO = dyn_cast<BinaryOperator>(&I)) {
           if (BO->getOpcode() == Instruction::Add || BO->getOpcode() == Instruction::Sub)
             arith.push_back(BO);
+          else if (BO->getOpcode() == Instruction::And)
+            ands.push_back(BO);
+          else if (BO->getOpcode() == Instruction::Or)
+            ors.push_back(BO);
         } else if (auto *CI = dyn_cast<ICmpInst>(&I)) {
-          CmpInst::Predicate P = CI->getPredicate();
-          if (P == CmpInst::ICMP_EQ || P == CmpInst::ICMP_NE)
-            icmps.push_back(CI);
+          icmps.push_back(CI);
         }
       }
     }
@@ -125,18 +160,80 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       APInt v = C->getValue();
       if (v.isZero() || v.isMinSignedValue()) continue;
 
-      // UNCONDITIONAL transform: add x,C <-> sub x,-C is the ONLY
-      // value-equivalent opcode swap here. (An earlier "seeded direction
-      // flip" rewrote add x,C into add x,-C — a live-matrix crash — the
-      // coin only ever chose whether to BREAK the value.)
-      bool toSub = (BO->getOpcode() == Instruction::Add);
+      // signed delta added to x: add x,C -> +C ; sub x,C -> -C
+      // (min-signed already skipped: -min wraps onto itself)
+      APInt delta = (BO->getOpcode() == Instruction::Add) ? v : APInt(bits, 0) - v;
 
       IRBuilder<> B(BO);
       Value *op = BO->getOperand(0);
-      APInt nv = -v; // the negated constant drives the other opcode
-      ConstantInt *NC = cast<ConstantInt>(ConstantInt::get(C->getContext(), nv));
-      Value *res = toSub ? B.CreateSub(op, NC, "", false, false)
-                         : B.CreateAdd(op, NC, "", false, false);
+      Value *res = nullptr;
+      if (coin(seed, F.getName(), thisIdx, 13) && !delta.isAllOnes()) {
+        // const-split (the IR-level "sbb" site): x+delta = (x OP1 s1) OP2 s2
+        // with s1+s2 == delta, each part add-with-si or sub-with-neg-si.
+        // Shape changes regardless of the per-part opcode coin, since both
+        // immediates differ from the original single constant.
+        APInt s1 = APInt(bits, mixFor(seed, F.getName(), thisIdx, 14)) & delta;
+        if (s1.isZero() || s1 == delta)
+          s1 = delta + 1;
+        if (s1.isZero())
+          s1 = delta - 1; // delta == all-ones excluded above, so this lands nonzero
+        APInt s2 = delta - s1;
+        Value *t = emitArithPart(B, op, s1, seed, F.getName(), thisIdx, 15);
+        res = emitArithPart(B, t, s2, seed, F.getName(), thisIdx, 16);
+      } else {
+        // UNCONDITIONAL opcode flip: add x,C <-> sub x,-C is the ONLY
+        // value-equivalent opcode swap here. (An earlier "seeded direction
+        // flip" rewrote add x,C into add x,-C — a live-matrix crash — the
+        // coin only ever chose whether to BREAK the value.)
+        bool toSub = (BO->getOpcode() == Instruction::Add);
+        res = toSub ? B.CreateSub(op, ConstantInt::get(C->getContext(), -delta), "", false, false)
+                    : B.CreateAdd(op, ConstantInt::get(C->getContext(), delta), "", false, false);
+      }
+      BO->replaceAllUsesWith(res);
+      BO->eraseFromParent();
+      changed = true;
+    }
+
+    // and-split: x & C = (x & (C|A)) & C with A a seeded nonzero subset of
+    // ~C — (C|A)&C == C, so the composition is exact for all x
+    for (BinaryOperator *BO : ands) {
+      uint64_t thisIdx = idx++;
+      auto *C = dyn_cast<ConstantInt>(BO->getOperand(1));
+      if (C == nullptr) continue;
+      unsigned bits = C->getType()->getIntegerBitWidth();
+      if (bits < 8) continue;
+      APInt v = C->getValue();
+      if (v.isZero() || v.isAllOnes()) continue;
+      APInt notv = ~v;
+      APInt a = APInt(bits, mixFor(seed, F.getName(), thisIdx, 11)) & notv;
+      if (a.isZero())
+        a = APInt(bits, 1) << notv.countTrailingZeros();
+      APInt c1 = v | a; // differs from v (a != 0), superset of v
+      IRBuilder<> B(BO);
+      Value *t = B.CreateAnd(BO->getOperand(0), ConstantInt::get(C->getContext(), c1));
+      Value *res = B.CreateAnd(t, C);
+      BO->replaceAllUsesWith(res);
+      BO->eraseFromParent();
+      changed = true;
+    }
+
+    // or-split: x | C = (x | C1) | C2 with C1|C2 == C, C1/C2 a seeded
+    // disjoint partition of C's set bits (needs popcount(C) >= 2)
+    for (BinaryOperator *BO : ors) {
+      uint64_t thisIdx = idx++;
+      auto *C = dyn_cast<ConstantInt>(BO->getOperand(1));
+      if (C == nullptr) continue;
+      unsigned bits = C->getType()->getIntegerBitWidth();
+      if (bits < 8) continue;
+      APInt v = C->getValue();
+      if (v.isZero() || v.popcount() < 2) continue;
+      APInt c1 = APInt(bits, mixFor(seed, F.getName(), thisIdx, 12)) & v;
+      if (c1.isZero() || c1 == v)
+        c1 = APInt(bits, 1) << v.countTrailingZeros(); // lowest set bit; != v by popcount >= 2
+      APInt c2 = v ^ c1; // disjoint remainder, nonzero
+      IRBuilder<> B(BO);
+      Value *t = B.CreateOr(BO->getOperand(0), ConstantInt::get(C->getContext(), c1));
+      Value *res = B.CreateOr(t, ConstantInt::get(C->getContext(), c2));
       BO->replaceAllUsesWith(res);
       BO->eraseFromParent();
       changed = true;
@@ -147,13 +244,37 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       auto *C = dyn_cast<ConstantInt>(CI->getOperand(1));
       if (C == nullptr) continue;
       unsigned bits = C->getType()->getIntegerBitWidth();
-      if (bits != 32 && bits != 64) continue;
-      if (C->getValue().isZero()) continue;
+      CmpInst::Predicate P = CI->getPredicate();
 
+      if (P == CmpInst::ICMP_EQ || P == CmpInst::ICMP_NE) {
+        if (bits != 32 && bits != 64) continue;
+        if (C->getValue().isZero()) continue;
+
+        IRBuilder<> B(CI);
+        Value *xored = B.CreateXor(CI->getOperand(0), C);
+        Value *zero = ConstantInt::get(C->getType(), 0);
+        ICmpInst *NI = cast<ICmpInst>(B.CreateICmp(P, xored, zero));
+        NI->takeName(CI);
+        CI->replaceAllUsesWith(NI);
+        CI->eraseFromParent();
+        changed = true;
+        continue;
+      }
+
+      // relational sites: operand-swap with predicate flip (always exact),
+      // or a boundary shift x P v -> x NP v±1 guarded against the wrap edge
+      CmpInst::Predicate NP = P;
+      APInt NV = C->getValue();
+      bool canShift = relShift(P, C->getValue(), NP, NV);
       IRBuilder<> B(CI);
-      Value *xored = B.CreateXor(CI->getOperand(0), C);
-      Value *zero = ConstantInt::get(C->getType(), 0);
-      ICmpInst *NI = cast<ICmpInst>(B.CreateICmp(CI->getPredicate(), xored, zero));
+      ICmpInst *NI;
+      if (canShift && coin(seed, F.getName(), thisIdx, 17)) {
+        NI = cast<ICmpInst>(B.CreateICmp(NP, CI->getOperand(0),
+                                         ConstantInt::get(C->getType(), NV)));
+      } else {
+        NI = cast<ICmpInst>(B.CreateICmp(CmpInst::getSwappedPredicate(P),
+                                         C, CI->getOperand(0)));
+      }
       NI->takeName(CI);
       CI->replaceAllUsesWith(NI);
       CI->eraseFromParent();
