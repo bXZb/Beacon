@@ -422,6 +422,7 @@ void dv_nursery_init(void) {
 	}
 	dv_clone_pid = pid;
 	spawn_log("dv: nursery up, clone pid=", (long)pid);
+	spawn_log("dv: host pid=", (long)dv_host_pid);
 }
 
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parameter, int plen) {

