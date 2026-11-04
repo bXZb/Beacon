@@ -264,12 +264,13 @@ struct ObfSubPass : PassInfoMixin<ObfSubPass> {
       // relational sites: boundary shift x P v -> x NP (v±1), guarded
       // against the wrap-edge constants. The operand-swap alternative was
       // removed: swap+flip is IR-exact but ISel canonicalizes the constant
-      // back to operand 1 and re-emits the IDENTICAL cmp x,C; jcc — a
-      // machine-code no-op that let YARA windows survive (sig_2, rva 0x1646:
-      // the beacon() loop bound cmp r8,0x7e stayed byte-identical under
-      // seed 1337 because the coin drew swap). Shift-eligible sites now
-      // shift unconditionally; edge-guarded sites stay as-is (no exact
-      // machine-visible rewrite exists for them at IR level).
+      // back to operand 1 and re-emits the identical cmp — a machine-code
+      // no-op. KNOWN ABSORPTION LIMIT (proven 2026-11-05, the YARA sig_2
+      // survivor): for increment-fed loop bounds (latch icmp on n+1) the
+      // backend folds the ADD into the compare — (n+1)<C and (n+1)<=C-1
+      // both emit cmp n,C-1; jb — so the IR-level shift is REAL but the
+      // bytes stay identical. Only a MachineFunction-level pass could shape
+      // those. Edge-guarded sites stay as-is (no exact IR rewrite).
       CmpInst::Predicate NP = P;
       APInt NV = C->getValue();
       if (!relShift(P, C->getValue(), NP, NV))

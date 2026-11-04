@@ -705,3 +705,33 @@ MSVC CI（build.yml）保留为对照轨；build.py 继续承担变体矩阵驱�
 - build.py 退役后的字节级等价：CMake 驱动产物通过同一活体矩阵
   （六通道 + 任务 battery），构建确定性/唯一性/YARA 门同批全绿
   （dd47a55 llvm-build ✅ build ✅）——功能等价即退役判据。
+
+
+## 附录 N：变形覆盖扩展 + YARA 幸存者归因（2026-11-05，HEAD c653c7e+）
+
+### obf-sub 四族新变换（23f5829，路线图"变形覆盖扩展"关闭）
+- and-split：`x&C = (x&(C|A))&C`，A 为 ~C 的种子非零子集（因 (C|A)&C==C 而严格等价）
+- or-split：`(x|C1)|C2`，C1|C2==C 不交拆分（popcount≥2 才做）
+- add/sub const-split（IR 级 sbb 站点）：`x+d=(x+s1)+s2`，部件 opcode 种子化，
+  与原有 opcode 翻转按种子二选一
+- relational-cmp：边界位移 `x<v → x≤v-1` 等 8 向（守卫恰好排除 0/全1/±INT_MIN/INT_MAX
+  四个回绕边）；操作数交换分支后来删除——IR 等价但 ISel 把常量规范化回 operand 1
+  后重发射同一 cmp，机器码零效果
+- 铁律不变：形状种子化，数值从不种子化（方向翻转 crash 教训）
+
+### YARA 15/16 幸存者的真因：后端吸收（c653c7e 提交信息的归因有误，以此为准）
+- 幸存者 sig_2 @rva 0x1646 = beacon() 手工拷贝循环边界 `cmp r8,0x7e; jb`
+- 完整链条：源码 `n_ < 127`（n_ 在体末自增）→ OptimizerLast 处 IR 为
+  latch icmp `ult (n+1), 127` → **本 pass 确实开火**（cc1 -fpass-plugin 实证 IR 变为
+  `ule (n+1), 126`）→ 但 ISel 把 ADD 折叠进比较：`(n+1)<127` 与 `(n+1)≤126`
+  同折为 `cmp n,126; jb` → 机器码逐字节相同 → 窗口存活
+- 决定性实验：cc1 真实路径下 IR diff 有变化、最终汇编 `cmpq $126` 两侧一致
+- 结论：**任何 IR 层 icmp 改写对"增量喂入比较"形态都是机器不变量**；
+  只有 MachineFunction 级 pass 才能位移这些字节（后续专项）。CI 跨提交
+  （23f5829 vs c653c7e）obf 产物逐字节一致与此完全吻合。
+- 门禁现状：15/16 丢失（阈值 ≥10 绿）；10 个 cmp 窗口丢了 9 个，
+  唯一幸存即上述吸收形态；6 个 add/sub 窗口全丢（翻转无吸收形态）
+- 本地验证方法论沉淀：容器无 cmake 时 `clang++-19 -shared -fPIC -fno-rtti` 直编
+  pass 插件可用；测 pass 必须用非 optnone IR（-O0 全函数 optnone 会被跳过）；
+  opt 顶层 `-passes=obf-sub` 不自动包 function 适配器，需显式 `function(obf-sub)`；
+  IR 层开火 ≠ 机器层可见——最终必须对汇编/产物字节验收
