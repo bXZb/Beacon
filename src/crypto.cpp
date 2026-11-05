@@ -133,6 +133,7 @@ unsigned long crypto_rng_get_bytes(unsigned char * out, unsigned long outlen) {
 /* The MSVC static CRT ships a ~5KB SIMD memcmp; variable-length calls link
  * it whole. The x86 dnsb must fit the DNS stager's 522,240-char collection
  * cap, so satisfy those calls with a compact version instead (2026-11-05). */
+#pragma function(memcmp)
 extern "C" int memcmp(const void * a, const void * b, size_t n) {
 	const unsigned char * p = (const unsigned char *)a;
 	const unsigned char * q = (const unsigned char *)b;
