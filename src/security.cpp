@@ -10,6 +10,7 @@
 #include "parse.h"
 #include "commands.h" /* safe_exit */
 #include "beacon.h"
+#include "spawn_trace.h"
 #include "track_memory.h"
 
 #if defined _M_X64
@@ -43,6 +44,8 @@ static unsigned int lastcounter = 0;
 
 /* decrypt the specified stuff */
 int security_decrypt(char * ciphertext, int length) {
+	spawn_log("secdec len=", length);
+	if (ciphertext == NULL) spawn_log("secdec CT-NULL", 0x7fffffff);
 	int check;
 	char * plaintext;
 	char unsigned hmac_bytes[HMAC_SIZE];
