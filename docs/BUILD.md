@@ -1,9 +1,7 @@
 # 构建指南
 
-`cmake` 分支的权威构建是仓库根目录的 CMake 工程，由 GitHub Actions
-（`.github/workflows/cmake.yml`）在 `windows-2022` 上 `cmake -S . -B build -A x64`
-然后 `cmake --build build --config Release` 完成。CMake 直接编译 `src/`，
-不再经过 `layout_two_pass.py`。
+权威构建是仓库根目录的 CMake 工程。GitHub Actions
+（`.github/workflows/cmake.yml`）在 `windows-2022` 上执行：
 
 ```powershell
 cmake -S . -B build -A x64
@@ -11,64 +9,73 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-产物在 `build/out/`：`beacon.x64.dll`、`winhttpb.x64.dll`、`dnsb.x64.dll`、
-`extc2.x64.dll`、`pivot.x64.dll`、`tests.exe`、`load_smoke.exe`。
+CMake 直接编译 `src/`、`udrl/`、`tests/`。不要用 `cl` 手写编译，也不要走
+`layout_two_pass.py`。
 
-## 快速开始
+产物在 `build/out/`：
+
+| 文件 | 说明 |
+|---|---|
+| `beacon.x64.dll` | HTTP WinINET |
+| `winhttpb.x64.dll` | HTTP WinHTTP |
+| `dnsb.x64.dll` | DNS |
+| `extc2.x64.dll` | External C2 |
+| `pivot.x64.dll` | SMB/TCP pivot |
+| `tests.exe` | 宿主机单元测试 |
+| `load_smoke.exe` | DLL LoadLibrary 冒烟 |
+| `ReflectiveLoader.x64.obj` | UDRL COFF |
+| `ReflectiveLoader.rwx.x64.obj` | UDRL COFF（`BW_DIAG_RWX`） |
+| `host_template_x64.exe` | 无 CRT 启动的宿主 EXE 模板 |
+
+## 测试
+
+编译归 CMake，运行归 CTest 或 `tests/run_tests.ps1`（后者只执行已编好的
+`build/out/tests.exe`，不再调编译器）。
 
 ```powershell
-.\build.ps1                 # 构建全部四个变体（beacon/dnsb/extc2/pivot）的 x64 Release
-.\build.ps1 -Project dnsb   # 单独构建某个变体
-.\build.ps1 -Project beacon -HttpLibrary winhttp  # CS 4.9 WinHTTP 套筒 winhttpb.x64.dll
-.\build.ps1 -Project beacon -Platform Win32       # x86 套筒 beacon.dll（需 lib/tomcrypt.x86.lib）
-.\tests\run_tests.ps1       # 编译并运行宿主机侧测试（需 MSVC 环境）
+ctest --test-dir build -C Release --output-on-failure -R host_unit
+.\tests\run_tests.ps1
 ```
 
-产物：`x64\Release\<name>.x64.dll` 或 `Win32\Release\<name>.dll` + 同名 `.map`。
-`-HttpLibrary winhttp` 时 x64 产物为 `winhttpb.x64.dll`（TS 槽明文上限 309248 B）；
-x86 wininet 槽 `sleeve/beacon.dll` 明文上限 **247808**（编码 247840-32）。
-x86 库：CI `dll-x86` 作业用 `thirdparty/build_trimmed.ps1 -Arch x86` 现编，不提交 `lib/*.x86.lib`。
+`tests/test_crypto.cpp` 是 C2 加密线缆协议的可执行规格（见
+`docs/WIRE-PROTOCOL.md`）。替换 `lib/` 下的 TomCrypt 后必须全绿。
 
-本机不编。推送 GitHub Actions、CrackSleeve、**client jar overlay**（`bspawn` 走 jar 不是 TS 槽）、`patch_ts.py`：见 `docs/LIVE-OPS.md`。客户端 `Desktop\4.9.1` 的 `src/sleeve/` + `build.ps1` 把编码 DLL 打进 `out/artifacts/4.9.1.jar`。
+对精简重编库做验收：
 
-## 工具链（CI 实证 2026-08-29 修订）
+```powershell
+cmake -S . -B build -A x64 -DBEACON_LIB_DIR=thirdparty/out -DBEACON_TEST_EXTRA_DEFS=BEACON_TEST_ENABLE_KEYGEN
+cmake --build build --config Release --target beacon_tests
+ctest --test-dir build -C Release --output-on-failure -R host_unit
+```
 
-| 项 | 默认 | 说明 |
-|---|---|---|
-| 工具集 | v142（common.props 默认） | **CI 已用 v143 全绿**（4 变体 + 测试），v143 可编本项目是实证事实。原作者记录的"v143 ICE / v141 崩溃"降级为其环境经验值；若在别的环境复现编译问题，再按经验值切回 v142 |
-| SDK | 10.0.19041.0 | CI（windows-2022 镜像含 19041）已验证；26100 仅跑过测试目标 |
-| 编译器架构 | 64 位 cl（HostX64） | common.props 已锁 `PreferredToolArchitecture=x64`；32 位 cl 编大模板会 C1060 |
-| LTCG | 关 | 保持关闭 |
+CI：`cmake.yml` 每次推送跑产品构建和 `host_unit`。`trimlib.yml` 手动触发，
+用上面的 CMake 开关链 `thirdparty/out` 里的重编库。
 
-以上默认值集中在 `common.props`，命令行可用 `/p:BeaconToolset=` `/p:BeaconSDK=` 覆盖；
-CI（`build.yml`）显式以 `-Toolset v143` 运行——让"工具链漂移"在 CI 上尽早暴露。
+## 工具链
+
+| 项 | 值 |
+|---|---|
+| 生成器 | Visual Studio（`cmake -A x64`） |
+| 编译器 | MSVC，windows-2022 默认工具集（v143） |
+| CRT | `/MT`（`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`） |
+| 语言 | C++17，RTTI 关（`/GR-`），LTCG 关 |
+| 依赖 | `lib/tomcrypt.x64.lib`、`lib/tommath.x64.lib`（见 `lib/VERSIONS.md`） |
+
+x86 库不入库。需要 Win32 套筒时用 `thirdparty/build_trimmed.ps1 -Arch x86` 现编。
 
 ## 工程布局
 
-- `common.props` —— 四变体共享的构建属性（工具集/SDK/库路径/Release 策略/MAP 生成）。
-  各 vcxproj 仅保留差异项（预处理宏、目标名）。**不要**把共享设置改回各工程内部。
-- `lib\` —— vendored 预编译依赖（`tomcrypt.x64.lib`/`tommath.x64.lib`），
-  版本与验收要求见 `lib\VERSIONS.md`。头文件是 LTC 1.17，与 lib 配对，
-  不可单独替换其一。
-- `thirdparty\` —— 精简重编 LTC/LTM 的配方与脚本（有网环境执行）。
-- `.github\workflows\build.yml` —— CI：4 变体构建 + 体积上报 + 测试。
+- `CMakeLists.txt` / `cmake/sources.cmake` —— 产品定义（源文件、宏、链接）。
+- `lib\` —— vendored 预编译 TomCrypt/TomMath。头在 `tomcrypt-headers\`，必须与 lib 成对替换。
+- `thirdparty\` —— 精简重编 LTC/LTM 的配方。
+- `.github/workflows/cmake.yml` —— 产品 CI。
 
 ## 体积硬约束（stageless 部署相关）
 
 CS 的 stageless 容器 `artifact64big.exe` 把 beacon DLL 写进自身 `.data` 节：
 RawSize `0x42600` = 271872 B，扣 20 B 头 → **payload 上限 271852 B**，
 超限会覆盖导入表导致 stageless exe 起 `0xC000007B`。
-构建产物若需进入该容器，构建后必须核对体积（`build.ps1` 不做此项，
-容器侧打包属于部署流程，不在本仓库范围）。
+构建产物若需进入该容器，构建后必须核对体积。容器侧打包属于部署流程，
+不在本仓库 CMake 范围。
 
-若体积超标，优先走 `thirdparty/` 的库源码级精简，而不是链接期符号桩
-（历史方案，脆弱且依赖 lib 二进制细节，新库构建后即无必要）。
-
-## 测试
-
-- `tests\` 下为宿主机侧 console 程序，不涉及注入/网络，MSVC 环境即可编译运行；
-- `tests\test_crypto.cpp` 同时是 C2 线缆协议加密层的可执行规格
-  （见 `docs\WIRE-PROTOCOL.md`），替换任何依赖库后必须全绿；
-- CI 每次推送自动运行。
-
-推送、下载 artifact、CrackSleeve 套筒、patch TeamServer、Headless 矩阵活测：见 `docs/LIVE-OPS.md`。功能完成度见 `docs/MATRIX.md`。
+若体积超标，优先走 `thirdparty/` 的库源码级精简。

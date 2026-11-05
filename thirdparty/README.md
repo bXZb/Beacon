@@ -28,9 +28,9 @@ vendored 库（实为 **LTC 1.18.2**，见 `lib/VERSIONS.md` 的取证结论）�
      （仅 AES/CBC/ECB/SHA256/HMAC/BASE64/MRSA/DER；PRNG 全禁用——运行时由
      `src/crypto.cpp` 注册 `processprng`）；
    - LTM `v1.3.0` 原样。
-3. **验收**（workflow 内自动执行）：用重编库编译并运行 `tests/` 全套 +
-   **keygen 探针**（`BEACON_TEST_ENABLE_KEYGEN`，同时复核 vendored lib 的
-   keygen 缺陷是否为构建产物问题）。
+3. **验收**（workflow 内自动执行）：CMake 以
+   `-DBEACON_LIB_DIR=thirdparty/out -DBEACON_TEST_EXTRA_DEFS=BEACON_TEST_ENABLE_KEYGEN`
+   编 `beacon_tests` 并跑 CTest（keygen 探针开）。
 4. **产物**：artifact `trimmed-libs`（两个 .lib）+ 体积汇总。验收通过后
    人工决定替换 `lib/` 下 vendored 库（同时更新 `lib/VERSIONS.md`）。
 

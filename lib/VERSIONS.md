@@ -24,8 +24,8 @@
 ## 重要约束
 
 1. **头/库必须成对替换**：换 lib 必须同步审查头文件版本，反之亦然。
-2. **链接方式**：`common.props` 已把 `$(ProjectDir)lib` 加入 `LibraryPath`，
-   工程经 `#pragma comment(lib, ...)` 或链接器输入解析；x64 构建只链这两个 .lib。
+2. **链接方式**：根 `CMakeLists.txt` 把 `lib/tomcrypt.x64.lib` 与
+   `lib/tommath.x64.lib` 链进产品 DLL；测试可通过 `-DBEACON_LIB_DIR=` 改库目录。
 3. **x86 库不入库**：`lib/` 仍只提交 x64。CI `dll-x86` 作业每次用
    `thirdparty/build_trimmed.ps1 -Arch x86` 现编 `tomcrypt.x86.lib` /
    `tommath.x86.lib` 再链 `Win32\Release\beacon.dll`（见 BUILD.md）。

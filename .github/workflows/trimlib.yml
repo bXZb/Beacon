@@ -23,9 +23,11 @@ jobs:
         shell: pwsh
         run: ./thirdparty/build_trimmed.ps1
 
-      - name: Acceptance - test suite against rebuilt libs (keygen probe ON)
-        shell: pwsh
-        run: ./tests/run_tests.ps1 -LibDir thirdparty/out -ExtraDefines BEACON_TEST_ENABLE_KEYGEN
+      - name: Acceptance - CMake tests against rebuilt libs (keygen probe ON)
+        run: |
+          cmake -S . -B build -A x64 -DBEACON_LIB_DIR=${{ github.workspace }}/thirdparty/out -DBEACON_TEST_EXTRA_DEFS=BEACON_TEST_ENABLE_KEYGEN
+          cmake --build build --config Release --target beacon_tests
+          ctest --test-dir build -C Release --output-on-failure -R host_unit
 
       - name: Report sizes
         shell: pwsh
