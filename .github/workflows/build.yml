@@ -415,6 +415,10 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Project beacon -Toolset v143 -Platform Win32
 
+      - name: Build dnsb Win32
+        shell: pwsh
+        run: ./build.ps1 -Project dnsb -Toolset v143 -Platform Win32
+
       - name: Report size
         shell: pwsh
         run: |
@@ -430,6 +434,20 @@ jobs:
             Win32/Release/beacon.map
             thirdparty/out/tomcrypt.x86.lib
             thirdparty/out/tommath.x86.lib
+
+      - name: Upload dnsb x86 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnsb-x86
+          path: |
+            Win32/Release/dnsb.dll
+            Win32/Release/dnsb.map
+        # 2026-11-05 DoH battle: the x86 DNS sleeve shipped the OFFICIAL
+        # dnsb.dll (our TS guard-chain drift makes the official dll
+        # fail-close right after DNS staging - live proof termdump.dmp),
+        # and only the official one exists as x86 because the CI never
+        # built our dnsb for Win32. Stage OUR x86 dnsb (guard loop closed
+        # against our own TS, settings 77-81 = DoH understood natively).
 
       - name: Load smoke (x86)
         shell: pwsh
