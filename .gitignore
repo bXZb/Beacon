@@ -5,6 +5,9 @@ ARM/
 bin/
 Debug/
 Release/
+/build/
+/out/
+CMakeUserPresets.json
 *.obj
 *.pdb
 *.map

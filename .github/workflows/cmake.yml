@@ -1,0 +1,39 @@
+name: cmake
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-msvc:
+    name: CMake MSVC x64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: List artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse build/out | Select-Object FullName, Length | Format-Table -AutoSize
+          Get-ChildItem build/out/*.dll, build/out/*.exe, build/out/*.map -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.Name) $($_.Length)" } | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-windows-x64
+          path: |
+            build/out/*.dll
+            build/out/*.exe
+            build/out/*.map
+            build/out/*.obj

@@ -1,5 +1,19 @@
 # 构建指南
 
+`cmake` 分支的权威构建是仓库根目录的 CMake 工程，由 GitHub Actions
+（`.github/workflows/cmake.yml`）在 `windows-2022` 上 `cmake -S . -B build -A x64`
+然后 `cmake --build build --config Release` 完成。CMake 直接编译 `src/`，
+不再经过 `layout_two_pass.py`。
+
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+产物在 `build/out/`：`beacon.x64.dll`、`winhttpb.x64.dll`、`dnsb.x64.dll`、
+`extc2.x64.dll`、`pivot.x64.dll`、`tests.exe`、`load_smoke.exe`。
+
 ## 快速开始
 
 ```powershell
