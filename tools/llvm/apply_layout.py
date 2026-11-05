@@ -87,8 +87,12 @@ def main():
 
     ok, n, soi = verify_layout(args.dll, args.layout)
     if not ok:
+        regions, soi2 = compute_regions(open(args.dll, "rb").read())
         print(f"layout mismatch dll={args.dll} layout={args.layout} "
               f"regions={n} soi=0x{soi:X}", file=sys.stderr)
+        for a, b in regions:
+            print(f"  dll region 0x{a:X}-0x{b:X}", file=sys.stderr)
+        print(open(args.layout, encoding="utf-8").read(), file=sys.stderr)
         return 1
     print(f"==> layout verified ({os.path.getsize(args.dll)} bytes, {n} regions)")
     return 0
