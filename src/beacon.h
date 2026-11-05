@@ -124,12 +124,19 @@ typedef struct {
 #define HOST_STRATEGY_RANDOM      1
 #define HOST_STRATEGY_EVENT       2
 
-/* settings related code */
+/* settings related code - C linkage: channel_doh.c is a C translation
+ * unit (dnsb x86/x64 link both worlds; CI 2026-11-05) */
+#ifdef __cplusplus
+extern "C" {
+#endif
 unsigned short setting_short(int field);
 unsigned int   setting_int(int field);
 char *         setting_ptr(int field);
 unsigned int   setting_len(int field);      /* strlen semantics (ASCIIZ settings) */
 unsigned int   setting_length(int field);   /* malloc'd blob size (binary TLV settings) */
+#ifdef __cplusplus
+}
+#endif
 
 /* maintenance */
 void settings_init(void * bptr);
