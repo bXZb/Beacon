@@ -233,10 +233,9 @@ function(add_beacon_dll target_name output_name sources extra_defs)
       VERBATIM)
     add_custom_target(${target_name}_layout DEPENDS "${_layout_dir}/layout.h")
 
-    add_library(${target_name}_g2 OBJECT ${_gargle})
+    add_library(${target_name}_g2 OBJECT ${_gargle} "${_layout_dir}/layout.h")
+    set_source_files_properties("${_layout_dir}/layout.h" PROPERTIES HEADER_FILE_ONLY TRUE)
     beacon_set_compile(${target_name}_g2 "${extra_defs}" "${_layout_dir}")
-    set_property(SOURCE ${_gargle} TARGET_DIRECTORY ${target_name}_g2
-      PROPERTY OBJECT_DEPENDS "${_layout_dir}/layout.h")
     add_dependencies(${target_name}_g2 ${target_name}_layout)
 
     add_library(${target_name} SHARED

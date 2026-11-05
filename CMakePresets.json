@@ -20,10 +20,7 @@
       "toolchainFile": "${sourceDir}/cmake/toolchain-clang-cl-xwin.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CLANG_CL": "$env{LLVM_CLANG}",
-        "LLD_LINK": "$env{LLVM_LLD}",
-        "XWIN_DIR": "$env{XWIN_SPLAT}"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     }
   ],

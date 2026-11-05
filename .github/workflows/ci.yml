@@ -62,8 +62,13 @@ jobs:
       - name: Configure
         run: |
           set -e
+          set -a
           source "$HOME/.llvm-cross/toolpath.env"
+          set +a
           cmake --preset llvm \
+            -DCLANG_CL="$LLVM_CLANG" \
+            -DLLD_LINK="$LLVM_LLD" \
+            -DXWIN_DIR="$XWIN_SPLAT" \
             -DBEACON_OBF=ON \
             -DLLVM_DIR="$HOME/.llvm-cross/llvm/lib/cmake/llvm"
 
@@ -106,8 +111,14 @@ jobs:
       - name: Configure
         run: |
           set -e
+          set -a
           source "$HOME/.llvm-cross/toolpath.env"
-          cmake --preset llvm -DPython3_EXECUTABLE=python
+          set +a
+          cmake --preset llvm \
+            -DCLANG_CL="$LLVM_CLANG" \
+            -DLLD_LINK="$LLVM_LLD" \
+            -DXWIN_DIR="$XWIN_SPLAT" \
+            -DPython3_EXECUTABLE=python
 
       - name: Build
         run: cmake --build --preset llvm --parallel
