@@ -238,9 +238,35 @@ function(add_beacon_dll target_name output_name sources extra_defs)
     beacon_set_compile(${target_name}_g2 "${extra_defs}" "${_layout_dir}")
     add_dependencies(${target_name}_g2 ${target_name}_layout)
 
-    add_library(${target_name} SHARED
+    add_library(${target_name}_p2 SHARED
       $<TARGET_OBJECTS:${target_name}_rest>
       $<TARGET_OBJECTS:${target_name}_g2>)
+    beacon_set_link(${target_name}_p2 "${output_name}.p2")
+    set_target_properties(${target_name}_p2 PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}"
+      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}"
+      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}")
+
+    file(MAKE_DIRECTORY "${_layout_dir}/p2")
+    add_custom_command(
+      OUTPUT "${_layout_dir}/p2/layout.h"
+      COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/llvm/apply_layout.py"
+              --write-only
+              --dll "$<TARGET_FILE:${target_name}_p2>"
+              --layout "${_layout_dir}/p2/layout.h"
+      DEPENDS ${target_name}_p2 "${CMAKE_SOURCE_DIR}/tools/llvm/apply_layout.py"
+      COMMENT "Generate layout.h pass-2 for ${target_name}"
+      VERBATIM)
+    add_custom_target(${target_name}_layout2 DEPENDS "${_layout_dir}/p2/layout.h")
+
+    add_library(${target_name}_g3 OBJECT ${_gargle} "${_layout_dir}/p2/layout.h")
+    set_source_files_properties("${_layout_dir}/p2/layout.h" PROPERTIES HEADER_FILE_ONLY TRUE)
+    beacon_set_compile(${target_name}_g3 "${extra_defs}" "${_layout_dir}/p2")
+    add_dependencies(${target_name}_g3 ${target_name}_layout2)
+
+    add_library(${target_name} SHARED
+      $<TARGET_OBJECTS:${target_name}_rest>
+      $<TARGET_OBJECTS:${target_name}_g3>)
     beacon_set_link(${target_name} "${output_name}")
 
     add_custom_command(
@@ -248,9 +274,9 @@ function(add_beacon_dll target_name output_name sources extra_defs)
       COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/llvm/apply_layout.py"
               --verify
               --dll "$<TARGET_FILE:${target_name}>"
-              --layout "${_layout_dir}/layout.h"
+              --layout "${_layout_dir}/p2/layout.h"
       COMMAND ${CMAKE_COMMAND} -E touch "${_layout_dir}/layout.verified"
-      DEPENDS ${target_name} "${_layout_dir}/layout.h"
+      DEPENDS ${target_name} "${_layout_dir}/p2/layout.h"
       COMMENT "Verify layout ${target_name}"
       VERBATIM)
     add_custom_target(${target_name}_verified ALL
