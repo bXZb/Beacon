@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Pass-2 PE layout for the LLVM CMake line.
+"""Generate or verify layout.h from a linked Windows DLL.
 
-CMake compiles and links pass 1. This script reads the DLL, writes layout.h,
-recompiles gargle TUs, relinks, and verifies. It does not compile the full
-variant.
+CMake owns compile and link. This script only parses the PE and writes
+layout.h (pass-1 DLL) or checks that a later DLL matches the table.
 """
 import argparse
 import os
 import struct
-import subprocess
 import sys
 
 LAYOUT_EXCLUDE = {
@@ -56,12 +54,9 @@ def write_layout_h(path, regions, soi):
     lines.append(f"static const unsigned long long bw_layout_reg_n = {len(regions)}ULL;")
     body = "\n".join(lines) + "\n"
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    changed = True
-    if os.path.exists(path):
-        changed = open(path, encoding="utf-8").read() != body
     with open(path, "w", encoding="utf-8") as f:
         f.write(body)
-    return changed
+    return body
 
 
 def verify_layout(dll_path, layout_h_path):
@@ -70,109 +65,32 @@ def verify_layout(dll_path, layout_h_path):
     ok = all(f"{{0x{a:X}ULL, 0x{b:X}ULL}}," in cur for a, b in regions)
     ok = ok and f"bw_layout_reg_n = {len(regions)}ULL" in cur
     ok = ok and f"BW_LAYOUT_SOI        0x{soi:06X}ULL" in cur
-    return ok
-
-
-def read_lines(path):
-    if not path:
-        return []
-    with open(path, encoding="utf-8") as f:
-        return [ln.strip() for ln in f if ln.strip()]
-
-
-def run(cmd, cwd=None):
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, errors="replace")
-    if r.returncode != 0:
-        print("FAILED:", " ".join(cmd[:12]), file=sys.stderr)
-        if r.stdout:
-            print(r.stdout[-3000:], file=sys.stderr)
-        if r.stderr:
-            print(r.stderr[-3000:], file=sys.stderr)
-        sys.exit(r.returncode)
-    return r
-
-
-def recompile_gargle(args, cflags):
-    new_objs = {}
-    objdir = os.path.join(os.path.dirname(args.layout), "gargle_obj")
-    os.makedirs(objdir, exist_ok=True)
-    for src in args.gargle:
-        base = os.path.basename(src)
-        obj = os.path.join(objdir, base + ".obj")
-        cmd = [args.cc] + cflags + ["/Fo:" + obj, "/c", src]
-        print(f"==> layout recompile {base}", flush=True)
-        run(cmd)
-        new_objs[base] = obj
-        # also match CMake's foo.cpp.obj naming
-        new_objs[base + ".obj"] = obj
-    return new_objs
-
-
-def relink(args, objs, lflags):
-    cmd = [args.link] + lflags + list(objs) + [
-        "/OUT:" + args.out,
-        "/MAP:" + args.map,
-    ]
-    print(f"==> layout relink {args.out}", flush=True)
-    run(cmd)
-
-
-def merge_objs(old_objs, gargle_map):
-    out = []
-    for o in old_objs:
-        bn = os.path.basename(o)
-        replaced = False
-        for key, newo in gargle_map.items():
-            if key in bn or bn.startswith(key):
-                out.append(newo)
-                replaced = True
-                break
-        if not replaced:
-            out.append(o)
-    return out
+    return ok, len(regions), soi
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dll", required=True)
     ap.add_argument("--layout", required=True)
-    ap.add_argument("--cc", required=True)
-    ap.add_argument("--link", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--map", required=True)
-    ap.add_argument("--objs-file", required=True)
-    ap.add_argument("--cflags-file", required=True)
-    ap.add_argument("--lflags-file", required=True)
-    ap.add_argument("--gargle", action="append", default=[])
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--write-only", action="store_true",
+                      help="write layout.h from --dll (pass-1)")
+    mode.add_argument("--verify", action="store_true",
+                      help="require --dll to match existing layout.h")
     args = ap.parse_args()
 
-    old_objs = read_lines(args.objs_file)
-    cflags = read_lines(args.cflags_file)
-    lflags = read_lines(args.lflags_file)
-    if not old_objs:
-        print("no objects in", args.objs_file, file=sys.stderr)
-        sys.exit(1)
-
-    dll_bytes = open(args.dll, "rb").read()
-    regions, soi = compute_regions(dll_bytes)
-    changed = write_layout_h(args.layout, regions, soi)
-    print(f"==> layout regions={len(regions)} soi=0x{soi:X} changed={changed}", flush=True)
-
-    def converge():
-        gmap = recompile_gargle(args, cflags)
-        objs = merge_objs(old_objs, gmap)
-        relink(args, objs, lflags)
-
-    if changed or not verify_layout(args.dll, args.layout):
-        converge()
-    if not verify_layout(args.out, args.layout):
-        regions, soi = compute_regions(open(args.out, "rb").read())
+    if args.write_only:
+        regions, soi = compute_regions(open(args.dll, "rb").read())
         write_layout_h(args.layout, regions, soi)
-        converge()
-        if not verify_layout(args.out, args.layout):
-            print("layout did not converge", file=sys.stderr)
-            sys.exit(1)
-    print(f"==> layout verified ({os.path.getsize(args.out)} bytes)")
+        print(f"==> wrote {args.layout} regions={len(regions)} soi=0x{soi:X}")
+        return 0
+
+    ok, n, soi = verify_layout(args.dll, args.layout)
+    if not ok:
+        print(f"layout mismatch dll={args.dll} layout={args.layout} "
+              f"regions={n} soi=0x{soi:X}", file=sys.stderr)
+        return 1
+    print(f"==> layout verified ({os.path.getsize(args.dll)} bytes, {n} regions)")
     return 0
 
 

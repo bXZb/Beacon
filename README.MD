@@ -14,23 +14,24 @@ I despise the behavior of certain individuals who have been shamelessly profitin
 
 ### Dependencies
 
-Prebuilt dependency libraries are **vendored in this repository** — no manual
-preparation is needed:
+Prebuilt libraries are vendored — no extra fetch for the default build:
 
-1. `lib\tomcrypt.x64.lib` / `lib\tommath.x64.lib` — prebuilt (see `lib\VERSIONS.md`;
-   headers in `tomcrypt-headers\` are **LibTomCrypt 1.17** and must be replaced
-   together with the lib)
-2. Build: VS2019/2022 (v143 toolset verified in CI; v142 is the original
-   author's fallback, see `common.props` / `docs\BUILD.md`)
-3. `.\build.ps1` — builds all four variants (beacon / dnsb / extc2 / pivot) as
-   x64 Release DLLs, with size + MAP report
-4. `.\tests\run_tests.ps1` — host-side unit tests; `tests\test_crypto.cpp`
-   is the executable spec of the C2 crypto wire format
-   (`docs\WIRE-PROTOCOL.md`)
+1. `lib/tomcrypt.x64.lib` / `lib/tommath.x64.lib` (see `lib/VERSIONS.md`;
+   headers in `tomcrypt-headers/` must match the lib)
+2. CMake 3.21+ with the `default` (MSVC x64) or `llvm` (clang-cl + xwin) preset
 
-Docs: `docs\BUILD.md` (build & toolchain), `docs\WIRE-PROTOCOL.md` (crypto wire
-spec), `docs\CONCURRENCY.md` (threading model audit), `thirdparty\README.md`
-(trimmed LibTomCrypt rebuild recipe).
+```powershell
+cmake --preset default
+cmake --build --preset default
+ctest --preset default -R host_unit
+cmake --install build --config Release --prefix dist
+```
+
+`tests/test_crypto.cpp` is the executable spec of the C2 crypto wire format
+(`docs/WIRE-PROTOCOL.md`). `tests/run_tests.ps1` only runs `build/out/tests.exe`.
+
+Docs: `docs/BUILD.md`, `docs/WIRE-PROTOCOL.md`, `docs/CONCURRENCY.md`,
+`thirdparty/README.md`.
 
 ### Purpose
 
@@ -56,20 +57,24 @@ This is dedicated to both red and blue teams.
 
 ### 依赖项
 
-预编译依赖库已随仓库提供，无需手工准备：
+预编译库已随仓库提供：
 
-1. `lib\tomcrypt.x64.lib` / `lib\tommath.x64.lib` —— 预编译库（版本与验收见
-   `lib\VERSIONS.md`；`tomcrypt-headers\` 是 **LibTomCrypt 1.17** 头，必须与
-   lib 成对替换）
-2. 构建：VS2019/2022（CI 已实证 v143 可编；v142 为原作者环境备选，
-   见 `common.props` 注释与 `docs\BUILD.md`）
-3. `.\build.ps1` —— 一键构建四个变体（beacon / dnsb / extc2 / pivot）的
-   x64 Release DLL，输出体积与 MAP
-4. `.\tests\run_tests.ps1` —— 宿主机侧测试；`tests\test_crypto.cpp` 即
-   C2 加密线缆协议的可执行规格（`docs\WIRE-PROTOCOL.md`）
+1. `lib/tomcrypt.x64.lib` / `lib/tommath.x64.lib`（见 `lib/VERSIONS.md`；
+   头文件在 `tomcrypt-headers/`，必须与 lib 成对替换）
+2. CMake 3.21+，preset `default`（MSVC x64）或 `llvm`（clang-cl + xwin）
 
-文档：`docs\BUILD.md`（构建与工具链）、`docs\WIRE-PROTOCOL.md`（加密协议规格）、
-`docs\CONCURRENCY.md`（并发模型审计）、`thirdparty\README.md`（精简重编 LTC 配方）。
+```powershell
+cmake --preset default
+cmake --build --preset default
+ctest --preset default -R host_unit
+cmake --install build --config Release --prefix dist
+```
+
+`tests/test_crypto.cpp` 是 C2 加密线缆协议的可执行规格。`tests/run_tests.ps1`
+只运行已编好的 `build/out/tests.exe`。
+
+文档：`docs/BUILD.md`、`docs/WIRE-PROTOCOL.md`、`docs/CONCURRENCY.md`、
+`thirdparty/README.md`。
 
 ### 目的
 

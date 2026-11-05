@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""layout_two_pass.py — the build driver (build.py/dump_manifest retired).
-
-Compiles a variant from its FROZEN manifest (tools/llvm/manifests/*.json
-— the sole project-definition source), links, runs the two-pass layout
-self-description loop, and verifies. Invoked by the CMake variant driver
-per variant.
+"""RETIRED. Product sources are cmake/sources.cmake.
+Layout pass-2 is tools/llvm/apply_layout.py driven from root CMake.
+This file is not a CI or CMake entry.
 
 Usage:
   layout_two_pass.py --manifest gen/manifest_last.json --repo R \

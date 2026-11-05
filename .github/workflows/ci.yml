@@ -1,0 +1,126 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  LLVM_VERSION: 19.1.7
+  XWIN_VERSION: 0.10.0
+
+jobs:
+  msvc:
+    name: msvc
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build --preset default --parallel
+
+      - name: Test
+        run: ctest --preset default --output-on-failure
+
+      - name: List artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem build/out/*.dll, build/out/*.exe, build/out/*.map, build/out/*.obj -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.Name) $($_.Length)" } | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: msvc-windows-x64
+          path: |
+            build/out/*.dll
+            build/out/*.exe
+            build/out/*.map
+            build/out/*.obj
+
+  llvm-linux:
+    name: llvm
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cross toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.llvm-cross
+          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-linux-v1
+
+      - name: Ninja
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build
+
+      - name: Setup LLVM + xwin
+        run: bash tools/llvm/setup-host.sh
+
+      - name: Configure
+        run: |
+          set -e
+          source "$HOME/.llvm-cross/toolpath.env"
+          cmake --preset llvm \
+            -DBEACON_OBF=ON \
+            -DLLVM_DIR="$HOME/.llvm-cross/llvm/lib/cmake/llvm"
+
+      - name: Build
+        run: cmake --build --preset llvm --parallel
+
+      - name: List artifacts
+        run: ls -la build-llvm/out
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-linux-x64
+          path: |
+            build-llvm/out/*.dll
+            build-llvm/out/*.map
+
+  llvm-windows:
+    name: llvm-windows
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache xwin splat
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\.llvm-cross
+          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-win-v1
+
+      - name: Setup LLVM + xwin
+        run: bash tools/llvm/setup-host.sh
+
+      - name: Ninja
+        shell: pwsh
+        run: choco install ninja -y --no-progress
+
+      - name: Configure
+        run: |
+          set -e
+          source "$HOME/.llvm-cross/toolpath.env"
+          cmake --preset llvm -DPython3_EXECUTABLE=python
+
+      - name: Build
+        run: cmake --build --preset llvm --parallel
+
+      - name: load_smoke
+        run: ctest --test-dir build-llvm --output-on-failure -R load_smoke
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-windows-x64
+          path: |
+            build-llvm/out/*.dll
+            build-llvm/out/*.exe
+            build-llvm/out/*.map
+            build-llvm/out/*.obj

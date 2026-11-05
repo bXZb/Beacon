@@ -1,9 +1,7 @@
 name: trimlib
 
-# P4.16：从源码重编精简版 LibTomCrypt/LibTomMath 并用测试套件验收。
-# 手动触发（workflow_dispatch），不占用常规 push CI。
-# 产物为 thirdparty/out 下的两个 .lib —— 验收通过后再人工决定是否替换 vendored lib。
-
+# Manual. Does not run on ordinary push. Invokes the CMake trimlib target,
+# then reconfigures tests against thirdparty/out.
 on:
   workflow_dispatch:
 
@@ -19,15 +17,17 @@ jobs:
         with:
           arch: x64
 
-      - name: Build trimmed libs
-        shell: pwsh
-        run: ./thirdparty/build_trimmed.ps1
+      - name: Configure
+        run: cmake --preset default
 
-      - name: Acceptance - CMake tests against rebuilt libs (keygen probe ON)
+      - name: trimlib
+        run: cmake --build --preset default --target trimlib
+
+      - name: Acceptance
         run: |
-          cmake -S . -B build -A x64 -DBEACON_LIB_DIR=${{ github.workspace }}/thirdparty/out -DBEACON_TEST_EXTRA_DEFS=BEACON_TEST_ENABLE_KEYGEN
-          cmake --build build --config Release --target beacon_tests
-          ctest --test-dir build -C Release --output-on-failure -R host_unit
+          cmake --preset default -DBEACON_LIB_DIR=${{ github.workspace }}/thirdparty/out -DBEACON_TEST_EXTRA_DEFS=BEACON_TEST_ENABLE_KEYGEN
+          cmake --build --preset default --target beacon_tests
+          ctest --preset default --output-on-failure -R host_unit
 
       - name: Report sizes
         shell: pwsh

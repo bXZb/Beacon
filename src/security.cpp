@@ -12,14 +12,6 @@
 #include "beacon.h"
 #include "track_memory.h"
 
-#if defined _M_X64
-#pragma comment(lib, "lib/tommath.x64.lib")
-#pragma comment(lib, "lib/tomcrypt.x64.lib")
-#elif defined _M_IX86
-#pragma comment(lib, "lib/tommath.x86.lib")
-#pragma comment(lib, "lib/tomcrypt.x86.lib")
-#endif
-
 #define TOLERANCE (60 * 60)
 
 #define CRYPTO_LICENSED_PRODUCT 0

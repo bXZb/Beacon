@@ -1,0 +1,54 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "MSVC x64",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "llvm",
+      "displayName": "clang-cl + xwin",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-llvm",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-clang-cl-xwin.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CLANG_CL": "$env{LLVM_CLANG}",
+        "LLD_LINK": "$env{LLVM_LLD}",
+        "XWIN_DIR": "$env{XWIN_SPLAT}"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "configuration": "Release"
+    },
+    {
+      "name": "llvm",
+      "configurePreset": "llvm"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "llvm",
+      "configurePreset": "llvm",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

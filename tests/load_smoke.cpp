@@ -7,11 +7,27 @@
  *   4. FreeLibrary 干净卸载，无崩溃。
  * 不含 reason-4（beacon 主循环）——那需要真实 TeamServer，超出本测试边界。
  *
- * 退出码 0 = 冒烟通过。
+ * 退出码 0 = 冒烟通过。125 = SKIP（Defender 225/226 隔离，CTest SKIP_RETURN_CODE）。
  */
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef ERROR_VIRUS_INFECTED
+#define ERROR_VIRUS_INFECTED 225
+#endif
+#ifndef ERROR_VIRUS_DELETED
+#define ERROR_VIRUS_DELETED 226
+#endif
+#define BW_SKIP_AV 125
+
+static int maybe_skip_av(DWORD err, const char * what) {
+	if (err == ERROR_VIRUS_INFECTED || err == ERROR_VIRUS_DELETED) {
+		printf("SKIP: %s blocked by AV (err %lu)\n", what, err);
+		return BW_SKIP_AV;
+	}
+	return 0;
+}
 
 /* 复制 DLL 到冒烟文件名，避免污染构建产物本体 */
 static BOOL copy_dll(const char * src, char * dst, DWORD dstlen) {
@@ -32,7 +48,9 @@ int main(int argc, char ** argv) {
 
 	char smokePath[MAX_PATH];
 	if (!copy_dll(argv[1], smokePath, sizeof(smokePath))) {
-		printf("FAIL: cannot copy dll to %s\n", smokePath);
+		int skip = maybe_skip_av(GetLastError(), "CopyFile");
+		if (skip) return skip;
+		printf("FAIL: cannot copy dll to %s (err %lu)\n", smokePath, GetLastError());
 		return 2;
 	}
 
@@ -49,7 +67,10 @@ int main(int argc, char ** argv) {
 
 	HANDLE hf = CreateFileA(smokePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hf == INVALID_HANDLE_VALUE) {
-		printf("FAIL: cannot open %s (err %lu)\n", smokePath, GetLastError());
+		DWORD err = GetLastError();
+		int skip = maybe_skip_av(err, "CreateFile");
+		if (skip) return skip;
+		printf("FAIL: cannot open %s (err %lu)\n", smokePath, err);
 		return 2;
 	}
 
@@ -81,7 +102,10 @@ int main(int argc, char ** argv) {
 	/* ---- step 2-4: 装载 → 验证导出 → 卸载 ---- */
 	HMODULE h = LoadLibraryA(smokePath);
 	if (h == NULL) {
-		printf("FAIL: LoadLibrary error %lu\n", GetLastError());
+		DWORD err = GetLastError();
+		int skip = maybe_skip_av(err, "LoadLibrary");
+		if (skip) return skip;
+		printf("FAIL: LoadLibrary error %lu\n", err);
 		return 1;
 	}
 	printf("[smoke] loaded at %p\n", (void *)h);
