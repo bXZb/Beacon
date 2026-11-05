@@ -9,8 +9,28 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-CMake 直接编译 `src/`、`udrl/`、`tests/`。不要用 `cl` 手写编译，也不要走
-`layout_two_pass.py`。
+CMake 直接编译 `src/`、`udrl/`、`tests/`。不要用 `cl` 手写编译。
+
+## LLVM 线（可选）
+
+同一份根 `CMakeLists.txt`，换 toolchain。先编 pass 插件（host 原生编译器），再交叉编产品：
+
+```bash
+bash tools/llvm/setup-host.sh
+source ~/.llvm-cross/toolpath.env
+cmake -S tools/llvm/pass -B build-pass -DLLVM_DIR="$HOME/.llvm-cross/llvm/lib/cmake/llvm" -DCMAKE_BUILD_TYPE=Release
+cmake --build build-pass
+
+cmake -S . -B build-llvm -G Ninja --toolchain cmake/toolchain-clang-cl-xwin.cmake \
+  -DCLANG_CL="$LLVM_CLANG" -DLLD_LINK="$LLVM_LLD" -DXWIN_DIR="$XWIN_SPLAT" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBEACON_OBF_PLUGIN="$PWD/build-pass/obfpasses.so"
+cmake --build build-llvm
+```
+
+产物仍在 `build-llvm/out/`，文件名与 MSVC 线相同。layout 第二遍由
+`tools/llvm/apply_layout.py` 在每个 DLL 的 POST_BUILD 里跑。CI：
+`.github/workflows/llvm-build.yml`。
 
 产物在 `build/out/`：
 
