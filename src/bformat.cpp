@@ -1,7 +1,7 @@
+#include <WinSock2.h>
 #include <Windows.h>
 #include <stdio.h>
 #include "bformat.h"
-#include <WinSock2.h>
 
 /* initialize this formatted text buffer */
 void bformat_init(formatp * buffer, int maxsz) {
