@@ -178,6 +178,7 @@ BOOL udc2_init(void) {
 		return udc2_enabled();
 
 	if (setting_int(SETTING_UDC2_LENGTH) != 1) {
+		post_error_na(96); /* bring-up probe: marker absent */
 		udc2.booted = TRUE; /* marker absent: this beacon is not UDC2 */
 		return FALSE;
 	}
@@ -190,18 +191,22 @@ BOOL udc2_init(void) {
 	objlen = *(int *)(blob + 4);
 	entry  = *(int *)(blob + 8);
 
-	if (magic != 0x32434455 /* 'UDC2' LE */ || objlen <= 0 || entry < 0)
+	if (magic != 0x32434455 /* 'UDC2' LE */ || objlen <= 0 || entry < 0) {
+		post_error_dd(97, objlen, entry);
 		return FALSE;
+	}
 
 	/* pin the block: the BOF's proxy/close live inside it and run on
 	 * every later cycle (without the pin the loader's idle-RW flip makes
 	 * each call DEP-fault into a silent abort) */
 	bof_set_pin(TRUE);
 	if (!command_inline_execute_object_parsed(blob + 12, objlen, (DWORD)entry, (char *)&udc2.info, sizeof(UDC2INFO), 0)) {
+		post_error_dd(97, objlen, entry);
 		bof_set_pin(FALSE);
 		return FALSE;
 	}
 	bof_set_pin(FALSE);
+	post_error_dd(96, objlen, entry); /* loaded OK probe */
 
 	/* loaded once per beacon lifetime: the pin claim frees the previous
 	 * block on a retry, so a second load would dangle the callbacks that
