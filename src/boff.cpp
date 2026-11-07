@@ -736,6 +736,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	xdata = data_extract(&parser);
 	pdata = data_extract(&parser);
 	relocs = data_extract(&parser);
+	boftrace("UDC2LOAD objlen=%d bss=%d code=%d rdata=%d data=%d xdata=%d pdata=%d relocs=%d entry=%d",
+		objlen, bssSize, code.length, rdata.length, data.length, xdata.length, pdata.length, relocs.length, (int)entry);
 
 	/* section layout: .data (and .bss) start on their own page so the
 	 * permission split below never leaves any page RWX. Code and rdata
@@ -747,7 +749,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	off_pdata = off_xdata + (SIZE_T)xdata.length;
 	off_bss   = (off_pdata + (SIZE_T)pdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
 	total     = off_bss + (SIZE_T)bssSize;
+	boftrace("UDC2LOAD total=%d off_rdata=%d off_data=%d", (int)total, (int)off_rdata, (int)off_data);
 	if (total == 0) {
+		boftrace("UDC2LOAD FAIL total0");
 		spawn_log("bofload fail total0", 0x7fffffff);
 		free(ftable);
 		return FALSE;
@@ -756,6 +760,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	/* the entry offset is wire-supplied and is executed as code_dst + entry -
 	 * it must land inside the code section we actually extracted */
 	if (entry >= (DWORD)code.length) {
+		boftrace("UDC2LOAD FAIL entry=%d codelen=%d", (int)entry, (int)code.length);
 		spawn_log("bofload fail entry", (long)entry);
 		post_error_d(0x4d, (int)entry);
 		free(ftable);
