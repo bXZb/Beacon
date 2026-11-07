@@ -1,3 +1,4 @@
+extern void boftrace(const char * fmt, ...);
 #include <winsock2.h>
 #include <Windows.h>
 #include <stdlib.h>
@@ -343,6 +344,11 @@ void command_data_store(char * buffer, int length, void (*callback)(char * buffe
 				memcpy(keep, blob.buffer, blob.length);
 				BeaconAddValue("udc2", keep);
 			}
+		{
+			unsigned int magic_seen = blob.length >= 4 ? *(unsigned int *)blob.buffer : 0;
+			boftrace("UDC2STORE len=%d magic=0x%08x match=%d", (int)blob.length, magic_seen, (int)(magic_seen == 0x32434455));
+		}
+
 		}
 		put_be32(out, (unsigned int)idx);
 		put_be64(out + 4, hash);
