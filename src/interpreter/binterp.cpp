@@ -528,7 +528,7 @@ static void command_interpreter_impl(char * buffer, int length, void (*callback)
 		 * RunIt=TRUE executes top-level statements during parse - append a
 		 * top-level trampoline calling go(), else clean-compiling scripts
 		 * never execute. */
-		off += _snprintf(glued + off, 64, "\ngo(args, alen);\n");
+		off += _snprintf(glued + off, 64, "\nvoid __bi_call() { go(0, 0); }\n__bi_call();\n");
 		glued[off] = '\0';
 	}
 
