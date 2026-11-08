@@ -519,11 +519,20 @@ static void command_interpreter_impl(char * buffer, int length, void (*callback)
 	if (glued == NULL)
 		return;
 	{
-		int off = _snprintf(glued, 64, "#include <__dfr.h>\n");
+		int off = _snprintf(glued, 64, "#include <__dfr.h>
+");
 		if (off < 0)
 			off = 0;
 		memcpy(glued + off, script, scriptlen);
-		glued[off + scriptlen] = '\0';
+		off += scriptlen;
+		/* official contract: Beacon invokes go(args, alen). PicocParse with
+		 * RunIt=TRUE executes top-level statements during parse - append a
+		 * top-level trampoline calling go(), else clean-compiling scripts
+		 * never execute. */
+		off += _snprintf(glued + off, 64, "
+go(args, alen);
+");
+		glued[off] = ' ';
 	}
 
 	PicocInitialize(&pc, BI_VM_STACK);
