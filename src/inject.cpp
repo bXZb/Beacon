@@ -110,6 +110,22 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 					return TRUE;
 				break;
 #endif
+			/* 4.12 SafeBreach threadpool family + Outflank EarlyCascade:
+			 * scaffolds - see inject.h; decline so the chain falls through */
+#if defined _M_X64
+			case PI_EXEC_TPDIRECT:
+				if (inject_via_tpdirect(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+			case PI_EXEC_TPSTARTROUTINESTUB:
+				if (inject_via_tpstart_routine_stub(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+			case PI_EXEC_EARLYCASCADE:
+				if (context->isSuspended && inject_via_earlycascade(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+#endif
 			/* try NtQueueApcThread against a suspended process */
 			case PI_EXEC_NTQUEUEAPCTHREAD_S:
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))
