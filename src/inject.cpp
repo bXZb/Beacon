@@ -227,11 +227,14 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	int           field = 0;
 	INJECTCONTEXT context;
 
+	spawn_log("ipl: entry len=", (long)length);
 	/* populate our context to avoid the need for other functions to figure out the same crap */
 	populate_inject_context(&context, pi, hProcess, pid);
+	spawn_log("ipl: ctx populated sameArch=", (long)context.sameArch);
 
 	/* if we're a smart inject DLL, act on it */
 	SetupSmartInject(&context, buffer, length);
+	spawn_log("ipl: post-smartinject", 0x7fffffff);
 
 	/* figure out which transform we want to apply. I know this is ugly */
 	if (context.targetArch == INJECT_ARCH_X64)
@@ -246,14 +249,18 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	appendl = data_int(&parser);
 	append = data_ptr(&parser, appendl);
 
+	spawn_log("ipl: transforms pre=", (long)prependl);
+	spawn_log("ipl: transforms app=", (long)appendl);
 	/* handle copying our parameter to the remote process, please */
 	if (plen > 0)
 		rparameter = remote_mirror_data(&context, (char *)parameter, plen);
 	else
 		rparameter = NULL;
+	spawn_log("ipl: rparam=", (long)(long long)(size_t)rparameter);
 
 	/* easiest case, nothing needs to happen. Pass the data on as needed */
 	if (prependl == 0 && appendl == 0) {
+		spawn_log("ipl: calling __inj plain", 0x7fffffff);
 		__inject_process_logic(&context, buffer, length, offset, rparameter);
 		return;
 	}
@@ -266,6 +273,7 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	offset += prependl;
 
 	/* kick off our process inject call */
+	spawn_log("ipl: calling __inj transformed", 0x7fffffff);
 	__inject_process_logic(&context, bformat_string(&tbuffer), bformat_length(&tbuffer), offset, rparameter);
 
 	/* free everything */

@@ -425,11 +425,14 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 		token_guard_stop_maybe(TRUE);
 		return;
 	}
+	spawn_log("jsu: patsy up pid=", (long)pi.dwProcessId);
 
 	/* timing shim (required on Win7 or CreateRemoteThread fails with error 8) */
 	Sleep(100);
+	spawn_log("jsu: post-shim, calling ipl len=", (long)dllen);
 
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, dll, dllen, 0, parameter, plen);
+	spawn_log("jsu: ipl returned", 0x7fffffff);
 
 	token_guard_stop_maybe(TRUE);
 
