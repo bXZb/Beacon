@@ -290,6 +290,11 @@ endfunction()
 
 add_beacon_dll(beacon_wininet beacon.x64 BEACON_WININET_SOURCES "BW_LOADER_PRIVATE;BEACON_TIER3")
 add_beacon_dll(beacon_winhttp winhttpb.x64 BEACON_WINHTTP_SOURCES "BW_LOADER_PRIVATE;BEACON_TIER3")
+# bofwin variant: same wininet beacon with the BOF window compiled in
+# (BOFWIN_ENABLE) - this is the build the sleeve beacon.x64.rl0k slot
+# carries (MSVC build.yml's BeaconBofWin=true job). Output name matches
+# the slot so the llvm-linux artifact drops beacon.x64.rl0k.dll.
+add_beacon_dll(beacon_wininet_bofwin beacon.x64.rl0k BEACON_WININET_SOURCES "BW_LOADER_PRIVATE;BEACON_TIER3;BOFWIN_ENABLE")
 add_beacon_dll(dnsb           dnsb.x64     DNSB_SOURCES          "BOFWIN_DISABLE")
 add_beacon_dll(extc2          extc2.x64    EXTC2_SOURCES         "BOFWIN_DISABLE")
 add_beacon_dll(pivot          pivot.x64    PIVOT_SOURCES         "BOFWIN_DISABLE")
@@ -383,7 +388,7 @@ add_custom_target(trimlib-test
   VERBATIM)
 
 install(TARGETS
-  beacon_wininet beacon_winhttp dnsb extc2 pivot
+  beacon_wininet beacon_winhttp beacon_wininet_bofwin dnsb extc2 pivot
   beacon_tests load_smoke host_template
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION bin
