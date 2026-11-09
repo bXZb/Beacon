@@ -81,28 +81,31 @@ set(LLD_LINK "${LLD_LINK}" CACHE FILEPATH "lld-link (LLVM line)")
 set(LLVM_DIR "${LLVM_DIR}" CACHE PATH "LLVM CMake package dir for BEACON_OBF")
 
 add_library(tomcrypt STATIC IMPORTED GLOBAL)
-set_target_properties(tomcrypt PROPERTIES
-  IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/lib/tomcrypt.x64.lib"
-  INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/tomcrypt-headers")
 add_library(tommath STATIC IMPORTED GLOBAL)
-set_target_properties(tommath PROPERTIES
-  IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/lib/tommath.x64.lib")
-if(NOT EXISTS "${CMAKE_SOURCE_DIR}/lib/tomcrypt.x64.lib" OR
-   NOT EXISTS "${CMAKE_SOURCE_DIR}/lib/tommath.x64.lib")
-  message(FATAL_ERROR "Vendored libs missing under lib/")
-endif()
-
 add_library(tomcrypt_test STATIC IMPORTED GLOBAL)
-set_target_properties(tomcrypt_test PROPERTIES
-  IMPORTED_LOCATION "${BEACON_LIB_DIR}/tomcrypt.x64.lib"
-  INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/tomcrypt-headers")
 add_library(tommath_test STATIC IMPORTED GLOBAL)
-set_target_properties(tommath_test PROPERTIES
-  IMPORTED_LOCATION "${BEACON_LIB_DIR}/tommath.x64.lib")
+# Stage the vendored static libs INTO the binary dir and point every
+# IMPORTED_LOCATION there: link lines are then resolved against the build
+# tree regardless of the path form a given generator emits (2026-11-09:
+# the merge-head tree made lld-link/MSBuild see a source-relative
+# 'lib/tomcrypt.x64.lib' from the build cwd - unresolvable).
 if(NOT EXISTS "${BEACON_LIB_DIR}/tomcrypt.x64.lib" OR
    NOT EXISTS "${BEACON_LIB_DIR}/tommath.x64.lib")
-  message(FATAL_ERROR "Test libs missing under BEACON_LIB_DIR=${BEACON_LIB_DIR}")
+  message(FATAL_ERROR "Vendored libs missing under BEACON_LIB_DIR=${BEACON_LIB_DIR}")
 endif()
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+file(COPY "${BEACON_LIB_DIR}/tomcrypt.x64.lib" "${BEACON_LIB_DIR}/tommath.x64.lib"
+     DESTINATION "${CMAKE_BINARY_DIR}/lib")
+set_target_properties(tomcrypt PROPERTIES
+  IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/lib/tomcrypt.x64.lib"
+  INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/tomcrypt-headers")
+set_target_properties(tommath PROPERTIES
+  IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/lib/tommath.x64.lib")
+set_target_properties(tomcrypt_test PROPERTIES
+  IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/lib/tomcrypt.x64.lib"
+  INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/tomcrypt-headers")
+set_target_properties(tommath_test PROPERTIES
+  IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/lib/tommath.x64.lib")
 
 set(_obf_plugin "")
 if(BEACON_OBF)

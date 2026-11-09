@@ -6,6 +6,7 @@ set(BEACON_WININET_SOURCES
   src/beacon.cpp
   src/bformat.cpp
   src/boff.cpp
+  src/sleepmask_bofwin.cpp
   src/bw_heap.cpp
   src/build.cpp
   src/callback.cpp
