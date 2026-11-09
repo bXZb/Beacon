@@ -1042,3 +1042,38 @@ kernel32$Func` 是官方 BOF 动态导入形态，与 bapi 白名单
 
 HEAD 624d00b；CI 38277204534/38278106418/38280254724 全绿；
 TS 复位 r2_nosm。**Phase 3 全部遗留清零。**
+
+## Phase 5 行为降敏（2026-11-09 设计定稿）
+
+三个残余缺口的现状核算（对照 cs-evasion-kit-research 的三缺口清单）：
+
+1. **权限翻转遥测 —— 睡眠线已免翻转，剩余两处**：
+   - gen3 睡眠窗（主线）：**已经免翻转**——g3_snapshot_blocks 只收 RW/WC 页，
+     .text 显式排除，全程无 VirtualProtect（本仓库 Gen3 哲学：不翻转 =
+     传感器无信号；.text 以 obf/YARA-loss 路线处理，不靠掩码）。
+   - 剩余面 A：**BOFWIN 窗口**（BOF 期掩蔽）在 sf032 掩 .text 前后做
+     RW→RX 翻转（sleepmask_bofwin.cpp BW_CTX 记录 text_prot + 恢复）。
+   - 剩余面 B：**官方 sleepmask BOF 回退路径**（gen3 失败时）同样翻 .text。
+2. **BOF 期裸露 —— 已由 BOFWIN 解决**（零导入 BOF 全镜像掩蔽，2026-10-13
+   过线）；混合导入 BOF 分流掩蔽数据块（P3 收官矩阵）。
+3. **内核 ETW callstack —— 传感器侧，beacon 只能降敏不能消除**（调用栈
+   欺骗已在 gen3/v3 线；hw-call-stack 为后续素材）。
+
+### 免翻转候选机制评估（针对剩余面 A/B）
+
+- **A. 数据-only 窗口**：BOFWIN 排除 .text 只掩数据块 → 免翻转但放弃 BOF 期
+  .text 掩蔽（覆盖率回退）。仅当 .text 掩蔽价值 < 翻转遥测价值时选。
+- **B. 双映射别名（MemoryBouncing 字面形）**：NtCreateSection+双视图
+  （RW 工作视图/RX 执行视图）。**判死：伪装**——掩码副本不能保护原始映像
+  在睡眠期的明文；对原始页双映射需物理内存节（见 C）。
+- **C. MemNT 式 PTE 直改**（\Device\PhysicalMemory 或物理节视图改 PTE 的
+  RW/NX 位）：唯一对**原始页**免翻转（无 VirtualProtect 系统调用）的机制。
+  代价：物理内存访问本身是高显性特权动作（EDR 另一层信号面）+ 随内核
+  版本维护 PTE 布局。研究级。
+- **D. 维持现状 + 窗口收敛**：翻转已被 gate-stub 三段窗包裹，时序上与
+  stub 执行混流；降敏而非消除。
+
+**结论与排期**：主线维持 D（翻转面=2 处、均在窗口内）；C 为唯一真免翻转
+路线，挂研究线（用 REA/idalib 对本机 ntdll/内核 PTE 布局先做可行性 PoC，
+再决定是否实现）；A 仅作为 BOFWIN 的可配置降级档（profile 旋钮，不默认）。
+内核 ETW callstack 线：等 hw-call-stack（fortra ★204）实测素材。

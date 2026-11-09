@@ -560,3 +560,51 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 #endif
 }
 
+
+/* ===================== 4.12 injection overhaul scaffolds =====================
+ * Contracts extracted 2026-11-09 from the primary research (full mechanics in
+ * the repo's docs/INJECTION-412.md; see also ts docs/OFFICIAL-COMPAT-LEDGER
+ * C-17). These slots exist so the profile-facing execute chain and the TS
+ * opcode packing (ProcessInject.java 11/12/13) are complete; each body is an
+ * availability-gated DECLINE until its research-grade core is implemented:
+ *
+ *   PI_EXEC_TPDIRECT (0xB) - SafeBreach "Process Injection Using Windows
+ *     Thread Pools" variant 7: forge a TP_DIRECT whose Callback points at
+ *     the payload and queue it onto the target pool's I/O completion port
+ *     with NtSetIoCompletion. Needs: TP_POOL->IOCP handle leak via
+ *     NtQueryInformationWorkerFactory + undocumented TP_DIRECT offsets.
+ *
+ *   PI_EXEC_TPSTARTROUTINESTUB (0xC) - same research, worker start-routine
+ *     stub: the spawned worker's start address resolves to a legitimate
+ *     ntdll threadpool entry while a crafted work structure dispatches to
+ *     the payload. Needs: Tpp* entry resolution + work-struct layout.
+ *
+ *   PI_EXEC_EARLYCASCADE (0xD) - Outflank EarlyCascade: in a
+ *     CREATE_SUSPENDED child, overwrite ntdll's g_pfnSE_DllLoaded (.mrdata,
+ *     writable only while suspended) with a stub + set g_ShimsEnabled=1;
+ *     the stub zeroes the flag and NtQueueApcThread's the payload onto the
+ *     initial thread so NtTestAlert drains it at the end of
+ *     LdrInitializeThunk. Needs: per-build signature scan for the two
+ *     ntdll globals (derive from LdrpSendPostSnapNotifications disasm) and
+ *     a position-independent stub. Fork&run only (enforced at dispatch).
+ */
+
+#if defined(_M_X64)
+BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+	(void)context; (void)lpStartAddress; (void)lpParameter;
+	spawn_log("tpdirect: scaffold decline (research pending)", 0x7fffffff);
+	return FALSE;
+}
+
+BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+	(void)context; (void)lpStartAddress; (void)lpParameter;
+	spawn_log("tpstartstub: scaffold decline (research pending)", 0x7fffffff);
+	return FALSE;
+}
+
+BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+	(void)context; (void)lpStartAddress; (void)lpParameter;
+	spawn_log("earlycascade: scaffold decline (research pending)", 0x7fffffff);
+	return FALSE;
+}
+#endif

