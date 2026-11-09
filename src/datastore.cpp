@@ -344,6 +344,7 @@ void command_data_store(char * buffer, int length, void (*callback)(char * buffe
 				BeaconAddValue("udc2", keep);
 			}
 		}
+		post_error_dd(98, (int)blob.length, blob.length >= 4 ? (int)(*(unsigned int *)blob.buffer) : 0); /* UDC2STORE probe */
 		put_be32(out, (unsigned int)idx);
 		put_be64(out + 4, hash);
 		callback(out, 12, CALLBACK_DATA_STORE_ADD);

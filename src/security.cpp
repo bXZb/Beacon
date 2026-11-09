@@ -10,7 +10,16 @@
 #include "parse.h"
 #include "commands.h" /* safe_exit */
 #include "beacon.h"
+#include "spawn_trace.h"
 #include "track_memory.h"
+
+#if defined _M_X64
+#pragma comment(lib, "lib/tommath.x64.lib")
+#pragma comment(lib, "lib/tomcrypt.x64.lib")
+#elif defined _M_IX86
+#pragma comment(lib, "lib/tommath.x86.lib")
+#pragma comment(lib, "lib/tomcrypt.x86.lib")
+#endif
 
 #define TOLERANCE (60 * 60)
 
@@ -35,6 +44,8 @@ static unsigned int lastcounter = 0;
 
 /* decrypt the specified stuff */
 int security_decrypt(char * ciphertext, int length) {
+	spawn_log("secdec len=", length);
+	if (ciphertext == NULL) spawn_log("secdec CT-NULL", 0x7fffffff);
 	int check;
 	char * plaintext;
 	char unsigned hmac_bytes[HMAC_SIZE];

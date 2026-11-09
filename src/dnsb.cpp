@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "security.h"
 #include "beacon.h"
+#include "spawn_trace.h"
 #include "strategy.h"
 #include "link.h"
 #include "build.h"
@@ -199,6 +200,7 @@ void beacon(LPVOID lpReserved) {
 
 				/* this is a timely place to decrypt and verify the payload before processing it */
 				if (length > 0) {
+					spawn_log("dnsb len=", length);
 					/* decrypt the buffer */
 					length = security_decrypt(buffer, length);
 					if (length > 0) {
@@ -234,6 +236,10 @@ void beacon(LPVOID lpReserved) {
 
 		/* check the kill date (again) */
 		if (check_kill_date())
+			safe_exit();
+
+		/* exit task arrived this cycle: terminate before sleeping */
+		if (beacon_dying)
 			safe_exit();
 
 		/* check for max retry strategy, adjust sleep_time if threshold is met. */

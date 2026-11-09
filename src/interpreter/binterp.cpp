@@ -523,7 +523,13 @@ static void command_interpreter_impl(char * buffer, int length, void (*callback)
 		if (off < 0)
 			off = 0;
 		memcpy(glued + off, script, scriptlen);
-		glued[off + scriptlen] = '\0';
+		off += scriptlen;
+		/* official contract: Beacon invokes go(args, alen). PicocParse with
+		 * RunIt=TRUE executes top-level statements during parse - append a
+		 * top-level trampoline calling go(), else clean-compiling scripts
+		 * never execute. */
+		off += _snprintf(glued + off, 64, "\nvoid __bi_call() { go(0, 0); }\n__bi_call();\n");
+		glued[off] = '\0';
 	}
 
 	PicocInitialize(&pc, BI_VM_STACK);

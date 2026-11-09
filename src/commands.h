@@ -61,6 +61,11 @@
 void command_blockdlls(char * buffer, int length);
 void command_die(void(*cb)(char * buffer, int length, int type));
 void command_sleep(char * buffer, int length);
+
+/* exit-task state: command_die sets this; the main loops check it and
+ * call safe_exit(). Never overload sleep_time for this - sleep 0 is a
+ * legal interactive value the operator can set any time. */
+extern BOOL beacon_dying;
 void command_inject(char * buffer, int length, BOOL x86, BOOL ignoreToken);
 void command_inject_ping(char * buffer, int length, BOOL x86, void (*cb)(char * buffer, int length, int type));
 void command_inject_pid(char * buffer, int length, BOOL x86);

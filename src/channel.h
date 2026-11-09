@@ -12,11 +12,19 @@ int http_get(char * url, void * cookie, char* buffer, int max);
 BOOL channel_lookup(char * domain, unsigned int * result);
 
 /* DNS-over-HTTPS transport (4.11 DoH beacon): same record semantics as the
- * DnsQuery consumers, carrier swapped for application/dns-message POSTs */
+ * DnsQuery consumers, carrier swapped for application/dns-message POSTs.
+ * channel_doh.c is C: without extern "C" the C++ TUs (channel_tcp.cpp)
+ * mangle these and the x86/x64 dnsb link fails (CI 2026-11-05). */
+#ifdef __cplusplus
+extern "C" {
+#endif
 BOOL doh_enabled(void);
 unsigned int doh_lookup_a(char * domain);
 int doh_lookup_aaaa(char * domain, char * out16);
 int doh_lookup_txt(char * domain, char * buffer, int max);
+#ifdef __cplusplus
+}
+#endif
 unsigned int channel_lookup_retry(char * domain, int retry);
 
 u_long channel_localip();

