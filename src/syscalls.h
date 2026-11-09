@@ -27,3 +27,67 @@ BOOL   beacon_CloseHandle(HANDLE h);
 BOOL   beacon_ReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD got, LPOVERLAPPED ov);
 BOOL   beacon_WriteFile(HANDLE h, LPCVOID buf, DWORD toWrite, LPDWORD wrote, LPOVERLAPPED ov);
 HANDLE beacon_CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disp, DWORD flags, HANDLE tmpl);
+
+/* ---- 4.11 BeaconGetSyscallInformation surface (arsenal-kit 20251100
+ * beacon.h layout, frozen order): a BY-COPY table BOFs consume from their
+ * own memory - the 4.11 breaking change that replaced pointer handoff. */
+typedef struct {
+	PVOID fnAddr;   /* live ntdll Nt* function address */
+	PVOID jmpAddr;  /* syscall;ret gadget for indirect calls (or NULL) */
+	DWORD sysnum;   /* SSN for direct calls */
+} BEACON_SC_ENTRY;
+
+typedef struct {
+	BEACON_SC_ENTRY ntAllocateVirtualMemory;
+	BEACON_SC_ENTRY ntProtectVirtualMemory;
+	BEACON_SC_ENTRY ntFreeVirtualMemory;
+	BEACON_SC_ENTRY ntGetContextThread;
+	BEACON_SC_ENTRY ntSetContextThread;
+	BEACON_SC_ENTRY ntResumeThread;
+	BEACON_SC_ENTRY ntCreateThreadEx;
+	BEACON_SC_ENTRY ntOpenProcess;
+	BEACON_SC_ENTRY ntOpenThread;
+	BEACON_SC_ENTRY ntClose;
+	BEACON_SC_ENTRY ntCreateSection;
+	BEACON_SC_ENTRY ntMapViewOfSection;
+	BEACON_SC_ENTRY ntUnmapViewOfSection;
+	BEACON_SC_ENTRY ntQueryVirtualMemory;
+	BEACON_SC_ENTRY ntDuplicateObject;
+	BEACON_SC_ENTRY ntReadVirtualMemory;
+	BEACON_SC_ENTRY ntWriteVirtualMemory;
+	BEACON_SC_ENTRY ntReadFile;
+	BEACON_SC_ENTRY ntWriteFile;
+	BEACON_SC_ENTRY ntCreateFile;
+	BEACON_SC_ENTRY ntQueueApcThread;
+	BEACON_SC_ENTRY ntCreateProcess;
+	BEACON_SC_ENTRY ntOpenProcessToken;
+	BEACON_SC_ENTRY ntTestAlert;
+	BEACON_SC_ENTRY ntSuspendProcess;
+	BEACON_SC_ENTRY ntResumeProcess;
+	BEACON_SC_ENTRY ntQuerySystemInformation;
+	BEACON_SC_ENTRY ntQueryDirectoryFile;
+	BEACON_SC_ENTRY ntSetInformationProcess;
+	BEACON_SC_ENTRY ntSetInformationThread;
+	BEACON_SC_ENTRY ntQueryInformationProcess;
+	BEACON_SC_ENTRY ntQueryInformationThread;
+	BEACON_SC_ENTRY ntOpenSection;
+	BEACON_SC_ENTRY ntAdjustPrivilegesToken;
+	BEACON_SC_ENTRY ntDeviceIoControlFile;
+	BEACON_SC_ENTRY ntWaitForMultipleObjects;
+} BEACON_SYSCALL_API;
+
+typedef struct {
+	PVOID rtlDosPathNameToNtPathNameUWithStatusAddr;
+	PVOID rtlFreeHeapAddr;
+	PVOID rtlGetProcessHeapAddr;
+} BEACON_RTL_API;
+
+typedef struct {
+	BEACON_SYSCALL_API syscalls;
+	BEACON_RTL_API     rtls;
+} BEACON_SYSCALLS, *PBEACON_SYSCALLS;
+
+/* Fill the caller's copy (size-checked, official semantics). Entries the
+ * beacon's own resolver covers come from the live table; the remaining
+ * official slots are resolved on demand straight off ntdll. x86: FALSE. */
+BOOL syscalls_fill_beacon_syscalls(PBEACON_SYSCALLS info, SIZE_T infoSize, BOOL resolveIfNotInitialized);
