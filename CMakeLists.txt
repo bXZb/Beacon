@@ -314,7 +314,7 @@ add_executable(beacon_tests
   tests/test_crypto.cpp
   tests/test_miniprintf.cpp
   tests/test_keygen.cpp
-  tests/merge_shims.c
+  tests/merge_shims.cpp
   src/parse.cpp
   src/bformat.cpp
   src/settings.cpp

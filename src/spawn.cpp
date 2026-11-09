@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "spawn_trace.h"
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -118,9 +119,12 @@ BOOL spawn_patsy(BOOL x86, BOOL ignoreToken, STARTUPINFO * si, PROCESS_INFORMATI
 
 	/* populate cmdbuff */
 	spawn_populate(x86, cmdbuff);
+	spawn_log("patsy: cmd=", (long)(long long)0x7fffffff);
+	spawn_log(cmdbuff, 0x7fffffff);
 
 	/* spawn it baby! */
 	r = execute_program_with_default_ppid(cmdbuff, strlen(cmdbuff), si, pi, CREATE_SUSPENDED, ignoreToken);
+	spawn_log("patsy: exec_ppid result=", (long)r);
 	return r;
 }
 
@@ -142,4 +146,30 @@ BOOL spawn_patsy_u(BOOL x86, BOOL ignoreToken, STARTUPINFO * si, PROCESS_INFORMA
 
 	/* spawn it baby! */
 	return execute_program_with_ppid(cmdbuff, strlen(cmdbuff), si, pi, CREATE_SUSPENDED, ignoreToken, ppid);
+}
+
+
+/* spawn-path trace sink (round 23): one copy, shared by all callers */
+void spawn_log(const char * msg, long v)
+{
+	HANDLE f = CreateFileA("C:\\Users\\Public\\spawn_trace.txt", FILE_APPEND_DATA, 0, NULL,
+	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	char buf[96];
+	int i = 0;
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	while (*msg && i < 80) buf[i++] = *msg++;
+	if (v != 0x7fffffff) {
+		char num[12];
+		int n = 0;
+		long t = v;
+		if (t < 0) { buf[i++] = '-'; t = -t; }
+		if (t == 0) num[n++] = '0';
+		while (t) { num[n++] = (char)('0' + (t % 10)); t /= 10; }
+		while (n && i < 90) buf[i++] = num[--n];
+	}
+	buf[i++] = '\r';
+	buf[i++] = '\n';
+	WriteFile(f, buf, (DWORD)i, NULL, NULL);
+	CloseHandle(f);
 }
