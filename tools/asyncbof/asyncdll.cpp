@@ -458,7 +458,11 @@ static void run_async(LPVOID raw) {
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	switch (dwReason) {
 		case DLL_PROCESS_ATTACH:
+			eclog("st: PROCESS_ATTACH enter
+");
 			DisableThreadLibraryCalls(hinstDLL);
+			eclog("st: PROCESS_ATTACH ok
+");
 			return TRUE;
 		case DLL_POSTEX_ATTACH: {
 			eclog("st: postex-attach enter\n");
