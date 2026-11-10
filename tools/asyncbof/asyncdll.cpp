@@ -30,6 +30,7 @@
 /* kit-contract markers (client patches both) */
 volatile const char gPipeName[] = "\\\\.\\pipe\\POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE";
 volatile char gPostexArgumentsBuffer[20] = "_POSTEX_ARGUMENTS_";
+volatile char gUserArgs[256] = "__POSTEX_USER_ARGS__";
 
 typedef struct {
 	int  exitFunc;
@@ -405,13 +406,17 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 static HANDLE g_ctrl = INVALID_HANDLE_VALUE;
 
 static void run_async(LPVOID raw) {
+	/* C-19 root cause: the postex loader hands lpReserved = LOADER BASE;
+ 	 * the real args live in the __POSTEX_USER_ARGS__ buffer patched
+ 	 * in-place by ExecuteDllJob.fix (256B cap). Same contract as the kit.
+ 	 */
 	POSTEX_ARGUMENTS * pa = (POSTEX_ARGUMENTS *)gPostexArgumentsBuffer;
 	int blobLen = pa->userArgumentBufferSize;
 	DATAP d;
 	int runOnce, tl = 0, pl = 0, bl = 0;
 	char * pipeName, * bof;
 
-	d.b = (char *)raw;
+	d.b = (char *)gUserArgs;
 	d.n = blobLen > 0 ? blobLen : 0x100000;
 	runOnce = dp_int(&d);
 	dp_int(&d); /* allocType (unused) */
