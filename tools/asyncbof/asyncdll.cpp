@@ -419,11 +419,9 @@ static void run_async(LPVOID raw) {
 	dp_lenstr(&d, &tl); /* threadStart (unused) */
 	pipeName = dp_lenstr(&d, &pl);
 	bof = dp_lenstr(&d, &bl);
-	eclog("st: run_async parsed args
-");
+	eclog("st: run_async parsed args\n");
 	if (!pipeName || pl <= 1 || !bof) {
-		eclog("st: ARG PARSE FAILED
-");
+		eclog("st: ARG PARSE FAILED\n");
 		return;
 	}
 
@@ -432,16 +430,12 @@ static void run_async(LPVOID raw) {
 		memcpy(pn, pipeName, pl);
 		pn[pl - 1] = 0;
 		g_outLen = 0;
-		eclog("st: run_bof enter
-");
+		eclog("st: run_bof enter\n");
 		run_bof(bof, bl);
-		eclog("st: run_bof returned
-");
-		eclog("st: flush_output enter
-");
+		eclog("st: run_bof returned\n");
+		eclog("st: flush_output enter\n");
 		flush_output_pipe(pn);
-		eclog("st: flush_output returned
-");
+		eclog("st: flush_output returned\n");
 		HeapFree(GetProcessHeap(), 0, pn);
 	}
 
@@ -467,8 +461,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			DisableThreadLibraryCalls(hinstDLL);
 			return TRUE;
 		case DLL_POSTEX_ATTACH: {
-			eclog("st: postex-attach enter
-");
+			eclog("st: postex-attach enter\n");
 			/* control pipe server on the client-patched name; Beacon's
 			 * bundled job registration connects within seconds */
 			HANDLE h;
@@ -477,26 +470,21 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			                     PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, 1,
 			                     1024 * 1024, 1024 * 1024, 0, NULL);
 			if (h == INVALID_HANDLE_VALUE) {
-			eclog("st: CreateNamedPipeA(control) FAILED
-");
+			eclog("st: CreateNamedPipeA(control) FAILED\n");
 			return FALSE;
 		}
-			eclog("st: control pipe server up
-");
+			eclog("st: control pipe server up\n");
 			for (tries = 0; tries < 15; tries++) {
 				BOOL c = ConnectNamedPipe(h, NULL);
 				if (c || GetLastError() == ERROR_PIPE_CONNECTED) break;
 				Sleep(1000);
 			}
 			if (tries >= 15) { CloseHandle(h); return FALSE; }
-			eclog("st: control client connected
-");
+			eclog("st: control client connected\n");
 			g_ctrl = h;
-			eclog("st: run_async enter
-");
+			eclog("st: run_async enter\n");
 			run_async(lpReserved);
-			eclog("st: run_async returned
-");
+			eclog("st: run_async returned\n");
 			FlushFileBuffers(h);
 			DisconnectNamedPipe(h);
 			CloseHandle(h);
