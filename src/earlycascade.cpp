@@ -78,8 +78,7 @@ static BOOL ec_locate(EC_TARGETS * out)
 		}
 		if (out->pfnSE_DllLoaded == NULL)
 			return FALSE;
-	if (out->pfnSE_DllLoaded == NULL)
-		return FALSE;
+	}
 
 	/* anchor B (strict): within +/- 0x400 of anchor A's site, a
 	 * 44 38 3D (cmp byte [rip+X], r15b) whose target is a .data byte
