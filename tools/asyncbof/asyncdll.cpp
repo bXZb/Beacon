@@ -461,6 +461,17 @@ static void run_async(LPVOID raw) {
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
+	{
+		HANDLE f = CreateFileA("C:\Users\Public\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
+		                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (f != INVALID_HANDLE_VALUE) {
+			char b2[64];
+			int n2 = _snprintf(b2, 63, "st: DllMain reason=%lu
+", dwReason);
+			WriteFile(f, b2, n2, NULL, NULL);
+			CloseHandle(f);
+		}
+	}
 	switch (dwReason) {
 		case DLL_PROCESS_ATTACH:
 			eclog("st: PROCESS_ATTACH enter\n");
