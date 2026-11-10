@@ -154,6 +154,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "bof_download build failed" }
           Get-Item tests\_build\bof_download.x64.o | Select-Object Name,Length
 
+      # campaign ② (C-19 residual): self-built async-execute postex DLL -
+      # kit-template contract, our own packed-args protocol (once/bg)
+      - name: Compile async-execute DLL (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          & cl /nologo /W3 /O1 /MT /LD /GS- /DWIN32_LEAN_AND_MEAN tools\asyncbof\asyncdll.cpp /Fe:tests\_build\asyncdll.x64.dll /link /NOLOGO /MACHINE:X64 /SUBSYSTEM:WINDOWS
+          if ($LASTEXITCODE -ne 0) { throw "asyncdll build failed" }
+          Get-Item tests\_build\asyncdll.x64.dll | Select-Object Name,Length
+
+      - name: Upload async-execute DLL (beacon only)
+        if: matrix.project == 'beacon'
+        uses: actions/upload-artifact@v4
+        with:
+          name: asyncdll-x64
+          path: tests\_build\asyncdll.x64.dll
+
       - name: Report size
         shell: pwsh
         run: |
