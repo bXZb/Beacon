@@ -61,10 +61,7 @@
            variant (BeaconBofWin=true) compiles it into beacon.x64.rl0k.dll. -->
       <ExcludedFromBuild Condition="'$(BeaconBofWin)'!='true'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\earlycascade.cpp">
-      <!-- x64-only technique; rides the rl0k variant with the bofwin engine -->
-      <ExcludedFromBuild Condition="'$(BeaconBofWin)'!='true'">true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Condition="'$(Platform)'=='x64'" Include="src\earlycascade.cpp" />
     <ClCompile Include="src\hotbeef.cpp" />
     <ClCompile Include="src\inject.cpp" />
     <ClCompile Include="src\inject_apcthread.cpp" />
