@@ -49,7 +49,13 @@ IO 完成端口 → 工作线程以"完全合法的完成动作"执行 payload�
    payload → NtContinue 交棒入口点
 
 约束：仅 CREATE_SUSPENDED（.mrdata 窗口）；stub 只能用 ntdll NTAPI（不能
-加载 DLL/建线程）；`g_pfnSE_DllLoaded` 无符号，随 Windows 版本漂移 → 需
+加载 DLL/建线程）；`g_pfnSE_DllLoaded` 无符号，随 Windows 版本漂移 → **签名扫描已 PoC（2026-11-10，tools/earlycascade_scan.py，
+feat 40d4825）**：锚簇=SharedUserData+0x330 cookie 装载+mov eax,40h+mov rdi,[rip+X]
+（唯一命中 g_pfnSE_DllLoaded）；g_ShimsEnabled 严格判别=同函数内 cmp[jne→解码块]
+形状（区分兄弟变量 g_ShimsLoading）；Win10 19044 实测双全局精确命中（0x181268 .mrdata /
+0x16d194 .data）。**KCFG 关键发现**：该构建 g_pfnSE_DllLoaded 存储 KCFG cookie 编码值
+（读取侧 ror+xor 解码），写桩必须写编码形态：stored = rol64(ptr ^ cookie, 64-(cookie&63))
+（往返已证）。
 对本地 ntdll `LdrpSendPostSnapNotifications` 反汇编推导签名扫描。
 
 ## 相对 Early Bird APC / EDR-Preloading 的差异
