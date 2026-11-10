@@ -61,7 +61,10 @@ static BOOL ec_locate(EC_TARGETS * out)
 	out->shimsEnabled = NULL;
 	{
 		DWORD j;
-		unsigned char * cookieSite = NULL;
+	}
+	unsigned char * cookieSite = NULL;
+	{
+		DWORD j;
 		for (j = 0; j + 24 < textsz; j++) {
 			if (text[j] == 0x8B && text[j+1] == 0x14 && text[j+2] == 0x25 &&
 			    text[j+3] == 0x30 && text[j+4] == 0x03 && text[j+5] == 0xFE && text[j+6] == 0x7F) {
