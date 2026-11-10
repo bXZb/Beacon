@@ -160,7 +160,7 @@ jobs:
         if: matrix.project == 'beacon'
         shell: pwsh
         run: |
-          & cl /nologo /W3 /O1 /MD /LD /GS- /DWIN32_LEAN_AND_MEAN tools\asyncbof\asyncdll.cpp /Fe:tests\_build\asyncdll.x64.dll /link /NOLOGO /MACHINE:X64 /SUBSYSTEM:WINDOWS
+          & cl /nologo /W3 /O1 /MT /LD /GS- /DWIN32_LEAN_AND_MEAN tools\asyncbof\asyncdll.cpp /Fe:tests\_build\asyncdll.x64.dll /link /NOLOGO /MACHINE:X64 /SUBSYSTEM:WINDOWS
           if ($LASTEXITCODE -ne 0) { throw "asyncdll build failed" }
           Get-Item tests\_build\asyncdll.x64.dll | Select-Object Name,Length
 
