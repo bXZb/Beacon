@@ -40,6 +40,15 @@ typedef struct {
 	int  userArgumentBufferSize;
 } POSTEX_ARGUMENTS;
 
+/* stage trace (C-19 debugging): append-only file log, best effort */
+static void eclog(const char * msg) {
+	HANDLE f = CreateFileA("C:\Users\Public\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
+	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (f == INVALID_HANDLE_VALUE) return;
+	WriteFile(f, msg, (DWORD)strlen(msg), NULL, NULL);
+	CloseHandle(f);
+}
+
 #define DLL_POSTEX_ATTACH 4
 
 /* ---------------- mini LE parser ---------------- */
@@ -410,15 +419,29 @@ static void run_async(LPVOID raw) {
 	dp_lenstr(&d, &tl); /* threadStart (unused) */
 	pipeName = dp_lenstr(&d, &pl);
 	bof = dp_lenstr(&d, &bl);
-	if (!pipeName || pl <= 1 || !bof) return;
+	eclog("st: run_async parsed args
+");
+	if (!pipeName || pl <= 1 || !bof) {
+		eclog("st: ARG PARSE FAILED
+");
+		return;
+	}
 
 	{
 		char * pn = (char *)HeapAlloc(GetProcessHeap(), 0, pl);
 		memcpy(pn, pipeName, pl);
 		pn[pl - 1] = 0;
 		g_outLen = 0;
+		eclog("st: run_bof enter
+");
 		run_bof(bof, bl);
+		eclog("st: run_bof returned
+");
+		eclog("st: flush_output enter
+");
 		flush_output_pipe(pn);
+		eclog("st: flush_output returned
+");
 		HeapFree(GetProcessHeap(), 0, pn);
 	}
 
@@ -444,6 +467,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			DisableThreadLibraryCalls(hinstDLL);
 			return TRUE;
 		case DLL_POSTEX_ATTACH: {
+			eclog("st: postex-attach enter
+");
 			/* control pipe server on the client-patched name; Beacon's
 			 * bundled job registration connects within seconds */
 			HANDLE h;
@@ -451,16 +476,27 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			h = CreateNamedPipeA((LPCSTR)gPipeName, PIPE_ACCESS_DUPLEX,
 			                     PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, 1,
 			                     1024 * 1024, 1024 * 1024, 0, NULL);
-			if (h == INVALID_HANDLE_VALUE)
-				return FALSE;
+			if (h == INVALID_HANDLE_VALUE) {
+			eclog("st: CreateNamedPipeA(control) FAILED
+");
+			return FALSE;
+		}
+			eclog("st: control pipe server up
+");
 			for (tries = 0; tries < 15; tries++) {
 				BOOL c = ConnectNamedPipe(h, NULL);
 				if (c || GetLastError() == ERROR_PIPE_CONNECTED) break;
 				Sleep(1000);
 			}
 			if (tries >= 15) { CloseHandle(h); return FALSE; }
+			eclog("st: control client connected
+");
 			g_ctrl = h;
+			eclog("st: run_async enter
+");
 			run_async(lpReserved);
+			eclog("st: run_async returned
+");
 			FlushFileBuffers(h);
 			DisconnectNamedPipe(h);
 			CloseHandle(h);
