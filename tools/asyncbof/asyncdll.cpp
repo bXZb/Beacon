@@ -466,8 +466,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 		                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (f != INVALID_HANDLE_VALUE) {
 			char b2[64];
-			int n2 = _snprintf(b2, 63, "st: DllMain reason=%lu
-", dwReason);
+			int n2 = _snprintf(b2, 63, "st: DllMain reason=%lu\n", dwReason);
 			WriteFile(f, b2, n2, NULL, NULL);
 			CloseHandle(f);
 		}
