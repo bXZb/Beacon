@@ -30,7 +30,7 @@
 /* kit-contract markers (client patches both) */
 volatile const char gPipeName[] = "\\\\.\\pipe\\POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE";
 volatile char gPostexArgumentsBuffer[20] = "_POSTEX_ARGUMENTS_";
-volatile char gUserArgs[256] = "__POSTEX_USER_ARGS__";
+volatile char gUserArgs[65555] = "__POSTEX_USER_ARGS__";
 
 typedef struct {
 	int  exitFunc;
@@ -434,7 +434,7 @@ static void run_async(LPVOID raw) {
 	char * pipeName, * bof;
 
 	d.b = (char *)gUserArgs;
-	d.n = blobLen > 0 ? blobLen : 0x100000;
+	d.n = blobLen > 0 ? blobLen : 0x11000;
 	runOnce = dp_int(&d);
 	dp_int(&d); /* allocType (unused) */
 	dp_int(&d); /* syscallMethod (unused) */
