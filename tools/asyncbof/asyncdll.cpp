@@ -238,8 +238,12 @@ static int run_bof(char * wire, int wireLen) {
 	memset(seclen, 0, sizeof(seclen));
 
 	bssSize = dp_int(&d);
+	/* wire order: text, rdata, data, xdata, pdata (BSS has no blob -
+	 * it is allocated from bssSize). The old loop STOPPED at SEC_BSS(3),
+	 * consuming only 3 of 5 sections and leaving entry=0 -> exec at the
+	 * all-zero text base (C-22 dump: rip=text+0, bytes 00 00). */
 	for (i = 0; i < SEC_MAX; i++) {
-		if (i == SEC_BSS) break;
+		if (i == SEC_BSS) continue;
 		secs[i] = dp_lenstr(&d, &seclen[i]);
 	}
 	relocs = dp_lenstr(&d, &relocLen);
@@ -258,7 +262,7 @@ static int run_bof(char * wire, int wireLen) {
 	d2.b = wire; d2.n = wireLen;
 	dp_int(&d2);
 	for (i = 0; i < SEC_MAX; i++) {
-		if (i == SEC_BSS) break;
+		if (i == SEC_BSS) continue;
 		{
 			int l; char * p = dp_lenstr(&d2, &l);
 			if (p && l > 0) memcpy(secs[i], p, l);
