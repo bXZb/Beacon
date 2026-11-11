@@ -54,7 +54,17 @@ static void eclog(const char * msg) {
 
 /* ---------------- mini LE parser ---------------- */
 typedef struct { char * b; int n; } DATAP;
-static int dp_int(DATAP * d) { int v = 0; if (d->n >= 4) { v = *(int *)d->b; d->b += 4; d->n -= 4; } return v; }
+static int dp_int(DATAP * d) { /* BIG-ENDIAN: CommandBuilder.addInteger packs BE
+ * (ByteBuffer default) and beacon parse.cpp data_int uses ntohl - the
+ * cna blob and bof_extract wire lengths are all BE (live 2026-11-11:
+ * LE read of 0x7C produced 0x7C000000 and crashed run_bof) */
+	int v = 0;
+	if (d->n >= 4) {
+		const unsigned char * p = (const unsigned char *)d->b;
+		v = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+		d->b += 4; d->n -= 4;
+	}
+	return v; }
 static int dp_beint(DATAP * d) {
 	int v = 0;
 	if (d->n >= 4) {
@@ -64,7 +74,14 @@ static int dp_beint(DATAP * d) {
 	}
 	return v;
 }
-static short dp_short(DATAP * d) { short v = 0; if (d->n >= 2) { v = *(short *)d->b; d->b += 2; d->n -= 2; } return v; }
+static short dp_short(DATAP * d) { /* BE, matches beacon data_short (ntohs) */
+	short v = 0;
+	if (d->n >= 2) {
+		const unsigned char * p = (const unsigned char *)d->b;
+		v = (short)((p[0] << 8) | p[1]);
+		d->b += 2; d->n -= 2;
+	}
+	return v; }
 static char * dp_lenstr(DATAP * d, int * outlen) {
 	int l = dp_int(d);
 	char * p = NULL;
