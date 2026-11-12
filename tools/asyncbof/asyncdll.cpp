@@ -505,35 +505,61 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 	char * p, * b;
 	int tries;
 
-	for (tries = 0; tries < 600; tries++) {
-		if (!PeekNamedPipe(ctrl, NULL, 0, NULL, &avail, 0))
-			return -1;
-		if (avail > 0) break;
-		Sleep(1000);
-	}
-	if (avail <= 0) return -1;
+	for (;;) {
+		for (tries = 0; tries < 600; tries++) {
+			if (!PeekNamedPipe(ctrl, NULL, 0, NULL, &avail, 0))
+				return -1;
+			if (avail > 0) break;
+			Sleep(1000);
+		}
+		if (avail <= 0) return -1;
 
-	blob = (char *)HeapAlloc(GetProcessHeap(), 0, avail);
-	if (!blob) return -1;
-	if (!ReadFile(ctrl, blob, avail, &avail, NULL) || avail <= 0) {
+		blob = (char *)HeapAlloc(GetProcessHeap(), 0, avail);
+		if (!blob) return -1;
+		if (!ReadFile(ctrl, blob, avail, &avail, NULL) || avail <= 0) {
+			HeapFree(GetProcessHeap(), 0, blob);
+			return -1;
+		}
+		d.b = blob; d.n = avail;
+		p = dp_lenstr(&d, &pl);
+		b = p ? dp_lenstr(&d, &bl) : NULL;
+		if (!p || pl <= 1 || !b) {
+			/* C-23: a malformed follow-up used to kill the whole bg loop
+			 * (return -1 = break). Log it via the control pipe and keep
+			 * waiting - the async server must survive bad input. */
+			{
+				char diag[96];
+				int dn = _snprintf(diag, sizeof(diag) - 1,
+					"[asyncdiag] bad followup avail=%d pl=%d bl=%d (kept waiting)",
+					(int)avail, pl, bl);
+				if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+				if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
+					flush_output_ctrl(g_ctrl);
+					g_outLen = 0;
+				}
+			}
+			HeapFree(GetProcessHeap(), 0, blob);
+			continue;
+		}
+		{
+			char diag[96];
+			int dn = _snprintf(diag, sizeof(diag) - 1,
+				"[asyncdiag] followup recv pipe=%d wire=%d", pl, bl);
+			if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+			if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
+				flush_output_ctrl(g_ctrl);
+				g_outLen = 0;
+			}
+		}
+		*pipeOut = (char *)HeapAlloc(GetProcessHeap(), 0, pl);
+		memcpy(*pipeOut, p, pl);
+		(*pipeOut)[pl - 1] = 0;
+		*bofOut = (char *)HeapAlloc(GetProcessHeap(), 0, bl);
+		memcpy(*bofOut, b, bl);
+		*bofLenOut = bl;
 		HeapFree(GetProcessHeap(), 0, blob);
-		return -1;
+		return 0;
 	}
-	d.b = blob; d.n = avail;
-	p = dp_lenstr(&d, &pl);
-	b = p ? dp_lenstr(&d, &bl) : NULL;
-	if (!p || pl <= 1 || !b) {
-		HeapFree(GetProcessHeap(), 0, blob);
-		return -1;
-	}
-	*pipeOut = (char *)HeapAlloc(GetProcessHeap(), 0, pl);
-	memcpy(*pipeOut, p, pl);
-	(*pipeOut)[pl - 1] = 0;
-	*bofOut = (char *)HeapAlloc(GetProcessHeap(), 0, bl);
-	memcpy(*bofOut, b, bl);
-	*bofLenOut = bl;
-	HeapFree(GetProcessHeap(), 0, blob);
-	return 0;
 }
 
 /* ---------------- main ---------------- */
