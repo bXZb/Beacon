@@ -99,6 +99,7 @@ static char * dp_lenstr_be(DATAP * d, int * outlen) {
 
 /* ---------------- output buffering ---------------- */
 static char * g_out = NULL;
+static HANDLE g_ctrl = INVALID_HANDLE_VALUE;
 static int    g_outLen = 0, g_outCap = 0;
 
 static void out_reserve(int more) {
@@ -536,7 +537,6 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 }
 
 /* ---------------- main ---------------- */
-static HANDLE g_ctrl = INVALID_HANDLE_VALUE;
 
 static void run_async(LPVOID raw) {
 	/* C-19 root cause: the postex loader hands lpReserved = LOADER BASE;
