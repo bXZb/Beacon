@@ -54,7 +54,8 @@ TEST(ci_llvm_mutation_contract) {
 	CHECK(yml.find("UNIQUENESS FAIL") != std::string::npos);
 	CHECK(yml.find("if: always()") != std::string::npos);
 	CHECK(yml.find("-DBEACON_OBF=ON") != std::string::npos);
-	CHECK(yml.find("load_smoke|spawn_trace") != std::string::npos);
+	CHECK(yml.find("load_smoke mutated DLL") != std::string::npos);
+	CHECK(yml.find("check_spawn_trace_off.cmake") != std::string::npos);
 	CHECK(yml.find("byte-diff") == std::string::npos);
 	CHECK(yml.find("tools/llvm/CMakeLists.txt") == std::string::npos);
 	CHECK(yml.find("plainsleep") == std::string::npos);

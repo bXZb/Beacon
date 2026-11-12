@@ -198,60 +198,44 @@ jobs:
 
   llvm-windows:
     name: llvm-windows
+    needs: llvm-linux
     runs-on: windows-2022
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache xwin splat
-        uses: actions/cache@v4
+      - name: Download mutated linux artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: C:\Users\runneradmin\.llvm-cross
-          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-win-v2
+          name: llvm-linux-x64
+          path: mutated
 
-      - name: Setup LLVM + xwin
-        run: bash tools/llvm/setup-host.sh
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-      - name: Ninja
+      - name: Build load_smoke
         shell: pwsh
-        run: choco install ninja -y --no-progress
-
-      - name: Configure mutated
         run: |
-          set -e
-          set -a
-          source "$HOME/.llvm-cross/toolpath.env"
-          set +a
-          LLVM_DIR="$(dirname "$(dirname "$LLVM_CLANG")")/lib/cmake/llvm"
-          cmake --preset llvm \
-            -DCLANG_CL="$LLVM_CLANG" \
-            -DLLD_LINK="$LLVM_LLD" \
-            -DXWIN_DIR="$XWIN_SPLAT" \
-            -DBEACON_OBF=ON \
-            -DBEACON_OBF_SEED=1337 \
-            -DLLVM_DIR="$LLVM_DIR" \
-            -DPython3_EXECUTABLE=python
+          New-Item -ItemType Directory -Force -Path tests\_build | Out-Null
+          & cl /nologo /W3 /EHsc /MT tests\load_smoke.cpp /Fe:tests\_build\load_smoke.exe /Fo:tests\_build\
+          if ($LASTEXITCODE -ne 0) { throw "load_smoke build failed" }
 
-      - name: Build
+      - name: load_smoke mutated DLL
+        shell: pwsh
         run: |
-          set -e
-          set -a
-          source "$HOME/.llvm-cross/toolpath.env"
-          set +a
-          cmake --build --preset llvm --parallel
+          $dll = Get-ChildItem mutated -Recurse -Filter beacon.x64.dll |
+            Where-Object { $_.FullName -match 'build-llvm[\\/]out[\\/]beacon\.x64\.dll$' } |
+            Select-Object -First 1
+          if (-not $dll) { Get-ChildItem mutated -Recurse | Select-Object FullName; throw "mutated beacon.x64.dll not in artifact" }
+          Write-Host "mutated dll $($dll.FullName) $($dll.Length) bytes"
+          & tests\_build\load_smoke.exe $dll.FullName
+          if ($LASTEXITCODE -eq 125) {
+            Write-Host "load_smoke skipped (Defender 225/226)"
+            exit 0
+          }
+          if ($LASTEXITCODE -ne 0) { throw "load_smoke failed: $LASTEXITCODE" }
+          "DLL=$($dll.FullName)" >> $env:GITHUB_ENV
 
-      - name: load_smoke + spawn_trace off
-        run: ctest --test-dir build-llvm --output-on-failure -R "load_smoke|spawn_trace"
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: llvm-windows-x64
-          path: |
-            build-llvm/out/*.dll
-            build-llvm/out/*.exe
-            build-llvm/out/*.map
-            build-llvm/out/*.obj
+      - name: spawn_trace path absent
+        run: cmake -DDLL="${{ env.DLL }}" -P cmake/check_spawn_trace_off.cmake

@@ -1,8 +1,4 @@
-# Host build for tools/llvm/pass. Must not inherit the xwin cross toolchain.
-# On Windows GHA, git-bash PATH puts MinGW first; that ABI cannot link the
-# MSVC-built LLVM libraries. Pin clang-cl from the same LLVM tree the
-# plugin will load into.
-if(WIN32 AND DEFINED ENV{LLVM_CLANG} AND EXISTS "$ENV{LLVM_CLANG}")
-  set(CMAKE_CXX_COMPILER "$ENV{LLVM_CLANG}" CACHE FILEPATH "host clang-cl" FORCE)
-  set(CMAKE_C_COMPILER "$ENV{LLVM_CLANG}" CACHE FILEPATH "host clang-cl" FORCE)
-endif()
+# Empty on purpose. ExternalProject for tools/llvm/pass must compile with
+# the host toolchain (Linux g++) and must not inherit xwin/clang-cl.
+# Official Windows LLVM builds report "Loadable modules not supported", so
+# the pass plugin is a Linux host artifact; Windows CI smokes that DLL.

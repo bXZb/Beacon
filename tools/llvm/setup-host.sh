@@ -37,17 +37,17 @@ case "$OS" in
     ;;
   MINGW*|MSYS*|CYGWIN*)
     EXE=".exe"
-    # Full tarball (clang-cl + lib/cmake/llvm). The NSIS win64.exe does not
-    # ship LLVMConfig.cmake, so ExternalProject cannot build the pass plugin.
+    # pinned install under $ROOT (cacheable) — the runner's preinstalled
+    # C:\Program Files\LLVM is an uncontrolled version, so we never use it
     LLVM_BASE="$(cygpath -u "$ROOT")/llvm-win"
-    if [[ ! -x "$LLVM_BASE/bin/clang-cl.exe" || ! -f "$LLVM_BASE/lib/cmake/llvm/LLVMConfig.cmake" ]]; then
-      echo "==> fetching LLVM $LLVM_VERSION (windows tarball, includes cmake)"
-      curl -sSL --retry 3 -o "$ROOT/llvm-win.tar.xz" \
-        "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/clang+llvm-${LLVM_VERSION}-x86_64-pc-windows-msvc.tar.xz"
-      rm -rf "$LLVM_BASE"
-      mkdir -p "$LLVM_BASE"
-      tar -xf "$ROOT/llvm-win.tar.xz" -C "$LLVM_BASE" --strip-components=1
-      rm -f "$ROOT/llvm-win.tar.xz"
+    if [[ ! -x "$LLVM_BASE/bin/clang-cl.exe" ]]; then
+      echo "==> installing LLVM $LLVM_VERSION (windows, pinned dir)"
+      curl -sSL --retry 3 -o "$ROOT/llvm-inst.exe" \
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-win64.exe"
+      # NSIS: /S silent; /D= must be LAST, unquoted, windows path
+      WIN_DST="$(cygpath -w "$ROOT/llvm-win")"
+      cmd //c "$(cygpath -w "$ROOT/llvm-inst.exe") /S /D=$WIN_DST"
+      rm -f "$ROOT/llvm-inst.exe"
     fi
     XWIN_ASSET="xwin-${XWIN_VERSION}-x86_64-pc-windows-msvc.tar.gz"
     ;;
