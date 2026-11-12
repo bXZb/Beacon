@@ -1,5 +1,6 @@
-# Source lists extracted from tools/llvm/manifests/*.json.
-# CMake compiles these files directly; this file is not a compiler driver.
+# Product source lists. CMake compiles these files directly.
+# Frozen JSON manifests of the retired Python driver live in
+# archive/llvm-driver/manifests/.
 
 set(BEACON_WININET_SOURCES
   src/argue.cpp

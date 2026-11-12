@@ -31,7 +31,7 @@ cmake --install build --config Release --prefix dist
 (`docs/WIRE-PROTOCOL.md`). `tests/run_tests.ps1` only runs `build/out/tests.exe`.
 
 Docs: `docs/BUILD.md`, `docs/WIRE-PROTOCOL.md`, `docs/CONCURRENCY.md`,
-`thirdparty/README.md`.
+`thirdparty/README.md`. Retired drivers and session notes: `archive/README.md`.
 
 ### Purpose
 
@@ -74,7 +74,7 @@ cmake --install build --config Release --prefix dist
 只运行已编好的 `build/out/tests.exe`。
 
 文档：`docs/BUILD.md`、`docs/WIRE-PROTOCOL.md`、`docs/CONCURRENCY.md`、
-`thirdparty/README.md`。
+`thirdparty/README.md`。退役驱动与会话笔记：`archive/README.md`。
 
 ### 目的
 

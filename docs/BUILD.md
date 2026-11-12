@@ -84,8 +84,7 @@ x86 库不入库。需要 Win32 套筒时用 `thirdparty/build_trimmed.ps1 -Arch
 - `lib/` —— vendored TomCrypt/TomMath
 - `thirdparty/` —— 精简重编配方；目标 `trimlib`
 - `.github/workflows/ci.yml` —— 产品 CI
-
-`tools/llvm/manifests/` 与 `layout_two_pass.py` 不是构建入口。
+- `archive/` —— 退役驱动、会话草稿、重复产物（不参与构建；分类见 `archive/README.md`）
 
 ## 体积硬约束
 
