@@ -209,7 +209,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\Users\runneradmin\.llvm-cross
-          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-win-v1
+          key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-win-v2
 
       - name: Setup LLVM + xwin
         run: bash tools/llvm/setup-host.sh
@@ -235,7 +235,12 @@ jobs:
             -DPython3_EXECUTABLE=python
 
       - name: Build
-        run: cmake --build --preset llvm --parallel
+        run: |
+          set -e
+          set -a
+          source "$HOME/.llvm-cross/toolpath.env"
+          set +a
+          cmake --build --preset llvm --parallel
 
       - name: load_smoke + spawn_trace off
         run: ctest --test-dir build-llvm --output-on-failure -R "load_smoke|spawn_trace"
