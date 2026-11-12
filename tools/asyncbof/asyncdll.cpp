@@ -184,12 +184,15 @@ static BOOL flush_output_pipe(const char * pipeName) {
 	                     1024 * 1024, 1024 * 1024, 0, NULL);
 	if (h == INVALID_HANDLE_VALUE)
 		return FALSE;
-	for (tries = 0; tries < 15; tries++) {
+	/* 60s client wait (C-23): the beacon's register queues behind the
+	 * control register's 15s pipe_try, so it starts reaching this pipe
+	 * around t+17s - a 15s window kept missing it (live 11:59/12:08). */
+	for (tries = 0; tries < 60; tries++) {
 		BOOL c = ConnectNamedPipe(h, NULL);
 		if (c || GetLastError() == ERROR_PIPE_CONNECTED) break;
 		Sleep(1000);
 	}
-	if (tries >= 15) { CloseHandle(h); return FALSE; }
+	if (tries >= 60) { CloseHandle(h); return FALSE; }
 	SetNamedPipeHandleState(h, &mode, NULL, NULL);
 	{
 		int off = 0;
