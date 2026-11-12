@@ -510,6 +510,18 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 			if (!PeekNamedPipe(ctrl, NULL, 0, NULL, &avail, 0))
 				return -1;
 			if (avail > 0) break;
+			if (tries > 0 && tries % 30 == 0) {
+				/* C-23 wait-tick: proves the bg loop is alive and shows
+				 * whether the 0x78 bytes ever land in this pipe */
+				char diag[80];
+				int dn = _snprintf(diag, sizeof(diag) - 1,
+					"[asyncdiag] bg-wait t+%ds avail=%d", tries, (int)avail);
+				if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+				if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
+					flush_output_ctrl(g_ctrl);
+					g_outLen = 0;
+				}
+			}
 			Sleep(1000);
 		}
 		if (avail <= 0) return -1;
