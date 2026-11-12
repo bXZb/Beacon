@@ -33,6 +33,7 @@ set(BEACON_WININET_SOURCES
   src/inject_rtlcreateuserthread_wow64.cpp
   src/inject_setthreadcontext.cpp
   src/inject_tier2.cpp
+  src/earlycascade.cpp
   src/beacon_udc2.cpp
   src/hostcfg.cpp
   src/interpreter/expression.c
@@ -122,6 +123,7 @@ set(BEACON_WINHTTP_SOURCES
   src/inject_rtlcreateuserthread_wow64.cpp
   src/inject_setthreadcontext.cpp
   src/inject_tier2.cpp
+  src/earlycascade.cpp
   src/beacon_udc2.cpp
   src/hostcfg.cpp
   src/interpreter/expression.c
@@ -211,6 +213,7 @@ set(DNSB_SOURCES
   src/inject_rtlcreateuserthread_wow64.cpp
   src/inject_setthreadcontext.cpp
   src/inject_tier2.cpp
+  src/earlycascade.cpp
   src/beacon_udc2.cpp
   src/inject_smart.cpp
   src/inlineexec.cpp
@@ -282,6 +285,7 @@ set(EXTC2_SOURCES
   src/inject_rtlcreateuserthread_wow64.cpp
   src/inject_setthreadcontext.cpp
   src/inject_tier2.cpp
+  src/earlycascade.cpp
   src/beacon_udc2.cpp
   src/inject_smart.cpp
   src/inlineexec.cpp
@@ -353,6 +357,7 @@ set(PIVOT_SOURCES
   src/inject_rtlcreateuserthread_wow64.cpp
   src/inject_setthreadcontext.cpp
   src/inject_tier2.cpp
+  src/earlycascade.cpp
   src/beacon_udc2.cpp
   src/inject_smart.cpp
   src/inlineexec.cpp

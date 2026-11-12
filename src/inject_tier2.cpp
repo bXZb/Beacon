@@ -602,9 +602,6 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 	return FALSE;
 }
 
-BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
-	(void)context; (void)lpStartAddress; (void)lpParameter;
-	spawn_log("earlycascade: scaffold decline (research pending)", 0x7fffffff);
-	return FALSE;
-}
+/* implementation lives in src/earlycascade.cpp (4.12 EarlyCascade) */
+BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 #endif
