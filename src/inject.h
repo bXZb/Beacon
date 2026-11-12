@@ -58,7 +58,7 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 BOOL procinj_execute_has(BYTE opcode);
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, char * parameter, int plen);
 BOOL finalize_memory_permissions(char * ptr, SIZE_T length);
-/* 4.12 scaffold techniques (inject_tier2.cpp) - decline until implemented */
+/* 4.12: tp* scaffolds decline in inject_tier2.cpp; EarlyCascade is src/earlycascade.cpp */
 BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
 BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);

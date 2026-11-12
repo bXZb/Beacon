@@ -28,7 +28,11 @@ cmake --build --preset llvm
 （`cmake/toolchain-host.cmake`，不继承 xwin）。layout.h 由 pass-1 DLL 生成，
 gargle OBJECT 依赖该头，再链 pass-2 DLL。
 
-CI：`.github/workflows/ci.yml`（msvc + llvm jobs）。
+CI：`.github/workflows/ci.yml`（msvc + llvm jobs）。Linux llvm job 编无 pass 基线
+与 `BEACON_OBF=ON` 变异体，跑 `tools/llvm/gen_yara.py`（基线自中 ≥12、变异丢 ≥10）、
+同 seed 确定性、异 seed uniqueness；失败仍上传 artifact。Windows llvm job 开
+变异并对变异 DLL 跑 `load_smoke`。`BW_SPAWN_TRACE` 只在 MSVC preset 打开；
+llvm 产物不含 `spawn_trace.txt` 路径。
 
 产物在 `build/out/`（MSVC）或 `build-llvm/out/`（LLVM），`cmake --install`
 收到 `<prefix>/bin` 与 `<prefix>/lib`：

