@@ -454,10 +454,6 @@ static int run_bof(char * wire, int wireLen) {
 			/* beacon process_reloc semantics: the site's existing bytes are
 			 * the linker addend - read and add them (COFF section-symbol
 			 * relocs carry the in-section offset as the site addend). */
-			} else {
-				continue;
-			}
-
 			if (rtype == 1) { /* ADDR64 */
 				long long addend;
 				memcpy(&addend, siteBase + offset, 8);
