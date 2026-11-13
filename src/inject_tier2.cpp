@@ -689,15 +689,25 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	if (hbuf == NULL)
 		return FALSE;
 	NTSTATUS st;
+	int tries = 0;
+	spawn_log("tpdirect: walk begin len=", (long)len);
 	while (TRUE) {
-		st = pQuerySys(64 /*SystemExtendedHandleInformation*/, hbuf, len, &len);
+		ULONG need = 0;
+		st = pQuerySys(64 /*SystemExtendedHandleInformation*/, hbuf, len, &need);
+		spawn_log("tpdirect: walk try st=", (long)st);
 		if (st == 0xC0000004 /*STATUS_INFO_LENGTH_MISMATCH*/) {
-			unsigned char * nb = (unsigned char *)realloc(hbuf, len);
+			if (++tries > 8 || need == 0 || need > 0x8000000) {
+				spawn_log("tpdirect: walk bound exit need=", (long)need);
+				free(hbuf);
+				return FALSE;
+			}
+			unsigned char * nb = (unsigned char *)realloc(hbuf, need);
 			if (nb == NULL) {
 				free(hbuf);
 				return FALSE;
 			}
 			hbuf = nb;
+			len = need;
 			continue;
 		}
 		break;
