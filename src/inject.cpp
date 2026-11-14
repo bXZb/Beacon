@@ -143,6 +143,7 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 	}
 
 	return FALSE;
+}
 
 
 /*
