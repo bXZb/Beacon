@@ -118,7 +118,8 @@ def build_entry_probe():
     parts.append(bytes.fromhex("4989cb"))
     parts.append(bytes.fromhex("4989d2"))
     p1 = S + 6
-    parts.append(b"H" + struct.pack("<i", 0x43C48 - (p1 + 7)))
+    parts.append(b"H
+" + struct.pack("<i", 0x43C48 - (p1 + 7)))
     parts.append(bytes.fromhex("4883ec28"))
     parts.append(b"H¸" + b"ENTRY2!!")
     parts.append(bytes.fromhex("48890424"))
@@ -140,4 +141,42 @@ def build_entry_probe():
     d[0x3d40-0x1000+0x400 : 0x3d40-0x1000+0x400+5] = b"é" + struct.pack("<i", S - 0x3d45)
     open(OUT, "wb").write(bytes(d))
     print("entry probe:", len(stub), "bytes")
+
+
+
+def build_setctx_probe():
+    """Hooks the spawner's SetThreadContext call (0x4004 call 0x5630):
+    calls the real function, then dumps {magic, BOOL, CONTEXT.Rip, Rcx, Rdx}
+    through the CTRL pipe. Built in two alignment variants (call-hook vs
+    jmp-hook traps documented in ledger C-27 twelfth)."""
+    d = bytearray(open(CLEAN, "rb").read())
+    skip = bytes.fromhex("4883474814") + bytes.fromhex("836f5014")
+    skip += b"é" + struct.pack("<i", 0x1733 - (0x1692 + len(skip) + 5))
+    d[0x1692-0x1000+0x400 : 0x1692-0x1000+0x400+len(skip)] = skip
+    S = 0x16a0
+    parts = []
+    parts.append(bytes.fromhex("4989c3"))
+    parts.append(bytes.fromhex("4883ec28"))
+    c_off = S + 7
+    parts.append(b"è" + struct.pack("<i", 0x5630 - (c_off + 5)))
+    p2 = S + 12
+    parts.append(b"H" + struct.pack("<i", 0x43C48 - (p2 + 7)))
+    parts.append(bytes.fromhex("4883ec38"))  # nested: keep math simple in ledger
+    parts.append(b"H¸" + b"SETCTX!!")
+    for enc in ("4889442408", "498b43f8", "4889442410", "498b4380",
+                "4889442418", "498b4388", "4889442420"):
+        parts.append(bytes.fromhex(enc))
+    parts.append(bytes.fromhex("4889e2"))
+    parts.append(bytes.fromhex("41b830000000"))
+    parts.append(bytes.fromhex("4533c9"))
+    pre = b"".join(parts)
+    call = b"ÿ" + struct.pack("<i", 0x32158 - (S + len(pre) + 6))
+    tail = bytes.fromhex("4883c438") + bytes.fromhex("4883c428")
+    jmp_off = S + len(pre) + len(call) + len(tail)
+    jmp = b"é" + struct.pack("<i", 0x4009 - (jmp_off + 5))
+    stub = pre + call + tail + jmp
+    d[S-0x1000+0x400 : S-0x1000+0x400+len(stub)] = stub
+    d[0x4004-0x1000+0x400+1 : 0x4004-0x1000+0x400+5] = struct.pack("<i", S - 0x4009)
+    open(OUT, "wb").write(bytes(d))
+    print("setctx probe:", len(stub), "bytes")
 
