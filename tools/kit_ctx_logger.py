@@ -46,7 +46,8 @@ def build_extended():
     parts = []
     parts.append(bytes.fromhex("4989cb"))
     p1 = S + 3
-    parts.append(b"H" + struct.pack("<i", 0x43C48 - (p1 + 7)))
+    parts.append(b"H
+" + struct.pack("<i", 0x43C48 - (p1 + 7)))
     parts.append(bytes.fromhex("4883ec38"))
     parts.append(b"H¸" + b"STUB7OK!")
     parts.append(bytes.fromhex("48890424"))
@@ -101,3 +102,42 @@ def build():
 
 if __name__ == "__main__":
     build()
+
+
+def build_entry_probe():
+    """Minimal 24B probe at the runner ENTRY (0x3d40): magic+rcx+rdx via
+    CTRL pipe. Decisive finding (2026-11-15): child alive, CTRL up, OUT
+    never created, message never arrives - 0x3d40 NEVER EXECUTES. The
+    spawner->thread handoff breaks upstream; see ledger C-27 eleventh."""
+    d = bytearray(open(CLEAN, "rb").read())
+    skip = bytes.fromhex("4883474814") + bytes.fromhex("836f5014")
+    skip += b"é" + struct.pack("<i", 0x1733 - (0x1692 + len(skip) + 5))
+    d[0x1692-0x1000+0x400 : 0x1692-0x1000+0x400+len(skip)] = skip
+    S = 0x16a0
+    parts = []
+    parts.append(bytes.fromhex("4989cb"))
+    parts.append(bytes.fromhex("4989d2"))
+    p1 = S + 6
+    parts.append(b"H" + struct.pack("<i", 0x43C48 - (p1 + 7)))
+    parts.append(bytes.fromhex("4883ec28"))
+    parts.append(b"H¸" + b"ENTRY2!!")
+    parts.append(bytes.fromhex("48890424"))
+    parts.append(bytes.fromhex("4c895c2408"))
+    parts.append(bytes.fromhex("4c89542410"))
+    parts.append(bytes.fromhex("4889e2"))
+    parts.append(bytes.fromhex("41b818000000"))
+    parts.append(bytes.fromhex("4533c9"))
+    pre = b"".join(parts)
+    call = b"ÿ" + struct.pack("<i", 0x32158 - (S + len(pre) + 6))
+    tail = bytes.fromhex("4883c428")
+    t = S + len(pre) + len(call) + len(tail)
+    tail2 = bytes.fromhex("4885c9")
+    j = t + 3
+    tail2 += bytes.fromhex("0f84") + struct.pack("<i", 0x3ef2 - (j + 6))
+    tail2 += b"é" + struct.pack("<i", 0x3d49 - (j + 6 + 5))
+    stub = pre + call + tail + tail2
+    d[S-0x1000+0x400 : S-0x1000+0x400+len(stub)] = stub
+    d[0x3d40-0x1000+0x400 : 0x3d40-0x1000+0x400+5] = b"é" + struct.pack("<i", S - 0x3d45)
+    open(OUT, "wb").write(bytes(d))
+    print("entry probe:", len(stub), "bytes")
+
