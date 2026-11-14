@@ -722,6 +722,7 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	 * within the first few hundred ms - post every 100ms so the first
 	 * pool IOCP that exists catches the TP_DIRECT. The moment a post
 	 * lands, the stage runs and keeps the process alive. */
+	ULONG_PTR posted = 0, accepted = 0;
 	for (int round = 0; round < 40; round++) {
 	ULONG len = 0x100000;
 	unsigned char * hbuf = (unsigned char *)malloc(len);
@@ -758,7 +759,6 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	}
 
 	ULONG_PTR count = *(ULONG_PTR *)hbuf;
-	ULONG_PTR posted = 0, accepted = 0;
 	unsigned char * row = hbuf + 16; /* header: count(8) + pad(8) */
 	HANDLE me = GetCurrentProcess();
 	for (ULONG_PTR i = 0; i < count; i++, row += 40) {
@@ -793,7 +793,6 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	Sleep(500);
 	spawn_log("tpdirect: armed and queued", 0x7fffffff);
 	return TRUE;
-}	return TRUE;
 }
 
 BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
