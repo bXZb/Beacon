@@ -1,0 +1,117 @@
+00001670  push     rbx
+00001672  push     rdi
+00001673  sub      rsp, 0x118
+0000167a  mov      rax, qword ptr [rip + 0x419bf]
+00001681  xor      rax, rsp
+00001684  mov      qword ptr [rsp + 0x100], rax
+0000168c  mov      ebx, dword ptr [rcx + 0x50]
+0000168f  mov      rdi, rcx
+00001692  cmp      ebx, 4
+00001695  jb       0x1733
+0000169b  mov      rcx, qword ptr [rcx + 0x48]
+0000169f  mov      ecx, dword ptr [rcx]
+000016a1  call     qword ptr [rip + 0x30ce9]
+000016a7  add      dword ptr [rdi + 0x50], -4
+000016ab  add      qword ptr [rdi + 0x48], 4
+000016b0  mov      ebx, dword ptr [rdi + 0x50]
+000016b3  cmp      ebx, 4
+000016b6  jb       0x1733
+000016b8  mov      rcx, qword ptr [rdi + 0x48]
+000016bc  mov      ecx, dword ptr [rcx]
+000016be  call     qword ptr [rip + 0x30ccc]
+000016c4  add      dword ptr [rdi + 0x50], -4
+000016c8  mov      eax, dword ptr [rdi + 0x50]
+000016cb  mov      ebx, eax
+000016cd  add      qword ptr [rdi + 0x48], 4
+000016d2  cmp      eax, 4
+000016d5  jb       0x1733
+000016d7  mov      rcx, qword ptr [rdi + 0x48]
+000016db  mov      ecx, dword ptr [rcx]
+000016dd  call     qword ptr [rip + 0x30cad]
+000016e3  mov      eax, dword ptr [rdi + 0x50]
+000016e6  add      qword ptr [rdi + 0x48], 4
+000016eb  add      eax, -4
+000016ee  mov      dword ptr [rdi + 0x50], eax
+000016f1  mov      ebx, eax
+000016f3  cmp      eax, 4
+000016f6  jb       0x1733
+000016f8  mov      rcx, qword ptr [rdi + 0x48]
+000016fc  mov      ecx, dword ptr [rcx]
+000016fe  call     qword ptr [rip + 0x30c8c]
+00001704  mov      eax, dword ptr [rdi + 0x50]
+00001707  add      qword ptr [rdi + 0x48], 4
+0000170c  add      eax, -4
+0000170f  mov      dword ptr [rdi + 0x50], eax
+00001712  mov      ebx, eax
+00001714  cmp      eax, 4
+00001717  jb       0x1733
+00001719  mov      rcx, qword ptr [rdi + 0x48]
+0000171d  mov      ecx, dword ptr [rcx]
+0000171f  call     qword ptr [rip + 0x30c6b]
+00001725  mov      ebx, dword ptr [rdi + 0x50]
+00001728  add      qword ptr [rdi + 0x48], 4
+0000172d  add      ebx, -4
+00001730  mov      dword ptr [rdi + 0x50], ebx
+00001733  xor      edx, edx
+00001735  lea      rcx, [rsp + 0x40]
+0000173a  mov      r8d, 0xb0
+00001740  call     0x30780
+00001745  mov      r8, qword ptr [rdi + 0x48]
+00001749  lea      rdx, [rsp + 0x40]
+0000174e  mov      r9d, ebx
+00001751  mov      rcx, rdi
+00001754  call     0x1a40
+00001759  test     eax, eax
+0000175b  je       0x183a
+00001761  lea      rdx, [rsp + 0x40]
+00001766  call     0x24c0
+0000176b  test     eax, eax
+0000176d  je       0x183a
+00001773  mov      ecx, dword ptr [rdi + 0x74]
+00001776  mov      qword ptr [rsp + 0x138], rbp
+0000177e  mov      rbp, qword ptr [rsp + 0xd8]
+00001786  mov      qword ptr [rsp + 0x140], rsi
+0000178e  mov      esi, dword ptr [rsp + 0x40]
+00001792  add      rsi, rbp
+00001795  mov      qword ptr [rsp + 0x110], r14
+0000179d  movsxd   r14, dword ptr [rsp + 0x50]
+000017a2  mov      qword ptr [rsp + 0x30], rbp
+000017a7  mov      qword ptr [rsp + 0xf8], r14
+000017af  test     ecx, ecx
+000017b1  je       0x1811
+000017b3  sub      ecx, 1
+000017b6  je       0x1811
+000017b8  cmp      ecx, 1
+000017bb  jne      0x1822
+000017bd  mov      rbx, qword ptr [rdi]
+000017c0  call     qword ptr [rip + 0x30862]
+000017c6  lea      rcx, [rsp + 0xf0]
+000017ce  mov      rdx, rax
+000017d1  mov      qword ptr [rsp + 0x28], rcx
+000017d6  lea      r9, [rsp + 0xf8]
+000017de  mov      rcx, rbx
+000017e1  mov      dword ptr [rsp + 0x20], 0x20
+000017e9  lea      r8, [rsp + 0x30]
+000017ee  call     0x5ba0
+000017f3  test     al, al
+000017f5  jne      0x1811
+000017f7  lea      r9, [rsp + 0xf0]
+000017ff  mov      r8d, 0x20
+00001805  mov      rdx, r14
+00001808  mov      rcx, rbp
+0000180b  call     qword ptr [rip + 0x30927]
+00001811  mov      edx, dword ptr [rsp + 0xc0]
+00001818  mov      rcx, qword ptr [rsp + 0xb8]
+00001820  call     rsi
+00001822  mov      rsi, qword ptr [rsp + 0x140]
+0000182a  mov      rbp, qword ptr [rsp + 0x138]
+00001832  mov      r14, qword ptr [rsp + 0x110]
+0000183a  mov      rcx, rdi
+0000183d  call     0x1860
+00001842  mov      rcx, qword ptr [rsp + 0x100]
+0000184a  xor      rcx, rsp
+0000184d  call     0x10310
+00001852  add      rsp, 0x118
+00001859  pop      rdi
+0000185a  pop      rbx
+0000185b  ret      

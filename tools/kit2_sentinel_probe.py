@@ -19,8 +19,8 @@ for i in range(14):
     WIRE += bytes([0xC0 + i]) * 8               # marker blob
 WIRE += struct.pack(">i", 0x7E1E77E1)           # entry sentinel
 WIRE += struct.pack(">i", 8) + b"\xEE" * 8      # args pair
-open(r"C:\Users\Public\bt_hello_kitfull_wire.bin", "wb").write(WIRE)
-print("sentinel wire:", len(WIRE))
+# wire overwrite neutered: keep the real kitfull wire on disk
+print("wire overwrite neutered (would write", len(WIRE), "bytes)")
 
 # child + parent scripts expect the same env; reuse the two-pipes pieces
 p2 = subprocess.Popen([sys.executable, "-I", r"C:\Users\Public\kit2_parent2.py", CTRL, OUT],
@@ -30,11 +30,11 @@ p2 = subprocess.Popen([sys.executable, "-I", r"C:\Users\Public\kit2_parent2.py",
 CDB = r"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\cdbX64.exe"
 CMDS = r"C:\Users\Public\kit2_st_cmds.txt"
 open(CMDS, "w").write(
-    '.echo STOP; dq @rcx L6; db poi(@rcx) L48; '
+    '.echo RUNNER_IN; ? @rcx; ? poi(@rcx); ? poi(@rcx+8); db poi(@rcx) L48; '
     'db poi(@rsp+0x48) L10; db poi(@rsp+0x58) L10; '
     'db poi(@rsp+0x68) L10; db poi(@rsp+0x78) L10; qd\n')
 OUTLOG = r"C:\Users\Public\kit2_st_out.txt"
-env = dict(os.environ, KIT_WIRE_MODE="kitfull")
+env = dict(os.environ, KIT_WIRE_MODE="kitfull", KIT_HINT="ntdll.dll!RtlUserThreadStart")
 r = subprocess.run([CDB, "-cf", CMDS, "-logo", OUTLOG, "-y", "C:\\symbols",
                     sys.executable, "-I", r"C:\Users\Public\kit2_child.py", CTRL, OUT],
                    cwd=r"C:\Users\Public", capture_output=True, timeout=120,
