@@ -32,6 +32,46 @@ OUT = r"C:\Users\Public\kit_async_logged.x64.dll"
 S = 0x3e4f
 
 
+def build_extended():
+    """Frees the executor's five-int skip loop (0x1692) with a straight
+    ptr+=20 skip and installs a 84-byte wide logger at 0x16a0 dumping
+    rcx/rdi/rbp/rbx and [rbp-0x39] through the CTRL pipe."""
+    d = bytearray(open(CLEAN, "rb").read())
+    skip  = bytes.fromhex("4883474814")
+    skip += bytes.fromhex("836f5014")
+    rel = 0x1733 - (0x1692 + len(skip) + 5)
+    skip += b"é" + struct.pack("<i", rel)
+    d[0x1692-0x1000+0x400 : 0x1692-0x1000+0x400+len(skip)] = skip
+    S = 0x16a0
+    parts = []
+    parts.append(bytes.fromhex("4989cb"))
+    p1 = S + 3
+    parts.append(b"H" + struct.pack("<i", 0x43C48 - (p1 + 7)))
+    parts.append(bytes.fromhex("4883ec38"))
+    parts.append(b"H¸" + b"STUB7OK!")
+    parts.append(bytes.fromhex("48890424"))
+    parts.append(bytes.fromhex("4c895c2408"))
+    parts.append(bytes.fromhex("48897c2410"))
+    parts.append(bytes.fromhex("48896c2418"))
+    parts.append(bytes.fromhex("48895c2420"))
+    parts.append(bytes.fromhex("488b45c7"))
+    parts.append(bytes.fromhex("4889442428"))
+    parts.append(bytes.fromhex("4889e2"))
+    parts.append(bytes.fromhex("41b838000000"))
+    parts.append(bytes.fromhex("4533c9"))
+    pre = b"".join(parts)
+    call = b"ÿ" + struct.pack("<i", 0x32158 - (S + len(pre) + 6))
+    tail = bytes.fromhex("4883c438")
+    jmp_off = S + len(pre) + len(call) + len(tail)
+    jmp = b"é" + struct.pack("<i", 0x1670 - (jmp_off + 5))
+    stub = pre + call + tail + jmp
+    assert len(stub) <= 0x1733 - S
+    d[S-0x1000+0x400 : S-0x1000+0x400+len(stub)] = stub
+    d[0x3ed1-0x1000+0x400+1 : 0x3ed1-0x1000+0x400+5] = struct.pack("<i", S - 0x3ed6)
+    open(OUT, "wb").write(bytes(d))
+    print("extended logger:", len(stub), "bytes at 0x%x" % S)
+
+
 def build():
     d = bytearray(open(CLEAN, "rb").read())
     parts = []
