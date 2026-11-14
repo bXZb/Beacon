@@ -16,6 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate buildstamp header (C-26 build identity)
+        shell: pwsh
+        # Greppable build identity: every produced dll/exe carries
+        # "bstamp:<sha7>:<utc>:<runid>" so the test pipeline can prove which
+        # commit a binary came from (the stale-rl0k-slot misdiagnosis class).
+        run: |
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          $utc = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+          $run = $env:GITHUB_RUN_ID
+          $stamp = "bstamp:$sha`:$utc`:$run"
+          $hdr = "#pragma once`r`n#define BUILDSTAMP_STRING `"$stamp`"`r`n"
+          Set-Content -Path src/buildstamp.h -Value $hdr -NoNewline
+          Write-Host "buildstamp: $stamp"
+
       - name: Setup MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:

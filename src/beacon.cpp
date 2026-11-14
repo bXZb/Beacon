@@ -11,6 +11,12 @@
 #include "bformat.h"
 #include "track_memory.h"
 #include "hostcfg.h"
+#ifdef BUILDSTAMP_STRING
+#include "buildstamp.h"
+/* build identity (C-26): greppable in the raw dll/exe bytes - the test
+ * pipeline proves which commit a beacon came from (stale-slot forensics) */
+const volatile char g_buildstamp[] = BUILDSTAMP_STRING;
+#endif
 
 #define MAX_GET setting_int(SETTING_MAXGET)
 
