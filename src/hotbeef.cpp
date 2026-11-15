@@ -490,6 +490,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 						pipe_track(ctrl_h, (DWORD)pid, CALLBACK_OUTPUT, desc, JOB_MODE_BYTE);
 						spawn_log("jsu: ctrl tracked inject2", 0x7fffffff);
 					}
+				}
 			}
 		}
 
@@ -575,8 +576,9 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 					pipe_track(ctrl_h, pi.dwProcessId, CALLBACK_OUTPUT, desc, JOB_MODE_BYTE);
 					spawn_log("jsu: ctrl tracked", 0x7fffffff);
 				}
-			else {
-				spawn_log("jsu: ctrl connect failed gle=", (long)GetLastError());
+				else {
+					spawn_log("jsu: ctrl connect failed gle=", (long)GetLastError());
+				}
 			}
 		}
 	}
