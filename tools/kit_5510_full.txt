@@ -1,0 +1,231 @@
+===== sub_5510 =====
+  005510  mov       qword ptr [rsp + 8], rbx
+  005515  mov       qword ptr [rsp + 0x20], rsi
+  00551a  push      rdi
+  00551b  sub       rsp, 0x40
+  00551f  mov       rax, qword ptr [rip + 0x3db1a]
+  005526  xor       rax, rsp
+  005529  mov       qword ptr [rsp + 0x38], rax
+  00552e  mov       rsi, r8
+  005531  mov       rdi, rdx
+  005534  mov       rax, qword ptr [rcx]
+  005537  mov       rbx, qword ptr [rax + 0x30]
+  00553b  mov       rax, qword ptr [rbx + 8]
+  00553f  cmp       byte ptr [rax + 0x19], 0
+  005543  jne       0x5560
+  005545  cmp       dword ptr [rax + 0x20], 0x6d22f884
+  00554c  jae       0x5554
+  00554e  mov       rax, qword ptr [rax + 0x10]
+  005552  jmp       0x555a
+  005554  mov       rbx, rax
+  005557  mov       rax, qword ptr [rax]
+  00555a  cmp       byte ptr [rax + 0x19], 0
+  00555e  je        0x5545
+  005560  cmp       byte ptr [rbx + 0x19], 0
+  005564  jne       0x561f
+  00556a  cmp       dword ptr [rbx + 0x20], 0x6d22f884
+  005571  ja        0x561f
+  005577  mov       ecx, dword ptr [rcx + 8]
+  00557a  test      ecx, ecx
+  00557c  je        0x55e8
+  00557e  sub       ecx, 1
+  005581  je        0x558c
+  005583  cmp       ecx, 1
+  005586  je        0x558c
+  005588  xor       al, al
+  00558a  jmp       0x5602
+  00558c  lea       rcx, [rip + 0x40485]
+  005593  call      qword ptr [rip + 0x2cb7f]
+  005599  mov       rdx, qword ptr [rbx + 0x30]
+  00559d  mov       qword ptr [rip + 0x4045c], rdx
+  0055a4  mov       eax, dword ptr [rbx + 0x28]
+  0055a7  mov       dword ptr [rip + 0x4045b], eax
+  0055ad  test      rdx, rdx
+  0055b0  jne       0x55c3
+  0055b2  lea       rcx, [rip + 0x4045f]
+  0055b9  call      qword ptr [rip + 0x2cb61]
+  0055bf  xor       al, al
+  0055c1  jmp       0x5602
+  0055c3  mov       rdx, rsi
+  0055c6  mov       rcx, rdi
+  0055c9  call      0xe708
+  0055ce  mov       ebx, eax
+  0055d0  lea       rcx, [rip + 0x40441]
+  0055d7  call      qword ptr [rip + 0x2cb43]
+  0055dd  shr       ebx, 0x1f
+  0055e0  xor       bl, 1
+  0055e3  movzx     eax, bl
+  0055e6  jmp       0x5602
+  0055e8  mov       rax, qword ptr [rbx + 0x38]
+  0055ec  test      rax, rax
+  0055ef  je        0x5602
+  0055f1  mov       rdx, rsi
+  0055f4  mov       rcx, rdi
+  0055f7  call      rax
+  0055f9  shr       eax, 0x1f
+  0055fc  xor       al, 1
+  0055fe  jmp       0x5602
+  005600  xor       al, al
+  005602  mov       rcx, qword ptr [rsp + 0x38]
+  005607  xor       rcx, rsp
+  00560a  call      0x10310
+  00560f  mov       rbx, qword ptr [rsp + 0x50]
+  005614  mov       rsi, qword ptr [rsp + 0x68]
+  005619  add       rsp, 0x40
+  00561d  pop       rdi
+  00561e  ret       
+
+===== sub_5630 =====
+  005630  mov       qword ptr [rsp + 8], rbx
+  005635  mov       qword ptr [rsp + 0x20], rsi
+  00563a  push      rdi
+  00563b  sub       rsp, 0x40
+  00563f  mov       rax, qword ptr [rip + 0x3d9fa]
+  005646  xor       rax, rsp
+  005649  mov       qword ptr [rsp + 0x38], rax
+  00564e  mov       rsi, r8
+  005651  mov       rdi, rdx
+  005654  mov       rax, qword ptr [rcx]
+  005657  mov       rbx, qword ptr [rax + 0x30]
+  00565b  mov       rax, qword ptr [rbx + 8]
+  00565f  cmp       byte ptr [rax + 0x19], 0
+  005663  jne       0x5680
+  005665  cmp       dword ptr [rax + 0x20], 0xffa0bf10
+  00566c  jae       0x5674
+  00566e  mov       rax, qword ptr [rax + 0x10]
+  005672  jmp       0x567a
+  005674  mov       rbx, rax
+  005677  mov       rax, qword ptr [rax]
+  00567a  cmp       byte ptr [rax + 0x19], 0
+  00567e  je        0x5665
+  005680  cmp       byte ptr [rbx + 0x19], 0
+  005684  jne       0x573f
+  00568a  cmp       dword ptr [rbx + 0x20], 0xffa0bf10
+  005691  ja        0x573f
+  005697  mov       ecx, dword ptr [rcx + 8]
+  00569a  test      ecx, ecx
+  00569c  je        0x5708
+  00569e  sub       ecx, 1
+  0056a1  je        0x56ac
+  0056a3  cmp       ecx, 1
+  0056a6  je        0x56ac
+  0056a8  xor       al, al
+  0056aa  jmp       0x5722
+  0056ac  lea       rcx, [rip + 0x40365]
+  0056b3  call      qword ptr [rip + 0x2ca5f]
+  0056b9  mov       rdx, qword ptr [rbx + 0x30]
+  0056bd  mov       qword ptr [rip + 0x4033c], rdx
+  0056c4  mov       eax, dword ptr [rbx + 0x28]
+  0056c7  mov       dword ptr [rip + 0x4033b], eax
+  0056cd  test      rdx, rdx
+  0056d0  jne       0x56e3
+  0056d2  lea       rcx, [rip + 0x4033f]
+  0056d9  call      qword ptr [rip + 0x2ca41]
+  0056df  xor       al, al
+  0056e1  jmp       0x5722
+  0056e3  mov       rdx, rsi
+  0056e6  mov       rcx, rdi
+  0056e9  call      0xe71b
+  0056ee  mov       ebx, eax
+  0056f0  lea       rcx, [rip + 0x40321]
+  0056f7  call      qword ptr [rip + 0x2ca23]
+  0056fd  shr       ebx, 0x1f
+  005700  xor       bl, 1
+  005703  movzx     eax, bl
+  005706  jmp       0x5722
+  005708  mov       rax, qword ptr [rbx + 0x38]
+  00570c  test      rax, rax
+  00570f  je        0x5722
+  005711  mov       rdx, rsi
+  005714  mov       rcx, rdi
+  005717  call      rax
+  005719  shr       eax, 0x1f
+  00571c  xor       al, 1
+  00571e  jmp       0x5722
+  005720  xor       al, al
+  005722  mov       rcx, qword ptr [rsp + 0x38]
+  005727  xor       rcx, rsp
+  00572a  call      0x10310
+  00572f  mov       rbx, qword ptr [rsp + 0x50]
+  005734  mov       rsi, qword ptr [rsp + 0x68]
+  005739  add       rsp, 0x40
+  00573d  pop       rdi
+  00573e  ret       
+
+===== sub_53f0 =====
+  0053f0  mov       qword ptr [rsp + 8], rbx
+  0053f5  mov       qword ptr [rsp + 0x20], rsi
+  0053fa  push      rdi
+  0053fb  sub       rsp, 0x40
+  0053ff  mov       rax, qword ptr [rip + 0x3dc3a]
+  005406  xor       rax, rsp
+  005409  mov       qword ptr [rsp + 0x38], rax
+  00540e  mov       rsi, r8
+  005411  mov       rdi, rdx
+  005414  mov       rax, qword ptr [rcx]
+  005417  mov       rbx, qword ptr [rax + 0x30]
+  00541b  mov       rax, qword ptr [rbx + 8]
+  00541f  cmp       byte ptr [rax + 0x19], 0
+  005423  jne       0x5440
+  005425  cmp       dword ptr [rax + 0x20], 0x5a4bc3d0
+  00542c  jae       0x5434
+  00542e  mov       rax, qword ptr [rax + 0x10]
+  005432  jmp       0x543a
+  005434  mov       rbx, rax
+  005437  mov       rax, qword ptr [rax]
+  00543a  cmp       byte ptr [rax + 0x19], 0
+  00543e  je        0x5425
+  005440  cmp       byte ptr [rbx + 0x19], 0
+  005444  jne       0x54ff
+  00544a  cmp       dword ptr [rbx + 0x20], 0x5a4bc3d0
+  005451  ja        0x54ff
+  005457  mov       ecx, dword ptr [rcx + 8]
+  00545a  test      ecx, ecx
+  00545c  je        0x54c8
+  00545e  sub       ecx, 1
+  005461  je        0x546c
+  005463  cmp       ecx, 1
+  005466  je        0x546c
+  005468  xor       al, al
+  00546a  jmp       0x54e2
+  00546c  lea       rcx, [rip + 0x405a5]
+  005473  call      qword ptr [rip + 0x2cc9f]
+  005479  mov       rdx, qword ptr [rbx + 0x30]
+  00547d  mov       qword ptr [rip + 0x4057c], rdx
+  005484  mov       eax, dword ptr [rbx + 0x28]
+  005487  mov       dword ptr [rip + 0x4057b], eax
+  00548d  test      rdx, rdx
+  005490  jne       0x54a3
+  005492  lea       rcx, [rip + 0x4057f]
+  005499  call      qword ptr [rip + 0x2cc81]
+  00549f  xor       al, al
+  0054a1  jmp       0x54e2
+  0054a3  mov       rdx, rsi
+  0054a6  mov       rcx, rdi
+  0054a9  call      0xe6f5
+  0054ae  mov       ebx, eax
+  0054b0  lea       rcx, [rip + 0x40561]
+  0054b7  call      qword ptr [rip + 0x2cc63]
+  0054bd  shr       ebx, 0x1f
+  0054c0  xor       bl, 1
+  0054c3  movzx     eax, bl
+  0054c6  jmp       0x54e2
+  0054c8  mov       rax, qword ptr [rbx + 0x38]
+  0054cc  test      rax, rax
+  0054cf  je        0x54e2
+  0054d1  mov       rdx, rsi
+  0054d4  mov       rcx, rdi
+  0054d7  call      rax
+  0054d9  shr       eax, 0x1f
+  0054dc  xor       al, 1
+  0054de  jmp       0x54e2
+  0054e0  xor       al, al
+  0054e2  mov       rcx, qword ptr [rsp + 0x38]
+  0054e7  xor       rcx, rsp
+  0054ea  call      0x10310
+  0054ef  mov       rbx, qword ptr [rsp + 0x50]
+  0054f4  mov       rsi, qword ptr [rsp + 0x68]
+  0054f9  add       rsp, 0x40
+  0054fd  pop       rdi
+  0054fe  ret       
+

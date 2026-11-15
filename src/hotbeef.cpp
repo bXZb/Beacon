@@ -461,11 +461,35 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 					pname[scan] = c;
 				}
 				spawn_log("jsu: ctrl pipe inject2=", (long)pname);
-				Sleep(2000);
-				if (connect_pipe(pname, &ctrl_h)) {
-					pipe_track(ctrl_h, (DWORD)pid, CALLBACK_OUTPUT, "postex_ctrl", JOB_MODE_BYTE);
-					spawn_log("jsu: ctrl tracked inject2", 0x7fffffff);
-				}
+				/* C-36: carry the kit OUTPUT pipe name for follow-up reconnects */
+				{
+					char outname[64];
+					char desc[64];
+					int scan2;
+					int k;
+					memset(outname, 0, sizeof(outname));
+					for (scan2 = 0; parameter != NULL && scan2 < (int)plen - 9; scan2++) {
+						if (memcmp(parameter + scan2, "\\\\.\\pipe\\", 9) == 0) {
+							for (k = 0; k < 60 && scan2 + k < (int)plen; k++) {
+								char c = parameter[scan2 + k];
+								if (c == 0) break;
+								outname[k] = c;
+							}
+							outname[k] = 0;
+							break;
+						}
+					}
+					if (outname[0] != 0) {
+						_snprintf(desc, sizeof(desc), "postex_ctrl|%s", outname);
+					}
+					else {
+						_snprintf(desc, sizeof(desc), "postex_ctrl");
+					}
+					Sleep(2000);
+					if (connect_pipe(pname, &ctrl_h)) {
+						pipe_track(ctrl_h, (DWORD)pid, CALLBACK_OUTPUT, desc, JOB_MODE_BYTE);
+						spawn_log("jsu: ctrl tracked inject2", 0x7fffffff);
+					}
 			}
 		}
 
@@ -519,11 +543,38 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 				pname[scan] = c;
 			}
 			spawn_log("jsu: ctrl pipe=", (long)pname);
-			Sleep(2000);
-			if (connect_pipe(pname, &ctrl_h)) {
-				pipe_track(ctrl_h, pi.dwProcessId, CALLBACK_OUTPUT, "postex_ctrl", JOB_MODE_BYTE);
-				spawn_log("jsu: ctrl tracked", 0x7fffffff);
-			}
+			/* C-36: also grab the kit's OUTPUT pipe name from the postex
+			 * args blob (the only \.\pipe\ string there) and carry it in
+			 * the tracked description - command_job_data needs it to
+			 * reconnect the new OUT pipe instance each follow-up spawns. */
+			{
+				char outname[64];
+				char desc[64];
+				int scan2;
+				int k;
+				memset(outname, 0, sizeof(outname));
+				for (scan2 = 0; parameter != NULL && scan2 < (int)plen - 9; scan2++) {
+					if (memcmp(parameter + scan2, "\\\\.\\pipe\\", 9) == 0) {
+						for (k = 0; k < 60 && scan2 + k < (int)plen; k++) {
+							char c = parameter[scan2 + k];
+							if (c == 0) break;
+							outname[k] = c;
+						}
+						outname[k] = 0;
+						break;
+					}
+				}
+				if (outname[0] != 0) {
+					_snprintf(desc, sizeof(desc), "postex_ctrl|%s", outname);
+				}
+				else {
+					_snprintf(desc, sizeof(desc), "postex_ctrl");
+				}
+				Sleep(2000);
+				if (connect_pipe(pname, &ctrl_h)) {
+					pipe_track(ctrl_h, pi.dwProcessId, CALLBACK_OUTPUT, desc, JOB_MODE_BYTE);
+					spawn_log("jsu: ctrl tracked", 0x7fffffff);
+				}
 			else {
 				spawn_log("jsu: ctrl connect failed gle=", (long)GetLastError());
 			}

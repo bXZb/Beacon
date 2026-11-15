@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kit_local_harness2 as H
 
 WIRE = open(r"C:\Users\Public\bt_hello_12b.bin", "rb").read()
-FOLLOW = WIRE  # raw wire only: the bg ctx feeds the runner directly (no [z][b] unwrap in bg loop disasm)
+_zf = H.L(OUT.encode() + bytes([0]))
+_bf = H.L(WIRE)
+FOLLOW = _zf + _bf  # official kit follow-up frame: [z output_pipe][b wire]
 
 ARGS = (struct.pack(">i", 0) + struct.pack(">i", 2) + struct.pack(">i", 1)
         + H.L(b"ntdll.dll!RtlUserThreadStart+0x21\x00")
@@ -48,6 +50,12 @@ def patch_kit(data, ctrl):
     o2 = 0x45c5 - 0x1000 + 0x400
     assert d[o2] == 0xE8
     struct.pack_into("<i", d, o2 + 1, 0x3d40 - 0x45ca)
+    # A3: skip first BOF (0x44db call 0x4170) -> enter bg loop directly
+    # The bg loop at 0x44f0 only needs gPipeHandle (global) and r13 (=0)
+    # It does NOT use r15 (0x4170 return) - so we can safely skip 0x4170
+    o3 = 0x44de - 0x1000 + 0x400
+    assert d[o3] == 0xE8
+    d[o3:o3+5] = bytes([0x90, 0x90, 0x90, 0x90, 0x90])  # NOP the call
     return bytes(d)
 
 
@@ -127,15 +135,16 @@ parent_src = (
     "        got = wintypes.DWORD(0)\n"
     "        if k32.ReadFile(ho, buf, 65536, ctypes.byref(got), None) and got.value:\n"
     "            total += got.value\n"
+    "            print('RECV hex:', buf.raw[:got.value][:min(got.value,96)].hex(), flush=True)\n"
     "            txt = bytes(c if 32 <= c < 127 else 46 for c in buf.raw[:got.value][:80]).decode()\n"
-    "            print('RECV:', txt, flush=True)\n"
+    "            print('RECV txt:', txt, flush=True)\n"
     "        continue\n"
     "    if (not sent) and total > 0:\n"
     "        wrote = wintypes.DWORD(0)\n"
     "        ok1 = k32.WriteFile(hc, follow, len(follow), ctypes.byref(wrote), None)\n"
     "        g1 = k32.GetLastError()\n"
     "        wrote2 = wintypes.DWORD(0)\n"
-    "        ok2 = k32.WriteFile(ho, follow, len(follow), ctypes.byref(wrote2), None)\n"
+    "        ok2 = k32.WriteFile(hc, follow, len(follow), ctypes.byref(wrote2), None)\n"
     "        g2 = k32.GetLastError()\n"
     "        print('follow-up ctrl:', bool(ok1), wrote.value, 'gle=', g1, '| out:', bool(ok2), wrote2.value, 'gle=', g2, flush=True)\n"
     "        sent = ok1 or ok2\n"

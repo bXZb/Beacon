@@ -1,0 +1,135 @@
+
+===== kit sub_5750 (thread create wrapper) (rva 0x5750) =====
+  005750  mov       qword ptr [rsp + 8], rbx
+  005755  mov       qword ptr [rsp + 0x18], rsi
+  00575a  push      rdi
+  00575b  sub       rsp, 0x80
+  005762  mov       rax, qword ptr [rip + 0x3d8d7]
+  005769  xor       rax, rsp
+  00576c  mov       qword ptr [rsp + 0x78], rax
+  005771  mov       rdi, rdx
+  005774  mov       rsi, qword ptr [rsp + 0xb8]
+  00577c  mov       rax, qword ptr [rcx]
+  00577f  mov       rbx, qword ptr [rax + 0x30]
+  005783  mov       rax, qword ptr [rbx + 8]
+  005787  cmp       byte ptr [rax + 0x19], 0
+  00578b  jne       0x57ab
+  00578d  nop       dword ptr [rax]
+  005790  cmp       dword ptr [rax + 0x20], 0xaf18cfb0
+  005797  jae       0x579f
+  005799  mov       rax, qword ptr [rax + 0x10]
+  00579d  jmp       0x57a5
+  00579f  mov       rbx, rax
+  0057a2  mov       rax, qword ptr [rax]
+  0057a5  cmp       byte ptr [rax + 0x19], 0
+  0057a9  je        0x5790
+  0057ab  cmp       byte ptr [rbx + 0x19], 0
+  0057af  jne       0x58e0
+  0057b5  cmp       dword ptr [rbx + 0x20], 0xaf18cfb0
+  0057bc  ja        0x58e0
+  0057c2  mov       ecx, dword ptr [rcx + 8]
+  0057c5  test      ecx, ecx
+  0057c7  je        0x586e
+  0057cd  sub       ecx, 1
+  0057d0  je        0x57de
+  0057d2  cmp       ecx, 1
+  0057d5  je        0x57de
+  0057d7  xor       al, al
+  0057d9  jmp       0x58be
+  0057de  lea       rcx, [rip + 0x40233]
+  0057e5  call      qword ptr [rip + 0x2c92d]
+  0057eb  mov       rdx, qword ptr [rbx + 0x30]
+  0057ef  mov       qword ptr [rip + 0x4020a], rdx
+  0057f6  mov       eax, dword ptr [rbx + 0x28]
+  0057f9  mov       dword ptr [rip + 0x40209], eax
+  0057ff  test      rdx, rdx
+  005802  jne       0x5818
+  005804  lea       rcx, [rip + 0x4020d]
+  00580b  call      qword ptr [rip + 0x2c90f]
+  005811  xor       al, al
+  005813  jmp       0x58be
+  005818  xor       eax, eax
+  00581a  mov       qword ptr [rsp + 0x50], rax
+  00581f  mov       qword ptr [rsp + 0x48], rax
+  005824  mov       qword ptr [rsp + 0x40], rax
+  005829  mov       qword ptr [rsp + 0x38], rax
+  00582e  mov       dword ptr [rsp + 0x30], 1
+  005836  mov       qword ptr [rsp + 0x28], rax
+  00583b  mov       qword ptr [rsp + 0x20], rsi
+  005840  lea       r9, [rax - 1]
+  005844  xor       r8d, r8d
+  005847  mov       edx, 0x1fffff
+  00584c  mov       rcx, rdi
+  00584f  call      0xe72e
+  005854  mov       ebx, eax
+  005856  lea       rcx, [rip + 0x401bb]
+  00585d  call      qword ptr [rip + 0x2c8bd]
+  005863  shr       ebx, 0x1f
+  005866  xor       bl, 1
+  005869  movzx     eax, bl
+  00586c  jmp       0x58be
+  00586e  mov       r10, qword ptr [rbx + 0x38]
+  005872  test      r10, r10
+  005875  jne       0x587b
+  005877  xor       al, al
+  005879  jmp       0x58be
+  00587b  xor       eax, eax
+  00587d  mov       qword ptr [rsp + 0x50], rax
+  005882  mov       qword ptr [rsp + 0x48], rax
+  005887  mov       qword ptr [rsp + 0x40], rax
+  00588c  mov       qword ptr [rsp + 0x38], rax
+  005891  mov       dword ptr [rsp + 0x30], 1
+  005899  mov       qword ptr [rsp + 0x28], rax
+  00589e  mov       qword ptr [rsp + 0x20], rsi
+  0058a3  lea       r9, [rax - 1]
+  0058a7  xor       r8d, r8d
+  0058aa  mov       edx, 0x1fffff
+  0058af  mov       rcx, rdi
+  0058b2  call      r10
+  0058b5  shr       eax, 0x1f
+  0058b8  xor       al, 1
+  0058ba  jmp       0x58be
+  0058bc  xor       al, al
+  0058be  mov       rcx, qword ptr [rsp + 0x78]
+  0058c3  xor       rcx, rsp
+  0058c6  call      0x10310
+  0058cb  lea       r11, [rsp + 0x80]
+  0058d3  mov       rbx, qword ptr [r11 + 0x10]
+  0058d7  mov       rsi, qword ptr [r11 + 0x20]
+  0058db  mov       rsp, r11
+  0058de  pop       rdi
+  0058df  ret       
+
+===== kit strings: thread/context APIs =====
+  off=0x33760 "`local static thread guard'"
+  off=0x41588 'TerminateThread'
+  off=0x416a4 'ExitThread'
+  off=0x41722 'GetCurrentThreadId'
+
+===== ntdll!RtlUserThreadStart FULL (rva 0x4cc70) =====
+  04cc70  sub       rsp, 0x78
+  04cc74  mov       r9, rcx
+  04cc77  mov       rax, qword ptr [rip + 0x11f372]
+  04cc7e  test      rax, rax
+  04cc81  je        0x4cc93
+  04cc83  mov       r8, rdx
+  04cc86  mov       rdx, rcx
+  04cc89  xor       ecx, ecx
+  04cc8b  call      qword ptr [rip + 0x13836f]
+  04cc91  jmp       0x4ccb3
+  04cc93  mov       rcx, rdx
+  04cc96  mov       rax, r9
+  04cc99  call      qword ptr [rip + 0x138361]
+  04cc9f  mov       ecx, eax
+  04cca1  call      0x4ec30
+  04cca6  nop       
+  04cca7  mov       edx, eax
+  04cca9  or        rcx, 0xffffffffffffffff
+  04ccad  call      0x9db60
+  04ccb2  nop       
+  04ccb3  add       rsp, 0x78
+  04ccb7  ret       
+
+===== ntdll 0x4ccb3 (+0x21 jmp target) (rva 0x4ccb3) =====
+  04ccb3  add       rsp, 0x78
+  04ccb7  ret       
