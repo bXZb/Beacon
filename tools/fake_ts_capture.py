@@ -17,7 +17,7 @@ def log(m):
 def main():
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("0.0.0.0", 8082))
+    s.bind(("0.0.0.0", 8083))
     s.listen(4)
     log("fake ts bound 8082")
     c, addr = s.accept()
