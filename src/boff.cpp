@@ -1057,7 +1057,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					}
 						else {
 							spawn_log("bofload gate exec conv=", (long)conv);
-							command_shell_callback("bofwin skipped (api/nook/threads)", 32, CALLBACK_OUTPUT);
+							/* bofwin skipped: dev-era console spam on every unmasked BOF
+							 * fallback (the normal path); removed 2026-11-20 */
 							inlinefunc(args, alen);
 							spawn_log("bofload gate done", 0x7ffffffe);
 						}
