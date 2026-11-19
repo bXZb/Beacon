@@ -1,0 +1,23 @@
+kit thread launched (blob 0x266ec890000)
+kitbase=0x266ec8f0000
+ctrl connected: True
+out connected: True
+---- T+0 ----
+OUT: 52B 0000002c00010000000000004d6573736167652069732048454c4c4f5f4c4956455f544553542077697468203536373820617267
+OUT txt: ...,........Message is HELLO_LIVE_TEST with 5678 arg
+bg_event(45A10)=0x19c bg_queue(45A40)=0x2
+door_target=0x7ff863a4d9b2 door_ssn=0x1e
+---- T+4 ----
+OUT: (empty)
+bg_event(45A10)=0x19c bg_queue(45A40)=0x2
+door_target=0x7ff863a4d9b2 door_ssn=0x1e
+follow-up [z][b] sent to CTRL: True 459
+out reconnected (2nd client): True
+OUT2: 52B 0000002c00010000000000004d6573736167652069732048454c4c4f5f4c4956455f544553542077697468203536373820617267
+OUT2 txt: ...,........Message is HELLO_LIVE_TEST with 5678 arg
+OUT2b: (empty)
+---- T+final ----
+OUT: (empty)
+bg_event(45A10)=0x19c bg_queue(45A40)=0x2
+door_target=0x7ff863a4d9b2 door_ssn=0x1e
+DONE

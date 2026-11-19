@@ -178,8 +178,10 @@ BOOL udc2_init(void) {
 		return udc2_enabled();
 
 	if (setting_int(SETTING_UDC2_LENGTH) != 1) {
-		post_error_na(96); /* bring-up probe: marker absent */
-		udc2.booted = TRUE; /* marker absent: this beacon is not UDC2 */
+		/* marker absent: this beacon is not UDC2. UDC2 bring-up is long
+		 * done (tier2 item6) - the one-shot error-96 probe only spammed
+		 * every non-UDC2 beacon's console once per lifecycle. */
+		udc2.booted = TRUE;
 		return FALSE;
 	}
 

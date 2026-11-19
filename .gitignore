@@ -51,6 +51,7 @@ arts.json
 checks.json
 r1_inbox.txt
 archive/live-scratch/_re/dec_tsi_beacons.py
+_re/dec_tsi_beacons.py
 llvm-out/
 __pycache__/
 *.pyc

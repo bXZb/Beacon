@@ -1,0 +1,154 @@
+watch IAT slots:
+  0x32030 KERNEL32.dll!VirtualAlloc
+  0x320e0 KERNEL32.dll!WaitForSingleObject
+  0x320e8 KERNEL32.dll!CreateEventW
+
+thread/context API call sites:
+  0x1e7d  KERNEL32.dll!VirtualAlloc
+  0x3b95  KERNEL32.dll!WaitForSingleObject
+  0x3be6  KERNEL32.dll!WaitForSingleObject
+  0x3c4c  KERNEL32.dll!WaitForSingleObject
+  0x3c99  KERNEL32.dll!WaitForSingleObject
+  0x44c5  KERNEL32.dll!CreateEventW
+  0x45ec  KERNEL32.dll!WaitForSingleObject
+  0x45ff  KERNEL32.dll!WaitForSingleObject
+  0xdd4b  KERNEL32.dll!WaitForSingleObject
+
+===== 0x4170 bg thread creation (0x4170-0x4300) =====
+  004170  mov       qword ptr [rsp + 8], rbx
+  004175  push      rdi
+  004176  sub       rsp, 0x570
+  00417d  mov       rax, qword ptr [rip + 0x3eebc]   ; ->0x43040
+  004184  xor       rax, rsp
+  004187  mov       qword ptr [rsp + 0x560], rax
+  00418f  mov       rdi, rdx
+  004192  mov       rbx, qword ptr [rip + 0x41857]   ; ->0x459f0
+  004199  test      rbx, rbx
+  00419c  jne       0x41a5
+  00419e  xor       eax, eax
+  0041a0  jmp       0x42d5
+  0041a5  mov       qword ptr [rsp + 0x60], 0
+  0041ae  xor       edx, edx
+  0041b0  mov       r8d, 0x4d0
+  0041b6  lea       rcx, [rsp + 0x90]
+  0041be  call      0x30780
+  0041c3  mov       dword ptr [rsp + 0x68], 0
+  0041cb  xorps     xmm0, xmm0
+  0041ce  movups    xmmword ptr [rsp + 0x70], xmm0
+  0041d3  xorps     xmm1, xmm1
+  0041d6  movdqu    xmmword ptr [rsp + 0x80], xmm1
+  0041df  mov       r8, 0xffffffffffffffff
+  0041e6  inc       r8
+  0041e9  cmp       byte ptr [rdi + r8], 0
+  0041ee  jne       0x41e6
+  0041f0  mov       rdx, rdi
+  0041f3  lea       rcx, [rsp + 0x70]
+  0041f8  call      0x48e0
+  0041fd  nop       
+  0041fe  lea       rdx, [rsp + 0x70]
+  004203  call      0x7220
+  004208  test      rax, rax
+  00420b  jne       0x4211
+  00420d  mov       rax, qword ptr [rbx + 0x10]
+  004211  mov       qword ptr [rsp + 0x28], rax
+  004216  lea       rdx, [rsp + 0x60]
+  00421b  mov       rcx, rbx
+  00421e  call      0x5750
+  004223  test      al, al
+  004225  je        0x4291
+  004227  mov       dword ptr [rsp + 0xc0], 0x10000b
+  004232  lea       r8, [rsp + 0x90]
+  00423a  mov       rdx, qword ptr [rsp + 0x60]
+  00423f  mov       rcx, rbx
+  004242  call      0x5510
+  004247  test      al, al
+  004249  je        0x4291
+  00424b  lea       rax, [rip - 0x6e2]
+  004252  mov       qword ptr [rsp + 0x110], rax
+  00425a  mov       qword ptr [rsp + 0x118], 0
+  004266  lea       r8, [rsp + 0x90]
+  00426e  mov       rdx, qword ptr [rsp + 0x60]
+  004273  mov       rcx, rbx
+  004276  call      0x5630
+  00427b  test      al, al
+  00427d  je        0x4291
+  00427f  lea       r8, [rsp + 0x68]
+  004284  mov       rdx, qword ptr [rsp + 0x60]
+  004289  mov       rcx, rbx
+  00428c  call      0x53f0
+  004291  mov       rbx, qword ptr [rsp + 0x60]
+  004296  mov       rdx, qword ptr [rsp + 0x88]
+  00429e  cmp       rdx, 0xf
+  0042a2  jbe       0x42d2
+  0042a4  inc       rdx
+  0042a7  mov       rcx, qword ptr [rsp + 0x70]
+  0042ac  mov       rax, rcx
+  0042af  cmp       rdx, 0x1000
+  0042b6  jb        0x42cd
+  0042b8  add       rdx, 0x27
+  0042bc  mov       rcx, qword ptr [rcx - 8]
+  0042c0  sub       rax, rcx
+  0042c3  add       rax, -8
+  0042c7  cmp       rax, 0x1f
+  0042cb  ja        0x42f6
+  0042cd  call      0x106dc
+  0042d2  mov       rax, rbx
+  0042d5  mov       rcx, qword ptr [rsp + 0x560]
+  0042dd  xor       rcx, rsp
+  0042e0  call      0x10310
+  0042e5  mov       rbx, qword ptr [rsp + 0x580]
+  0042ed  add       rsp, 0x570
+  0042f4  pop       rdi
+  0042f5  ret       
+  0042f6  call      0x196e4
+  0042fb  int3      
+  0042fc  int3      
+  0042fd  int3      
+  0042fe  int3      
+  0042ff  int3      
+
+===== site 0x44c5 KERNEL32.dll!CreateEventW (0x4455-0x4515) =====
+  004455  test      dword ptr [rbx], 0xfff88300
+  00445b  je        0x460e
+  004461  mov       rdx, qword ptr [rip + 0x3f7e0]   ; ->0x43c48
+  004468  mov       ecx, eax
+  00446a  call      qword ptr [rip + 0x2dcd8]   ; KERNEL32.dll!TlsSetValue
+  004470  test      eax, eax
+  004472  je        0x460e
+  004478  mov       qword ptr [rsp + 0x50], rbp
+  00447d  mov       rax, qword ptr [rip + 0x4156c]   ; ->0x459f0
+  004484  mov       qword ptr [rsp + 0x48], rax
+  004489  mov       dword ptr [rsp + 0x40], r14d
+  00448e  mov       qword ptr [rsp + 0x30], rdi
+  004493  mov       dword ptr [rsp + 0x38], ebx
+  004497  mov       dword ptr [rsp + 0x3c], r13d
+  00449c  lea       rcx, [rsp + 0x30]
+  0044a1  call      0x3f00
+  0044a6  mov       rbx, rax
+  0044a9  test      rax, rax
+  0044ac  je        0x460e
+  0044b2  test      esi, esi
+  0044b4  jne       0x45f7
+  0044ba  xor       r9d, r9d
+  0044bd  xor       r8d, r8d
+  0044c0  lea       edx, [rsi + 1]
+  0044c3  xor       ecx, ecx
+  0044c5  call      qword ptr [rip + 0x2dc1d]   ; KERNEL32.dll!CreateEventW
+  0044cb  mov       qword ptr [rip + 0x4153e], rax   ; ->0x45a10
+  0044d2  test      rax, rax
+  0044d5  je        0x460e
+  0044db  mov       rdx, rbp
+  0044de  call      0x4170
+  0044e3  mov       r15, rax
+  0044e6  test      rax, rax
+  0044e9  je        0x460e
+  0044ef  nop       
+  0044f0  xor       ecx, ecx
+  0044f2  call      qword ptr [rip + 0x2dbd0]   ; KERNEL32.dll!SetLastError
+  0044f8  mov       dword ptr [rsp + 0x58], r13d
+  0044fd  mov       qword ptr [rsp + 0x28], r13
+  004502  lea       rax, [rsp + 0x58]
+  004507  mov       qword ptr [rsp + 0x20], rax
+  00450c  xor       r9d, r9d
+  00450f  xor       r8d, r8d
+  004512  xor       edx, edx

@@ -1,0 +1,227 @@
+ntdll build: 3341331
+export: RtlUserThreadStart rva=0x4cc70
+export: LdrInitializeThunk rva=0x75c20
+
+===== ntdll!RtlUserThreadStart (rva 0x4cc70) =====
+  04cc70  sub       rsp, 0x78
+  04cc74  mov       r9, rcx
+  04cc77  mov       rax, qword ptr [rip + 0x11f372]
+  04cc7e  test      rax, rax
+  04cc81  je        0x4cc93
+  04cc83  mov       r8, rdx
+  04cc86  mov       rdx, rcx
+  04cc89  xor       ecx, ecx
+  04cc8b  call      qword ptr [rip + 0x13836f]
+  04cc91  jmp       0x4ccb3
+
+>>> instruction at RtlUserThreadStart+0x21: jmp 0x4ccb3
+
+===== kit sub_5750 (rva 0x5750) =====
+  005750  mov       qword ptr [rsp + 8], rbx
+  005755  mov       qword ptr [rsp + 0x18], rsi
+  00575a  push      rdi
+  00575b  sub       rsp, 0x80
+  005762  mov       rax, qword ptr [rip + 0x3d8d7]
+  005769  xor       rax, rsp
+  00576c  mov       qword ptr [rsp + 0x78], rax
+  005771  mov       rdi, rdx
+  005774  mov       rsi, qword ptr [rsp + 0xb8]
+  00577c  mov       rax, qword ptr [rcx]
+  00577f  mov       rbx, qword ptr [rax + 0x30]
+  005783  mov       rax, qword ptr [rbx + 8]
+  005787  cmp       byte ptr [rax + 0x19], 0
+  00578b  jne       0x57ab
+  00578d  nop       dword ptr [rax]
+  005790  cmp       dword ptr [rax + 0x20], 0xaf18cfb0
+  005797  jae       0x579f
+  005799  mov       rax, qword ptr [rax + 0x10]
+  00579d  jmp       0x57a5
+  00579f  mov       rbx, rax
+  0057a2  mov       rax, qword ptr [rax]
+  0057a5  cmp       byte ptr [rax + 0x19], 0
+  0057a9  je        0x5790
+  0057ab  cmp       byte ptr [rbx + 0x19], 0
+  0057af  jne       0x58e0
+  0057b5  cmp       dword ptr [rbx + 0x20], 0xaf18cfb0
+  0057bc  ja        0x58e0
+  0057c2  mov       ecx, dword ptr [rcx + 8]
+  0057c5  test      ecx, ecx
+  0057c7  je        0x586e
+  0057cd  sub       ecx, 1
+  0057d0  je        0x57de
+  0057d2  cmp       ecx, 1
+  0057d5  je        0x57de
+  0057d7  xor       al, al
+  0057d9  jmp       0x58be
+  0057de  lea       rcx, [rip + 0x40233]
+  0057e5  call      qword ptr [rip + 0x2c92d]
+  0057eb  mov       rdx, qword ptr [rbx + 0x30]
+  0057ef  mov       qword ptr [rip + 0x4020a], rdx
+  0057f6  mov       eax, dword ptr [rbx + 0x28]
+  0057f9  mov       dword ptr [rip + 0x40209], eax
+  0057ff  test      rdx, rdx
+  005802  jne       0x5818
+  005804  lea       rcx, [rip + 0x4020d]
+  00580b  call      qword ptr [rip + 0x2c90f]
+  005811  xor       al, al
+  005813  jmp       0x58be
+  005818  xor       eax, eax
+  00581a  mov       qword ptr [rsp + 0x50], rax
+  00581f  mov       qword ptr [rsp + 0x48], rax
+  005824  mov       qword ptr [rsp + 0x40], rax
+  005829  mov       qword ptr [rsp + 0x38], rax
+
+===== kit sub_5510 (rva 0x5510) =====
+  005510  mov       qword ptr [rsp + 8], rbx
+  005515  mov       qword ptr [rsp + 0x20], rsi
+  00551a  push      rdi
+  00551b  sub       rsp, 0x40
+  00551f  mov       rax, qword ptr [rip + 0x3db1a]
+  005526  xor       rax, rsp
+  005529  mov       qword ptr [rsp + 0x38], rax
+  00552e  mov       rsi, r8
+  005531  mov       rdi, rdx
+  005534  mov       rax, qword ptr [rcx]
+  005537  mov       rbx, qword ptr [rax + 0x30]
+  00553b  mov       rax, qword ptr [rbx + 8]
+  00553f  cmp       byte ptr [rax + 0x19], 0
+  005543  jne       0x5560
+  005545  cmp       dword ptr [rax + 0x20], 0x6d22f884
+  00554c  jae       0x5554
+  00554e  mov       rax, qword ptr [rax + 0x10]
+  005552  jmp       0x555a
+  005554  mov       rbx, rax
+  005557  mov       rax, qword ptr [rax]
+  00555a  cmp       byte ptr [rax + 0x19], 0
+  00555e  je        0x5545
+  005560  cmp       byte ptr [rbx + 0x19], 0
+  005564  jne       0x561f
+
+===== kit sub_5630 (rva 0x5630) =====
+  005630  mov       qword ptr [rsp + 8], rbx
+  005635  mov       qword ptr [rsp + 0x20], rsi
+  00563a  push      rdi
+  00563b  sub       rsp, 0x40
+  00563f  mov       rax, qword ptr [rip + 0x3d9fa]
+  005646  xor       rax, rsp
+  005649  mov       qword ptr [rsp + 0x38], rax
+  00564e  mov       rsi, r8
+  005651  mov       rdi, rdx
+  005654  mov       rax, qword ptr [rcx]
+  005657  mov       rbx, qword ptr [rax + 0x30]
+  00565b  mov       rax, qword ptr [rbx + 8]
+  00565f  cmp       byte ptr [rax + 0x19], 0
+  005663  jne       0x5680
+  005665  cmp       dword ptr [rax + 0x20], 0xffa0bf10
+  00566c  jae       0x5674
+  00566e  mov       rax, qword ptr [rax + 0x10]
+  005672  jmp       0x567a
+  005674  mov       rbx, rax
+  005677  mov       rax, qword ptr [rax]
+  00567a  cmp       byte ptr [rax + 0x19], 0
+  00567e  je        0x5665
+  005680  cmp       byte ptr [rbx + 0x19], 0
+  005684  jne       0x573f
+
+===== kit sub_53f0 (rva 0x53f0) =====
+  0053f0  mov       qword ptr [rsp + 8], rbx
+  0053f5  mov       qword ptr [rsp + 0x20], rsi
+  0053fa  push      rdi
+  0053fb  sub       rsp, 0x40
+  0053ff  mov       rax, qword ptr [rip + 0x3dc3a]
+  005406  xor       rax, rsp
+  005409  mov       qword ptr [rsp + 0x38], rax
+  00540e  mov       rsi, r8
+  005411  mov       rdi, rdx
+  005414  mov       rax, qword ptr [rcx]
+  005417  mov       rbx, qword ptr [rax + 0x30]
+  00541b  mov       rax, qword ptr [rbx + 8]
+  00541f  cmp       byte ptr [rax + 0x19], 0
+  005423  jne       0x5440
+  005425  cmp       dword ptr [rax + 0x20], 0x5a4bc3d0
+  00542c  jae       0x5434
+
+===== kit sub_7220 (rva 0x7220) =====
+  007220  mov       qword ptr [rsp + 8], rbx
+  007225  mov       qword ptr [rsp + 0x18], rsi
+  00722a  mov       qword ptr [rsp + 0x20], rdi
+  00722f  push      rbp
+  007230  push      r12
+  007232  push      r13
+  007234  push      r14
+  007236  push      r15
+  007238  lea       rbp, [rsp - 0xc0]
+  007240  sub       rsp, 0x1c0
+  007247  mov       rax, qword ptr [rip + 0x3bdf2]
+  00724e  xor       rax, rsp
+  007251  mov       qword ptr [rbp + 0xb0], rax
+  007258  mov       rbx, rdx
+  00725b  xor       r12d, r12d
+  00725e  mov       qword ptr [rsp + 0x20], r12
+  007263  mov       rsi, qword ptr [rdx + 0x10]
+  007267  mov       r14, rdx
+  00726a  mov       r15, qword ptr [rdx + 0x18]
+  00726e  cmp       r15, 0xf
+  007272  jbe       0x7277
+  007274  mov       r14, qword ptr [rdx]
+  007277  test      rsi, rsi
+  00727a  je        0x7724
+  007280  mov       r8, rsi
+  007283  mov       edx, 0x21
+  007288  mov       rcx, r14
+  00728b  call      0x306c0
+  007290  mov       rdi, rax
+  007293  test      rax, rax
+  007296  je        0x7724
+  00729c  sub       rdi, r14
+  00729f  lea       rcx, [rdi - 1]
+  0072a3  cmp       rcx, -3
+  0072a7  ja        0x7724
+  0072ad  lea       rcx, [rsi - 1]
+  0072b1  cmp       rdi, rcx
+  0072b4  je        0x7724
+  0072ba  xorps     xmm0, xmm0
+  0072bd  movups    xmmword ptr [rbp + 0x50], xmm0
+  0072c1  xorps     xmm1, xmm1
+  0072c4  movdqu    xmmword ptr [rbp + 0x60], xmm1
+  0072c9  mov       r8, rdi
+  0072cc  cmp       rsi, rdi
+  0072cf  cmovb     r8, rsi
+  0072d3  mov       rdx, rbx
+  0072d6  cmp       r15, 0xf
+  0072da  jbe       0x72df
+  0072dc  mov       rdx, qword ptr [rbx]
+  0072df  lea       rcx, [rbp + 0x50]
+  0072e3  call      0x48e0
+  0072e8  nop       
+  0072e9  inc       rdi
+  0072ec  xorps     xmm0, xmm0
+  0072ef  movups    xmmword ptr [rbp + 0x30], xmm0
+  0072f3  mov       qword ptr [rbp + 0x40], r12
+  0072f7  mov       qword ptr [rbp + 0x48], r12
+  0072fb  mov       rax, qword ptr [rbx + 0x10]
+  0072ff  cmp       rax, rdi
+  007302  jb        0x775c
+  007308  sub       rax, rdi
+  00730b  mov       r13, 0xffffffffffffffff
+  007312  mov       r8, r13
+  007315  cmp       rax, r13
+  007318  cmovb     r8, rax
+
+===== kit sub_48e0 (rva 0x48e0) =====
+  0048e0  push      rbx
+  0048e2  push      rbp
+  0048e3  push      rsi
+  0048e4  push      r14
+  0048e6  sub       rsp, 0x28
+  0048ea  movabs    rsi, 0x7fffffffffffffff
+  0048f4  mov       rbx, r8
+  0048f7  mov       rbp, rdx
+  0048fa  mov       r14, rcx
+  0048fd  cmp       r8, rsi
+  004900  ja        0x49d6
+  004906  cmp       rbx, 0xf
+  00490a  ja        0x492c
+  00490c  mov       qword ptr [rcx + 0x10], rbx
+  004910  mov       qword ptr [rcx + 0x18], 0xf
+  004918  call      0x30040

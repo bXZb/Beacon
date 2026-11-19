@@ -16,6 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate buildstamp header (C-26 build identity, ported from feat build.yml)
+        shell: pwsh
+        run: |
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          $utc = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+          $run = $env:GITHUB_RUN_ID
+          $stamp = "bstamp:$sha`:$utc`:$run"
+          $hdr = "#pragma once`r`n#define BUILDSTAMP_STRING `"$stamp`"`r`n"
+          Set-Content -Path src/buildstamp.h -Value $hdr -NoNewline
+          Write-Host "buildstamp: $stamp"
+
       - name: Configure
         run: cmake --preset default
 
@@ -46,6 +57,12 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate buildstamp header (C-26 build identity)
+        run: |
+          STAMP="bstamp:${GITHUB_SHA:0:7}:$(date -u +%Y%m%dTHH%M%SZ):${GITHUB_RUN_ID}"
+          printf '#pragma once\n#define BUILDSTAMP_STRING "%s"\n' "$STAMP" > src/buildstamp.h
+          echo "buildstamp: $STAMP"
 
       - name: Cache cross toolchain
         uses: actions/cache@v4

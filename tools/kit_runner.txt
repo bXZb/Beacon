@@ -1,0 +1,111 @@
+00003d40  test     rcx, rcx
+00003d43  je       0x3ef2
+00003d49  push     rbp
+00003d4a  lea      rbp, [rsp - 0x57]
+00003d4f  sub      rsp, 0xe0
+00003d56  mov      rax, qword ptr [rip + 0x3f2e3]
+00003d5d  xor      rax, rsp
+00003d60  mov      qword ptr [rbp + 0x47], rax
+00003d64  mov      edx, dword ptr [rcx + 8]
+00003d67  xor      eax, eax
+00003d69  mov      r8, qword ptr [rcx]
+00003d6c  xorps    xmm0, xmm0
+00003d6f  mov      dword ptr [rbp - 0x1d], eax
+00003d72  mov      dword ptr [rbp - 0xd], eax
+00003d75  mov      qword ptr [rbp + 0x1f], rax
+00003d79  mov      rax, qword ptr [rcx + 0x18]
+00003d7d  mov      qword ptr [rbp - 0x39], rax
+00003d81  mov      eax, dword ptr [rcx + 0xc]
+00003d84  mov      dword ptr [rbp - 0x11], eax
+00003d87  mov      eax, dword ptr [rip + 0x3fe9b]
+00003d8d  mov      qword ptr [rsp + 0xf0], rbx
+00003d95  xor      ebx, ebx
+00003d97  mov      dword ptr [rbp + 0x37], eax
+00003d9a  mov      eax, dword ptr [rcx + 0x10]
+00003d9d  mov      dword ptr [rbp + 0x3b], eax
+00003da0  mov      qword ptr [rbp - 0x31], rcx
+00003da4  mov      qword ptr [rbp - 0x29], r8
+00003da8  mov      dword ptr [rbp - 0x21], edx
+00003dab  mov      qword ptr [rbp - 0x19], rbx
+00003daf  mov      qword ptr [rbp - 1], 0xffffffffffffffff
+00003db7  mov      qword ptr [rbp + 7], r8
+00003dbb  mov      qword ptr [rbp + 0xf], r8
+00003dbf  mov      dword ptr [rbp + 0x17], edx
+00003dc2  mov      dword ptr [rbp + 0x1b], edx
+00003dc5  movdqa   xmmword ptr [rbp + 0x27], xmm0
+00003dca  cmp      edx, 4
+00003dcd  jb       0x3e0c
+00003dcf  mov      ecx, dword ptr [r8]
+00003dd2  call     qword ptr [rip + 0x2e5b8]
+00003dd8  mov      rcx, qword ptr [rbp + 0xf]
+00003ddc  mov      edx, dword ptr [rbp + 0x17]
+00003ddf  add      rcx, 4
+00003de3  sub      edx, 4
+00003de6  movsxd   r8, eax
+00003de9  mov      qword ptr [rbp + 0xf], rcx
+00003ded  mov      dword ptr [rbp + 0x17], edx
+00003df0  test     eax, eax
+00003df2  je       0x3e0c
+00003df4  cmp      edx, r8d
+00003df7  jl       0x3e0c
+00003df9  sub      edx, r8d
+00003dfc  lea      rax, [rcx + r8]
+00003e00  mov      qword ptr [rbp + 0xf], rax
+00003e04  mov      dword ptr [rbp + 0x17], edx
+00003e07  test     rcx, rcx
+00003e0a  jne      0x3e0f
+00003e0c  mov      rcx, rbx
+00003e0f  mov      edx, 3
+00003e14  mov      qword ptr [rsp + 0x38], rbx
+00003e19  mov      dword ptr [rsp + 0x30], ebx
+00003e1d  mov      dword ptr [rsp + 0x28], 0x100000
+00003e25  mov      qword ptr [rbp - 9], rcx
+00003e29  lea      r9d, [rdx - 2]
+00003e2d  mov      dword ptr [rsp + 0x20], 0x100000
+00003e35  lea      r8d, [rdx + 3]
+00003e39  call     qword ptr [rip + 0x2e2f1]
+00003e3f  mov      qword ptr [rbp - 1], rax
+00003e43  cmp      rax, -1
+00003e47  jne      0x3e8d
+00003e49  call     qword ptr [rip + 0x2e209]
+00003e4f  lea      rcx, [rbp - 0x49]
+00003e53  mov      qword ptr [rsp + 0x30], rbx
+00003e58  mov      dword ptr [rsp + 0x28], ebx
+00003e5c  xor      r9d, r9d
+00003e5f  mov      qword ptr [rsp + 0x20], rcx
+00003e64  mov      r8d, eax
+00003e67  mov      ecx, 0x3300
+00003e6c  mov      qword ptr [rbp - 0x49], rbx
+00003e70  xor      edx, edx
+00003e72  call     qword ptr [rip + 0x2e220]
+00003e78  mov      rcx, qword ptr [rbp - 0x49]
+00003e7c  call     qword ptr [rip + 0x2e206]
+00003e82  lea      rcx, [rbp - 0x39]
+00003e86  call     0x1860
+00003e8b  jmp      0x3ed6
+00003e8d  mov      ecx, dword ptr [rbp + 0x37]
+00003e90  mov      rdx, rax
+00003e93  call     qword ptr [rip + 0x2e2af]
+00003e99  nop      dword ptr [rax]
+00003ea0  mov      rcx, qword ptr [rbp - 1]
+00003ea4  xor      edx, edx
+00003ea6  call     qword ptr [rip + 0x2e204]
+00003eac  test     eax, eax
+00003eae  jne      0x3ecd
+00003eb0  mov      ecx, 0x3e8
+00003eb5  inc      ebx
+00003eb7  call     qword ptr [rip + 0x2e193]
+00003ebd  cmp      ebx, 0x3c
+00003ec0  jne      0x3ea0
+00003ec2  lea      rcx, [rbp - 0x39]
+00003ec6  call     0x1860
+00003ecb  jmp      0x3ed6
+00003ecd  lea      rcx, [rbp - 0x39]
+00003ed1  call     0x1670
+00003ed6  mov      rbx, qword ptr [rsp + 0xf0]
+00003ede  mov      rcx, qword ptr [rbp + 0x47]
+00003ee2  xor      rcx, rsp
+00003ee5  call     0x10310
+00003eea  add      rsp, 0xe0
+00003ef1  pop      rbp
+00003ef2  ret      

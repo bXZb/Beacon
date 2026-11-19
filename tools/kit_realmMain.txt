@@ -1,0 +1,106 @@
+00004300  test     rcx, rcx
+00004303  je       0x46a3
+00004309  mov      qword ptr [rsp + 8], rbx
+0000430e  mov      qword ptr [rsp + 0x10], rbp
+00004313  mov      qword ptr [rsp + 0x18], rsi
+00004318  push     rdi
+00004319  push     r12
+0000431b  push     r13
+0000431d  push     r14
+0000431f  push     r15
+00004321  sub      rsp, 0x70
+00004325  mov      rax, qword ptr [rip + 0x3ed14]
+0000432c  xor      rax, rsp
+0000432f  mov      qword ptr [rsp + 0x60], rax
+00004334  mov      rdi, qword ptr [rcx + 8]
+00004338  test     rdi, rdi
+0000433b  je       0x4679
+00004341  mov      ebx, dword ptr [rcx + 0x10]
+00004344  test     ebx, ebx
+00004346  je       0x4679
+0000434c  xorps    xmm0, xmm0
+0000434f  xor      eax, eax
+00004351  movups   xmmword ptr [rsp + 0x30], xmm0
+00004356  movups   xmmword ptr [rsp + 0x40], xmm0
+0000435b  mov      qword ptr [rsp + 0x50], rax
+00004360  xor      r13d, r13d
+00004363  cmp      ebx, 4
+00004366  jae      0x4373
+00004368  mov      esi, r13d
+0000436b  mov      r14d, r13d
+0000436e  mov      r12d, r13d
+00004371  jmp      0x43eb
+00004373  mov      ecx, dword ptr [rdi]
+00004375  call     qword ptr [rip + 0x2e015]
+0000437b  mov      esi, eax
+0000437d  add      rdi, 4
+00004381  add      ebx, -4
+00004384  cmp      ebx, 4
+00004387  jae      0x4391
+00004389  mov      r14d, r13d
+0000438c  mov      r12d, r13d
+0000438f  jmp      0x43eb
+00004391  mov      ecx, dword ptr [rdi]
+00004393  call     qword ptr [rip + 0x2dff7]
+00004399  mov      r14d, eax
+0000439c  add      rdi, 4
+000043a0  sub      ebx, 4
+000043a3  cmp      ebx, 4
+000043a6  jae      0x43ad
+000043a8  mov      r12d, r13d
+000043ab  jmp      0x43eb
+000043ad  mov      ecx, dword ptr [rdi]
+000043af  call     qword ptr [rip + 0x2dfdb]
+000043b5  mov      r12d, eax
+000043b8  add      rdi, 4
+000043bc  sub      ebx, 4
+000043bf  cmp      ebx, 4
+000043c2  jb       0x43eb
+000043c4  mov      ecx, dword ptr [rdi]
+000043c6  call     qword ptr [rip + 0x2dfc4]
+000043cc  movsxd   rcx, eax
+000043cf  add      rdi, 4
+000043d3  sub      ebx, 4
+000043d6  test     eax, eax
+000043d8  je       0x43eb
+000043da  mov      rbp, rdi
+000043dd  cmp      ebx, ecx
+000043df  jl       0x43eb
+000043e1  add      rdi, rcx
+000043e4  sub      ebx, ecx
+000043e6  test     rbp, rbp
+000043e9  jne      0x43ee
+000043eb  mov      rbp, r13
+000043ee  cmp      r12d, 1
+000043f2  jne      0x4401
+000043f4  lea      rcx, [rip + 0x4161d]
+000043fb  call     qword ptr [rip + 0x2dccf]
+00004401  mov      ecx, 0x18
+00004406  call     0x10330
+0000440b  mov      qword ptr [rsp + 0x58], rax
+00004410  xorps    xmm0, xmm0
+00004413  xor      ecx, ecx
+00004415  movups   xmmword ptr [rax], xmm0
+00004418  mov      qword ptr [rax + 0x10], rcx
+0000441c  mov      edx, r12d
+0000441f  mov      rcx, rax
+00004422  call     0x35a0
+00004427  nop      
+00004428  mov      qword ptr [rip + 0x415c1], rax
+0000442f  xor      r8d, r8d
+00004432  xor      edx, edx
+00004434  xor      ecx, ecx
+00004436  call     qword ptr [rip + 0x2dc9c]
+0000443c  mov      qword ptr [rip + 0x415b5], rax
+00004443  test     rax, rax
+00004446  je       0x4620
+0000444c  call     qword ptr [rip + 0x2dcae]
+00004452  mov      dword ptr [rip + 0x3f7d0], eax
+00004458  cmp      eax, -1
+0000445b  je       0x460e
+00004461  mov      rdx, qword ptr [rip + 0x3f7e0]
+00004468  mov      ecx, eax
+0000446a  call     qword ptr [rip + 0x2dcd8]
+00004470  test     eax, eax
+00004472  je       0x460e
+00004478  mov      qword ptr [rsp + 0x50], rbp
