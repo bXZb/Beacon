@@ -60,7 +60,7 @@ jobs:
 
       - name: Generate buildstamp header (C-26 build identity)
         run: |
-          STAMP="bstamp:${GITHUB_SHA:0:7}:$(date -u +%Y%m%dTHH%M%SZ):${GITHUB_RUN_ID}"
+          STAMP="bstamp:${GITHUB_SHA:0:7}:$(date -u +%Y%m%dT%H%M%SZ):${GITHUB_RUN_ID}"
           printf '#pragma once\n#define BUILDSTAMP_STRING "%s"\n' "$STAMP" > src/buildstamp.h
           echo "buildstamp: $STAMP"
 
