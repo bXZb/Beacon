@@ -189,8 +189,15 @@ function(beacon_set_link tgt output_name)
   # which once pushed a section across a page boundary and broke the
   # three-pass convergence chain: 0fad259 forensics)
   set(_map_name "${output_name}")
-  if(ARGV2)
-    set(_map_name "${ARGV2}")
+  # NOTE: never touch ARGV2 here — for 2-arg calls it is NOT defined in
+  # this function's scope and CMake resolves the name through the CALLER's
+  # scope: the caller (add_beacon_dll) has its OWN ARGV2 = the sources-list
+  # variable name, so every final-link map became BEACON_WININET_SOURCES.map
+  # (msvc: two targets writing one map -> LNK1104; llvm: baseline map gone ->
+  # gen_yara FileNotFoundError). ARGN is always function-local: use it.
+  list(LENGTH ARGN _map_argc)
+  if(_map_argc GREATER 0)
+    list(GET ARGN 0 _map_name)
   endif()
   target_link_directories(${tgt} PRIVATE "${CMAKE_SOURCE_DIR}")
   if(BEACON_LLVM AND XWIN_DIR)
