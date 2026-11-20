@@ -5,4 +5,7 @@
  * C:\Users\Public\spawn_trace.txt. */
 #include <windows.h>
 
+#ifdef __cplusplus
+extern "C"
+#endif
 void spawn_log(const char * msg, long v);
