@@ -31,7 +31,7 @@ param(
     [ValidateSet('wininet','winhttp')]
     [string]$HttpLibrary = 'wininet',
 
-    # x64 (default) | Win32 (CS 4.9 sleeve/beacon.dll, 明文上限 247808)
+    # x64 (default) | Win32 (CS 4.9 sleeve/beacon.dll)
     [ValidateSet('x64','Win32')]
     [string]$Platform = 'x64'
 )
@@ -67,11 +67,6 @@ foreach ($p in $ExtraProperties) {
 
 $projects = if ($Project -eq 'all') { @('beacon','dnsb','extc2','pivot') } else { @($Project) }
 
-# 套筒明文上限：x64 wininet 走 stageless 容器 271852；x64 winhttp TS 槽 309248；
-# x86 wininet sleeve/beacon.dll 编码 247840 → 明文 247808；x86 winhttp 249888-32=249856
-$ceil = if ($Platform -eq 'Win32') {
-    if ($HttpLibrary -eq 'winhttp') { 249856 } else { 247808 }
-} elseif ($HttpLibrary -eq 'winhttp') { 309248 } else { 271852 }
 $platDir = if ($Platform -eq 'Win32') { 'Win32' } else { 'x64' }
 
 $results = @()
@@ -95,16 +90,9 @@ foreach ($name in $projects) {
         Project   = $name
         Dll       = $dll
         Bytes     = $bytes
-        Stageless = if ($bytes -le $ceil) { "OK (+$($ceil - $bytes))" } else { "OVER (-$($bytes - $ceil))" }
-        Map       = (Test-Path ([IO.Path]::ChangeExtension($dll, '.map')))
+            Map       = (Test-Path ([IO.Path]::ChangeExtension($dll, '.map')))
     }
 }
 
 Write-Host ''
-$results | Format-Table Project, Bytes, Stageless, Map -AutoSize
-$worst = ($results | Measure-Object -Property Bytes -Maximum).Maximum
-if ($worst -gt $ceil) {
-    Write-Host "==> WARNING: largest DLL exceeds stageless ceiling $ceil (needs more shrinking)" -ForegroundColor Yellow
-} else {
-    Write-Host '==> All builds OK, all within stageless ceiling' -ForegroundColor Green
-}
+$results | Format-Table Project, Bytes, Map -AutoSize

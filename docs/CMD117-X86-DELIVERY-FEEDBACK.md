@@ -1,5 +1,10 @@
 # x86 套筒交付反馈
 
+> **[2026-11-20 勘误]** 本文提到的 sleeve/stageless 体积上限（247808/309248 等）是
+> 官方容器时代（官方 artifact exe .data 节 / 官方 4.9.1 镜像 blob 槽）的约束，
+> 已被自编译 TS + own-exe/own-sleeve 交付链全部突破——DLL 本体当前无体积上限
+> （详见 memory beacon-delivery-size-caps.md 2026-11-20 考古）。正文保留作历史记录。
+
 接手会话把结果写进**本文件**。不要改 `CMD117-X86-DELIVERY-HANDOFF.md`。
 
 填完后告诉原来的会话：读 `docs/CMD117-X86-DELIVERY-FEEDBACK.md`。

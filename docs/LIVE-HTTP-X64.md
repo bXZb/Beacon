@@ -1,5 +1,10 @@
 # Live 结论：CS 4.9.1 协议兼容 HTTP WinINet x64
 
+> **[2026-11-20 勘误]** 本文提到的 sleeve/stageless 体积上限（247808/309248 等）是
+> 官方容器时代（官方 artifact exe .data 节 / 官方 4.9.1 镜像 blob 槽）的约束，
+> 已被自编译 TS + own-exe/own-sleeve 交付链全部突破——DLL 本体当前无体积上限
+> （详见 memory beacon-delivery-size-caps.md 2026-11-20 考古）。正文保留作历史记录。
+
 - 窗口：2026-09-02–06
 - 目标：`CobaltStrikeBeaconCppSource-main` 4.9.1 分支，HTTP WinINet x64
 - 客户端：`4.9.1.jar` + JDK 21 + Headless Aggressor（`grok-hl*`）
