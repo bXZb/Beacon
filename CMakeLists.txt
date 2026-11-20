@@ -209,12 +209,26 @@ function(beacon_set_link tgt output_name)
   if(BEACON_LLVM)
     list(APPEND _link_opts /Brepro)
   endif()
+  message(STATUS "beacon_set_link ${tgt}: map=${_map_name} opts=${_link_opts}")
   target_link_options(${tgt} PRIVATE ${_link_opts})
   set_target_properties(${tgt} PROPERTIES
     OUTPUT_NAME "${output_name}"
     PREFIX ""
     SUFFIX ".dll"
     LINKER_LANGUAGE CXX)
+endfunction()
+
+function(beacon_pass_out_dirs tgt dir)
+  # plain target-level RUNTIME_OUTPUT_DIRECTORY LOSES to the global
+  # CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CONFIG> vars set at the top of this file
+  # (why the old p1/p2 images silently landed in out/ and 6611bf9 hit
+  # 'multiple rules generate out/beacon.x64.dll'). Set every variant.
+  foreach(_p RUNTIME LIBRARY ARCHIVE)
+    set_target_properties(${tgt} PROPERTIES ${_p}_OUTPUT_DIRECTORY "${dir}")
+    foreach(_cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+      set_target_properties(${tgt} PROPERTIES ${_p}_OUTPUT_DIRECTORY_${_cfg} "${dir}")
+    endforeach()
+  endforeach()
 endfunction()
 
 function(add_beacon_dll target_name output_name sources extra_defs)
@@ -249,10 +263,7 @@ function(add_beacon_dll target_name output_name sources extra_defs)
     # directory's embedded name must be byte-identical across passes or the
     # .rdata layout shifts between links (convergence forensics 2026-11-20)
     beacon_set_link(${target_name}_p1 "${output_name}" "${output_name}.p1")
-    set_target_properties(${target_name}_p1 PROPERTIES
-      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}/img1"
-      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}/img1"
-      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}/img1")
+    beacon_pass_out_dirs(${target_name}_p1 "${_layout_dir}/img1")
 
     add_custom_command(
       OUTPUT "${_layout_dir}/layout.h"
@@ -274,10 +285,7 @@ function(add_beacon_dll target_name output_name sources extra_defs)
       $<TARGET_OBJECTS:${target_name}_rest>
       $<TARGET_OBJECTS:${target_name}_g2>)
     beacon_set_link(${target_name}_p2 "${output_name}" "${output_name}.p2")
-    set_target_properties(${target_name}_p2 PROPERTIES
-      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}/img2"
-      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}/img2"
-      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}/img2")
+    beacon_pass_out_dirs(${target_name}_p2 "${_layout_dir}/img2")
 
     file(MAKE_DIRECTORY "${_layout_dir}/p2")
     add_custom_command(
