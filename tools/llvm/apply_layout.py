@@ -44,7 +44,7 @@ def write_layout_h(path, regions, soi):
         "#define BW_LAYOUT_REG_MAX    %d" % n,
         "#pragma section(\".bwlay\", read)",
         "__declspec(allocate(\".bwlay\"))",
-        "static const unsigned long long bw_layout_reg[BW_LAYOUT_REG_MAX][2] = {",
+        "static const volatile unsigned long long bw_layout_reg[BW_LAYOUT_REG_MAX][2] = {",
     ]
     for i in range(n):
         if i < len(regions):
@@ -54,7 +54,7 @@ def write_layout_h(path, regions, soi):
             lines.append("    {0ULL, 0ULL},")
     lines.append("};")
     lines.append("__declspec(allocate(\".bwlay\"))")
-    lines.append(f"static const unsigned long long bw_layout_reg_n = {len(regions)}ULL;")
+    lines.append(f"static const volatile unsigned long long bw_layout_reg_n = {len(regions)}ULL;")
     body = "\n".join(lines) + "\n"
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

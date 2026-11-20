@@ -37,7 +37,7 @@ TEST(spawn_trace_sink_gated_in_source) {
 	 * literal may only appear between the KDEBUG gate and its #else. */
 	std::string cpp = slurp("src/spawn.cpp");
 	std::string hdr = slurp("src/spawn_trace.h");
-	const char * path = "C:\\Users\\Public\\spawn_trace.txt";
+	const char * path = "C:\\\\Users\\\\Public\\\\spawn_trace.txt";
 	CHECK(cpp.find(path) != std::string::npos);
 	CHECK(cpp.find("#if defined(KDEBUG)") != std::string::npos);
 	size_t kdebug_pos = cpp.find("#if defined(KDEBUG)");
