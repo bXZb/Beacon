@@ -139,6 +139,9 @@ void g3_log(const char * msg, long v)
 	}
 }
 #endif
+#ifndef KDEBUG
+#define g3_log(msg, v) ((void)0)
+#endif
 
 /* Numeric tracing for the masked span: line is built purely on this stack
  * frame (no .rdata literals), file ops come from the caller's G3_IO copy

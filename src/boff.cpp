@@ -694,6 +694,8 @@ static void boftrace(const char * fmt, ...)
 	fprintf(f, "\n");
 	fclose(f);
 }
+#else
+#define boftrace(...) ((void)0)
 #endif
 
 /* crash triage (see src/crashdiag.cpp): first-chance VEH recorder for the

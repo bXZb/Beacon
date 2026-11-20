@@ -176,3 +176,7 @@ void spawn_log(const char * msg, long v)
 	CloseHandle(f);
 }
 #endif
+#else
+/* release: symbol kept (external callers) but does nothing */
+void spawn_log(const char * msg, long v) { (void)msg; (void)v; }
+#endif
