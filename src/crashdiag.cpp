@@ -80,6 +80,10 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 	if (InterlockedCompareExchange(&g_cd.fired, 1, 0) != 0)
 		return EXCEPTION_CONTINUE_SEARCH; /* one note per window */
 
+#ifndef KDEBUG
+	return EXCEPTION_CONTINUE_SEARCH; /* release: no on-target file diagnostics */
+#else
+
 	f = fopen("C:\\Users\\Public\\beacon-crashdiag.log", "a");
 	if (f == NULL)
 		return EXCEPTION_CONTINUE_SEARCH;
@@ -134,6 +138,7 @@ static LONG WINAPI cd_veh(PEXCEPTION_POINTERS ep)
 	fprintf(f, "\n");
 	fclose(f);
 	return EXCEPTION_CONTINUE_SEARCH;
+#endif
 }
 
 extern "C" void __cdecl crashdiag_arm(void)

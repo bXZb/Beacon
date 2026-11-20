@@ -301,6 +301,8 @@
     <BofWinDefine Condition="'$(BeaconBofWin)'!='true'"></BofWinDefine>
     <InjectPauseDefine Condition="'$(BeaconInjectPause)'=='true'">INJECT_PREEXEC_PAUSE;</InjectPauseDefine>
     <InjectPauseDefine Condition="'$(BeaconInjectPause)'!='true'"></InjectPauseDefine>
+    <KDebugDefine Condition="'$(BeaconKDebug)'=='true'">KDEBUG;</KDebugDefine>
+    <KDebugDefine Condition="'$(BeaconKDebug)'!='true'"></KDebugDefine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
@@ -402,7 +404,7 @@
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
-      <PreprocessorDefinitions>$(BofWinDefine)$(InjectPauseDefine)RefLoadSize=$(RefLoadSize);WIN32;NDEBUG;_WINDOWS;_USRDLL;WIN_X86;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>$(BofWinDefine)$(InjectPauseDefine)$(KDebugDefine)RefLoadSize=$(RefLoadSize);WIN32;NDEBUG;_WINDOWS;_USRDLL;WIN_X86;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader />
@@ -463,7 +465,7 @@ copy /Y "$(TargetPath)" "$(SolutionDir)bin\"</Command>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <PreprocessorDefinitions>$(BofWinDefine)$(InjectPauseDefine)RefLoadSize=$(RefLoadSize);WIN64;NDEBUG;_WINDOWS;_USRDLL;WIN_X64;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>$(BofWinDefine)$(InjectPauseDefine)$(KDebugDefine)RefLoadSize=$(RefLoadSize);WIN64;NDEBUG;_WINDOWS;_USRDLL;WIN_X64;REFLECTIVE_DLL_EXPORTS;REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR;REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN;_CRT_SECURE_NO_WARNINGS;LTM_DESC;USE_LTM;WIN32_LEAN_AND_MEAN;BEACON_TIER3;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader />

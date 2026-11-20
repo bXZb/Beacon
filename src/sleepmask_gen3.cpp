@@ -99,6 +99,8 @@ typedef struct {
 
 static G3_IO g_io;
 
+/* on-target trace sink: KDEBUG-only (release compiles to nothing) */
+#if defined(KDEBUG)
 void g3_log(const char * msg, long v)
 {
 	/* only ever called outside the masked window - reading the g_io copy
@@ -136,6 +138,7 @@ void g3_log(const char * msg, long v)
 		CloseHandle(f);
 	}
 }
+#endif
 
 /* Numeric tracing for the masked span: line is built purely on this stack
  * frame (no .rdata literals), file ops come from the caller's G3_IO copy
