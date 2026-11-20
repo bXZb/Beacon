@@ -681,6 +681,7 @@ static HMODULE bof_real_LoadLibraryA(const char * lib) {
 /* BOF-load trace: every relocation failure + dyn-import miss lands here
  * so a dist artifact that dies mid-load leaves a trail (No-Consolation
  * battle, 2026-10-19) */
+#if defined(KDEBUG)
 static void boftrace(const char * fmt, ...)
 {
 	FILE * f = fopen("C:/Users/Public/bof-loadtrace.log", "a");
@@ -693,6 +694,9 @@ static void boftrace(const char * fmt, ...)
 	fprintf(f, "\n");
 	fclose(f);
 }
+#else
+#define boftrace(...) ((void)0)
+#endif
 
 /* crash triage (see src/crashdiag.cpp): first-chance VEH recorder for the
  * BOF run window - the original exception survives the unwind failure */

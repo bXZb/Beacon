@@ -65,10 +65,16 @@ set(BEACON_COMMON_DEFS
 if("NDEBUG" IN_LIST BEACON_COMMON_DEFS)
   message(FATAL_ERROR "NDEBUG must not be an unconditional product def")
 endif()
-# File-logger spawn_trace is MSVC/live only. LLVM objects must not embed
-# C:\Users\Public\spawn_trace.txt (YARA + size). Header becomes a no-op.
-if(NOT BEACON_LLVM)
-  list(APPEND BEACON_COMMON_DEFS BW_SPAWN_TRACE)
+# On-target diagnostic sinks (spawn_log/boftrace/gen3_trace via the KD/KDF/
+# KDGEN3 macros in beacon.h). Release (default) compiles every sink to
+# nothing - no file writes, no IOCs; symbols stay (external callers link).
+# BEACON_KDEBUG=ON revives the four C:\Users\Public trace sinks for
+# bring-up battles. Supersedes the old MSVC-only BW_SPAWN_TRACE gate
+# (absorbed from feat 2026-11-20: release must be IOC-free on BOTH
+# toolchains - user-audited).
+option(BEACON_KDEBUG "On-target KDEBUG diagnostic sinks (release: IOC-free no-ops)" OFF)
+if(BEACON_KDEBUG)
+  list(APPEND BEACON_COMMON_DEFS KDEBUG)
 endif()
 
 set(BEACON_SYS_LIBS

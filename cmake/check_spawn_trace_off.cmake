@@ -1,5 +1,6 @@
 # Fail if a product DLL embeds the spawn_trace file-logger path.
-# Used as a CTest on the llvm preset (MSVC builds keep the logger).
+# Used as a CTest on release builds (the KDEBUG variant intentionally
+# carries the sinks; BEACON_KDEBUG=ON is diagnostics-only, never product).
 if(NOT DLL)
   message(FATAL_ERROR "check_spawn_trace_off.cmake requires -DDLL=<path>")
 endif()

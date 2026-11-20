@@ -89,6 +89,51 @@ typedef struct {
 } G3_IO;
 
 static G3_IO g_io;
+
+/* on-target trace sink: KDEBUG-only (release compiles to nothing) */
+#if defined(KDEBUG)
+void g3_log(const char * msg, long v)
+{
+	/* only ever called outside the masked window - reading the g_io copy
+	 * of .data and any CRT/IAT route is fine here */
+	HANDLE f;
+	char buf[96];
+	int i = 0;
+	const char * p = msg;
+
+	if (g_io.ok)
+		f = g_io.pCreateFileA(g_io.path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+		                      OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	else
+		f = CreateFileA("C:\\Users\\Public\\gen3_trace.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+		                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (f == INVALID_HANDLE_VALUE)
+		return;
+	while (*p && i < 70) buf[i++] = *p++;
+	if (v != 0x7fffffff) {
+		char num[16];
+		int n = 0;
+		long t = v;
+		if (t < 0) { buf[i++] = '-'; t = -t; }
+		do { num[n++] = (char)('0' + (t % 10)); t /= 10; } while (t);
+		while (n && i < 90) buf[i++] = num[--n];
+	}
+	buf[i++] = '\r';
+	buf[i++] = '\n';
+	if (g_io.ok) {
+		g_io.pWriteFile(f, buf, (DWORD)i, NULL, NULL);
+		g_io.pCloseHandle(f);
+	}
+	else {
+		WriteFile(f, buf, (DWORD)i, NULL, NULL);
+		CloseHandle(f);
+	}
+}
+#endif
+#ifndef KDEBUG
+#define g3_log(msg, v) ((void)0)
+#endif
+
 #endif
 
 typedef struct {

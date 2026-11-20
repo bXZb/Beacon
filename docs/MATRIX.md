@@ -1,5 +1,10 @@
 # 功能与矩阵完成度（2026-09-11）
 
+> **[2026-11-20 勘误]** 本文提到的 sleeve/stageless 体积上限（247808/309248 等）是
+> 官方容器时代（官方 artifact exe .data 节 / 官方 4.9.1 镜像 blob 槽）的约束，
+> 已被自编译 TS + own-exe/own-sleeve 交付链全部突破——DLL 本体当前无体积上限
+> （详见 memory beacon-delivery-size-caps.md 2026-11-20 考古）。正文保留作历史记录。
+
 范围：`CobaltStrikeBeaconCppSource-main` 分支 **`4.9.1`**，官方 4.9.1 TeamServer（`192.168.100.98:50050`），探针机 `192.168.100.198`。
 
 图例：**过** = 活体对官方 TS 行为符合；**失败** = 已测且未过；**范围外** = 明确未做，不要当缺口。
@@ -182,7 +187,8 @@ cna 新增 `smb_listener_create`/`tcp_listener_create`/`smb_link`/`unlink`（bin
 
 | 链 | 步骤 | 结果 |
 |---|---|---|
-| SMB bind | `spawn smb_li3 x64`（staging **282159**）→ 子自动 bind `\.\pipeegr3pipe` → `established link to parent` → INITIAL | **过**（INITIAL `140939900`） |
+| SMB bind | `spawn smb_li3 x64`（staging **282159**）→ 子自动 bind `\.\pipe
+egr3pipe` → `established link to parent` → INITIAL | **过**（INITIAL `140939900`） |
 | SMB 转发 | 经链 pwd（ALT `Current directory…`）/ shell `pivot-smb-marker`（OUTPUT）/ getuid（ALT `You are …Administrator (admin)`） | **过** |
 | TCP bind | `spawn tcp_li x64`（端口 4445）→ `established link to parent` → INITIAL `1362593722` | **过** |
 | TCP 转发 | pwd / shell `pivot-tcp-marker` | **过** |

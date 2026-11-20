@@ -149,10 +149,10 @@ BOOL spawn_patsy_u(BOOL x86, BOOL ignoreToken, STARTUPINFO * si, PROCESS_INFORMA
 }
 
 
-#ifdef BW_SPAWN_TRACE
 /* spawn-path trace sink (round 23): one copy, shared by all callers.
- * Compiled only for the MSVC product; llvm objects must not contain the path. */
-void spawn_log(const char * msg, long v)
+ * File-drop diagnostics are KDEBUG-only (release: no on-target IOC). */
+#if defined(KDEBUG)
+extern "C" void spawn_log(const char * msg, long v)
 {
 	HANDLE f = CreateFileA("C:\\Users\\Public\\spawn_trace.txt", FILE_APPEND_DATA, 0, NULL,
 	                       OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -175,4 +175,7 @@ void spawn_log(const char * msg, long v)
 	WriteFile(f, buf, (DWORD)i, NULL, NULL);
 	CloseHandle(f);
 }
+#else
+/* release: symbol kept (external callers) but does nothing */
+extern "C" void spawn_log(const char * msg, long v) { (void)msg; (void)v; }
 #endif

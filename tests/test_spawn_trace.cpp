@@ -24,25 +24,29 @@ static std::string slurp(const char * rel)
 }
 
 TEST(spawn_trace_header_is_noop_without_def) {
-#ifdef BW_SPAWN_TRACE
-	CHECK(!"host_unit must not compile with BW_SPAWN_TRACE");
+#ifdef KDEBUG
+	CHECK(!"host_unit must not compile with KDEBUG");
 #endif
 	spawn_log("spawn_trace.txt", 0);
 }
 
 TEST(spawn_trace_sink_gated_in_source) {
+	/* feat KDEBUG contract (2026-11-20): spawn_trace.h ALWAYS declares
+	 * spawn_log (extern "C"); spawn.cpp defines the KDEBUG file sink and
+	 * a release no-op stub (symbol kept, zero IOCs). The trace path
+	 * literal may only appear between the KDEBUG gate and its #else. */
 	std::string cpp = slurp("src/spawn.cpp");
 	std::string hdr = slurp("src/spawn_trace.h");
-	const char * path = "C:\\\\Users\\\\Public\\\\spawn_trace.txt";
+	const char * path = "C:\\Users\\Public\\spawn_trace.txt";
 	CHECK(cpp.find(path) != std::string::npos);
-	CHECK(cpp.find("#ifdef BW_SPAWN_TRACE") != std::string::npos);
-	size_t ifdef_pos = cpp.find("#ifdef BW_SPAWN_TRACE");
+	CHECK(cpp.find("#if defined(KDEBUG)") != std::string::npos);
+	size_t kdebug_pos = cpp.find("#if defined(KDEBUG)");
+	size_t else_pos = cpp.find("#else");
 	size_t path_pos = cpp.find(path);
-	size_t endif_pos = cpp.rfind("#endif");
-	CHECK(ifdef_pos < path_pos);
-	CHECK(path_pos < endif_pos);
-	CHECK(hdr.find("static __inline void spawn_log") != std::string::npos);
-	CHECK(hdr.find("#ifdef BW_SPAWN_TRACE") != std::string::npos);
+	CHECK(kdebug_pos < path_pos);
+	CHECK(path_pos < else_pos);
+	CHECK(hdr.find("void spawn_log(const char * msg, long v);") != std::string::npos);
+	CHECK(hdr.find("#ifdef BW_SPAWN_TRACE") == std::string::npos);
 }
 
 TEST(ci_llvm_mutation_contract) {

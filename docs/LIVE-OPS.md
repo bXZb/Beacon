@@ -1,5 +1,13 @@
 # 构建、套筒、TeamServer、活测规范
 
+> **[2026-11-20 勘误] 本手册描述的交付路线已过时**：官方 4.9.1 TeamServerImage
+> （GraalVM 镜像 blob）+ CrackSleeve + client-jar overlay 流程已被 **FrankenTS 自编译
+> fat jar 主线**取代——现行 sleeve = 我方 jar 的 zip 条目（SleevedResource 无大小
+> 校验，560KB 级 DLL 实跑中），stageless 交付 = own-exe wrap（模板+DLL+pad，无体积
+> 上限）。本文的 cap 表（247808/307200/309248）仅在"向官方 4.9.1 镜像部署 sleeve"
+> 这一历史场景下有效。仅存官方容器语义 = x86 stager（httpstager.bin 拉取 stage）。
+
+
 给后续会话直接照做。路径以本机 `C:\Users\Administrator\Desktop\cobaltstrike` 为准。
 
 ---

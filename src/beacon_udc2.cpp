@@ -208,7 +208,6 @@ BOOL udc2_init(void) {
 		return FALSE;
 	}
 	bof_set_pin(FALSE);
-	post_error_dd(96, objlen, entry); /* loaded OK probe */
 
 	/* loaded once per beacon lifetime: the pin claim frees the previous
 	 * block on a retry, so a second load would dangle the callbacks that
