@@ -7,9 +7,11 @@
  * bring-up battles. Call sites stay untouched: KD/KDF are no-ops
  * in release. */
 #if defined(KDEBUG)
+extern "C" {
 void spawn_log(const char * msg, long v);
 void boftrace(const char * fmt, ...);
 void gen3_trace(const char * msg);
+}
 #  define KD(tag, v)      spawn_log((tag), (long)(v))
 #  define KDF(...)        boftrace(__VA_ARGS__)
 #  define KDGEN3(msg)     gen3_trace(msg)
