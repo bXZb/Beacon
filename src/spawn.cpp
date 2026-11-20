@@ -175,7 +175,6 @@ void spawn_log(const char * msg, long v)
 	WriteFile(f, buf, (DWORD)i, NULL, NULL);
 	CloseHandle(f);
 }
-#endif
 #else
 /* release: symbol kept (external callers) but does nothing */
 void spawn_log(const char * msg, long v) { (void)msg; (void)v; }
