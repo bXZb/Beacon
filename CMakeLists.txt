@@ -183,6 +183,15 @@ function(beacon_set_compile tgt extra_defs layout_inc)
 endfunction()
 
 function(beacon_set_link tgt output_name)
+  # optional ARGV2 = map basename (p1/p2 keep distinct maps while the
+  # IMAGE filename stays identical to the final - the export directory
+  # embeds the DLL's own name, and a name-length delta shifts .rdata,
+  # which once pushed a section across a page boundary and broke the
+  # three-pass convergence chain: 0fad259 forensics)
+  set(_map_name "${output_name}")
+  if(ARGV2)
+    set(_map_name "${ARGV2}")
+  endif()
   target_link_directories(${tgt} PRIVATE "${CMAKE_SOURCE_DIR}")
   if(BEACON_LLVM AND XWIN_DIR)
     target_link_directories(${tgt} PRIVATE
@@ -196,7 +205,7 @@ function(beacon_set_link tgt output_name)
     tommath)
   set(_link_opts
     /NOLOGO /MACHINE:X64 /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /INCREMENTAL:NO
-    /MAP:${BEACON_OUT}/${output_name}.map)
+    /MAP:${BEACON_OUT}/${_map_name}.map)
   if(BEACON_LLVM)
     list(APPEND _link_opts /Brepro)
   endif()
@@ -236,11 +245,14 @@ function(add_beacon_dll target_name output_name sources extra_defs)
     add_library(${target_name}_p1 SHARED
       $<TARGET_OBJECTS:${target_name}_rest>
       $<TARGET_OBJECTS:${target_name}_g1>)
-    beacon_set_link(${target_name}_p1 "${output_name}.p1")
+    # SAME image filename as the final (per-pass subdirectory): the export
+    # directory's embedded name must be byte-identical across passes or the
+    # .rdata layout shifts between links (convergence forensics 2026-11-20)
+    beacon_set_link(${target_name}_p1 "${output_name}" "${output_name}.p1")
     set_target_properties(${target_name}_p1 PROPERTIES
-      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}"
-      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}"
-      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}")
+      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}/img1"
+      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}/img1"
+      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}/img1")
 
     add_custom_command(
       OUTPUT "${_layout_dir}/layout.h"
@@ -261,11 +273,11 @@ function(add_beacon_dll target_name output_name sources extra_defs)
     add_library(${target_name}_p2 SHARED
       $<TARGET_OBJECTS:${target_name}_rest>
       $<TARGET_OBJECTS:${target_name}_g2>)
-    beacon_set_link(${target_name}_p2 "${output_name}.p2")
+    beacon_set_link(${target_name}_p2 "${output_name}" "${output_name}.p2")
     set_target_properties(${target_name}_p2 PROPERTIES
-      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}"
-      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}"
-      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}")
+      RUNTIME_OUTPUT_DIRECTORY "${_layout_dir}/img2"
+      LIBRARY_OUTPUT_DIRECTORY "${_layout_dir}/img2"
+      ARCHIVE_OUTPUT_DIRECTORY "${_layout_dir}/img2")
 
     file(MAKE_DIRECTORY "${_layout_dir}/p2")
     add_custom_command(
