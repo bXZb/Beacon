@@ -208,6 +208,12 @@ void http_post_maybe(char * hook) {
 /* 发送我们的数据 */
 void http_put(char * hook, void * buffer, int len, BOOL postNow) {
 	unsigned int flen = 0;
+	/* C-56 (.http-post.client_max_post_post_size): 0 = legacy 2MB cap;
+	 * non-zero = official cap - large posts chunk into more requests */
+	int post_max = setting_int(SETTING_HTTP_POST_MAX);
+
+	if (post_max <= 0)
+		post_max = MAX_HTTP_POST;
 
 	/* 如果需要则分配数据 */
 	if (http_post_buffer == NULL) {
@@ -216,12 +222,12 @@ void http_put(char * hook, void * buffer, int len, BOOL postNow) {
 	}
 
 	/* 进行健全性检查，确保我们不会发送过大的文件 */
-	if ((len + sizeof(unsigned int)) > MAX_HTTP_POST) {
+	if ((len + sizeof(unsigned int)) > (unsigned int)post_max) {
 		/* 单个POST太大，我们将忽略它 */
 		return;
 	}
 	/* 如果太大，现在就发送 */
-	else if ((http_post_len + len + sizeof(unsigned int)) > MAX_HTTP_POST) {
+	else if ((http_post_len + len + sizeof(unsigned int)) > (unsigned int)post_max) {
 		http_post_maybe(hook);
 	}
 

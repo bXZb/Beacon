@@ -222,15 +222,21 @@ void http_post_maybe(char * hook) {
 
 void http_put(char * hook, void * buffer, int len, BOOL postNow) {
 	unsigned int flen = 0;
+	/* C-56 (.http-post.client_max_post_post_size): 0 = legacy 2MB buffer
+	 * cap; non-zero = official cap - large posts chunk into more requests */
+	int post_max = setting_int(SETTING_HTTP_POST_MAX);
+
+	if (post_max <= 0)
+		post_max = MAX_HTTP_POST;
 
 	if (http_post_buffer == NULL) {
 		http_post_buffer = (char *)malloc(sizeof(char) * MAX_HTTP_POST);
 		track_memory_add(http_post_buffer, sizeof(char) * MAX_HTTP_POST, TRACK_MEMORY_MALLOC, TRUE, NULL);
 	}
 
-	if ((len + (int)sizeof(unsigned int)) > MAX_HTTP_POST)
+	if ((len + (int)sizeof(unsigned int)) > post_max)
 		return;
-	else if ((http_post_len + len + (int)sizeof(unsigned int)) > MAX_HTTP_POST)
+	else if ((http_post_len + len + (int)sizeof(unsigned int)) > post_max)
 		http_post_maybe(hook);
 
 	flen = htonl(len);

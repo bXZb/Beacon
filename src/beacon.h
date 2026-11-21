@@ -192,6 +192,18 @@ unsigned int bigger_rand();
  * decoy 200-with-no-body responder is distinguishable; the beacon treats
  * a body of exactly this length as idle (channel.cpp/_http_get) */
 #define SETTING_DATA_REQUIRED_LENGTH 91
+/* C-56 (4.11 http shaping): 0 = legacy behavior, non-zero = official caps.
+ * 92 caps the POST body (chunks large posts); 94 caps file-download bytes
+ * per check-in cycle in the chunked-GET mode (official default 4096). */
+#define SETTING_HTTP_POST_MAX        92
+#define SETTING_HTTP_DL_PACKET       94
+/* C-56 (4.11 DoH): route resolver requests through an HTTP proxy */
+#define SETTING_DOH_PROXY_SERVER     95
+/* C-56 (4.12 rdll drip-loading): informational twins of the DRIPC201
+ * marker the TS patches into the stage image for the reflective loader
+ * (the marker is authoritative - it is readable before settings init) */
+#define SETTING_RDLL_DRIP            84
+#define SETTING_RDLL_DRIP_DELAY      85
 
 /* 4.12 UDC2 (beacon_udc2.cpp) - beacon.h is included before windows.h
  * in some translation units, so spell the return types out */
