@@ -8,6 +8,7 @@
 #include "track_memory.h"
 #include "hostprof.h"
 #include "channel_http_common.h"
+#include "spawn_trace.h" /* KDEBUG probes: unconditional extern-C decl like channel_winhttp */
 
 
 
