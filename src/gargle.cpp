@@ -1,5 +1,6 @@
 /* gargle! */
 #include <winsock2.h>
+#include "spawn_trace.h" /* KDEBUG probe decl */
 #include <windows.h>
 #include <intrin.h>
 #include "beacon.h"
