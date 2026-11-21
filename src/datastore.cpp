@@ -323,11 +323,18 @@ void command_data_store(char * buffer, int length, void (*callback)(char * buffe
 	int sub;
 	data_init(&parser, buffer, length);
 	sub = (int)data_int(&parser);
+	KD("ds: enter length=", (long)length);
+	KD("ds: sub=", (long)sub);
 	if (sub == 1) {
 		int type = (int)data_int(&parser);
 		unsigned long long hash = data_long(&parser);
 		datap_buffer blob = data_extract(&parser);
+		KD("ds: add type=", (long)type);
+		KD("ds: add hash=", (long)(hash & 0x7fffffff));
+		KD("ds: add bloblen=", (long)blob.length);
+		KD("ds: add blobptr=", (long)(size_t)blob.buffer);
 		int idx = datastore_add(type, hash, blob.buffer, blob.length);
+		KD("ds: add idx=", (long)idx);
 		char out[12];
 		if (idx < 0) {
 			post_error_na(0x0d);
@@ -362,6 +369,7 @@ void command_data_store(char * buffer, int length, void (*callback)(char * buffe
 		int i, n = 0;
 		char * out;
 		int off;
+		KD("ds: list sub reached", 0x7fffffff);
 		if (ds_slots == NULL)
 			return;
 		for (i = 0; i < ds_cap; i++) {
