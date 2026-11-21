@@ -13,7 +13,7 @@ extern "C" DLLEXPORT UINT_PTR WINAPI ReflectiveLoader(LPVOID lpParameter) {
 	#if RefLoadSize == 5
 		#include "ReflectiveLoader.5k"
 	#elif RefLoadSize == 50
-		#include "ReflectiveLoader.50k.boom"
+		#include "ReflectiveLoader.50k"
 	#elif RefLoadSize == 100
 		#include "ReflectiveLoader.100k"
 	#elif RefLoadSize == 1000
