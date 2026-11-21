@@ -311,7 +311,7 @@ static int doh_exchange(unsigned char * query, int qlen,
 		char * doh_proxy = (char *)setting_ptr(SETTING_DOH_PROXY_SERVER);
 		int    doh_proxy_len = setting_len(SETTING_DOH_PROXY_SERVER);
 
-		if (doh_proxy != NULL && doh_proxy_len > 0 && doh_proxy[0] != ' ') {
+		if (doh_proxy != NULL && doh_proxy_len > 0 && doh_proxy[0] != 0) {
 			session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PROXY, doh_proxy, NULL, 0);
 		} else {
 			session = WI.InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
