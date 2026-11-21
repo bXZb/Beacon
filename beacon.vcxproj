@@ -345,6 +345,7 @@
     <TargetName Condition="'$(BeaconHttpLibrary)'=='winhttp'">winhttpb.$(Platform)$(UDRLExtension)</TargetName>
     <IntDir Condition="'$(BeaconHttpLibrary)'=='winhttp'">$(Platform)\$(Configuration)\winhttp\</IntDir>
     <TargetName Condition="'$(BeaconBofWin)'=='true' And '$(BeaconHttpLibrary)'!='winhttp'">$(ProjectName).$(Platform).rl0k$(UDRLExtension)</TargetName>
+    <RefLoadSize Condition="'$(BeaconBofWin)'=='true' And '$(RefLoadSize)'==''">50</RefLoadSize>
     <IntDir Condition="'$(BeaconBofWin)'=='true' And '$(BeaconHttpLibrary)'!='winhttp'">$(Platform)\$(Configuration)\bofwin\</IntDir>
     <OutDir Condition="'$(BeaconBofWin)'=='true' And '$(BeaconHttpLibrary)'!='winhttp'">$(SolutionDir)$(Platform)\$(Configuration)\bofwin\</OutDir>
   </PropertyGroup>
