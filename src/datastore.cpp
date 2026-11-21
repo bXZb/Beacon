@@ -124,7 +124,9 @@ void datastore_reset_for_test(int slots) {
 /* C-56: pin the DRIPC201 stage-drip marker into the final image. The x86
  * linker dropped the unreferenced volatile array (x64 kept it); an active
  * relocation from this initializer pins it on every toolchain. */
+extern "C" {
 extern volatile unsigned char g_stage_drip[16];
+}
 volatile unsigned char *g_stage_drip_pin = g_stage_drip;
 
 void cs49_apply_settings(void) {
