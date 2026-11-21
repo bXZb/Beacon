@@ -44,6 +44,7 @@ static int kit_path_forced(void) {
 }
 
 void GargleSleep(DWORD time) {
+	spawn_log("gargle: sleep time=", (long)time);
 #if !defined(_M_IX86)
 	GARGLEF func;
 #endif
