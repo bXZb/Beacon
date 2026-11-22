@@ -52,7 +52,7 @@ void gate_spoof_recovery(void);                     /* asm PROC - bare symbol */
 /* C-58: spoof-execution probe (called from gate_spoof_recovery in the
  * kdebug build; release spawn_log is a stub so the call is free) */
 extern "C" const char gate_spoof_probe_tag[] = "gate: spoof exec fn=";
-void gate_spoof_probe(unsigned long long fn);
+extern "C" void gate_spoof_probe(unsigned long long fn);
 
 static unsigned char *  g_gate_page;
 static unsigned long long g_gate_pivot;
