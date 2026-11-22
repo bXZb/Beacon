@@ -374,7 +374,6 @@ copy /Y "$(TargetPath)" "$(SolutionDir)bin\"</Command>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(VCTargetsPath)\buildcustomizations\masm.targets" />
-  <Import Project="
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
