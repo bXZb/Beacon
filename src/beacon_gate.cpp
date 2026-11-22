@@ -42,8 +42,10 @@ typedef struct {
 } GATE_SPOOFCTX;
 
 #if defined(_M_X64)
-extern unsigned long long gate_spoof_execute(void * ctx);
-extern void gate_spoof_recovery(void); /* asm PROC - its address is the hop target */
+extern "C" {
+unsigned long long gate_spoof_execute(void * ctx); /* asm PROC - bare symbol */
+void gate_spoof_recovery(void);                     /* asm PROC - bare symbol */
+}
 #endif
 
 static unsigned char *  g_gate_page;
