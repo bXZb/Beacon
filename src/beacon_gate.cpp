@@ -25,6 +25,7 @@
 #include "sleepmask_gen3.h"
 #include "beacon_gate.h"
 #include "parse.h" /* datap/data_int (cmd 123 payload) */
+#include "spawn_trace.h" /* spawn_log (probe) */
 
 /* settings 96 = per-API bitmask; 97 = mode flags */
 #define GATE_MODE_ALL             (1 << 0)
