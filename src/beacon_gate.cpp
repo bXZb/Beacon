@@ -29,6 +29,13 @@
 
 /* settings 96 = per-API bitmask; 97 = mode flags */
 #define GATE_MODE_ALL             (1 << 0)
+/* C-58: the spoof executor is experimental - it needs mode bit1 in
+ * addition to the API bits. Without it the gate dispatches plain
+ * (Railgun-style), which is the OFFICIAL BeaconGate default behaviour.
+ * The first spoof live round died after the first gated call (the
+ * add-rsp hop parking/chain geometry still has an unresolved fault) -
+ * kept one flag away, off by default. */
+#define GATE_MODE_SPOOF           (1 << 1)
 
 /* offsets mirror gate_spoof.asm exactly */
 typedef struct {
@@ -240,7 +247,7 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 	GATE_SPOOFCTX ctx;
 	int i;
 
-	if (g_gate_spoof_ready == 0)
+	if (g_gate_spoof_ready == 0 && (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_SPOOF))
 		gate_init_spoof();
 
 	if (g_gate_spoof_ready == 1) {
