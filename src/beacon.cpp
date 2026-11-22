@@ -80,6 +80,17 @@ void command_shell_callback(char * buffer, int length, int type) {
 	}
 	/* 使用正常的数据发送路径（允许排队） */
 	else {
+		/* C-57: official client_max_post_post_size semantics - a single
+		 * frame larger than the cap is chunked into multiple <= cap POSTs
+		 * instead of being dropped at http_put. 64B margin covers the
+		 * per-item crypto/framing overhead so the transport never sees an
+		 * over-cap item. */
+		int cap = setting_int(SETTING_HTTP_POST_MAX);
+
+		if (post_type == POST_HTTP && cap > 0 && length + 4 + 64 > cap) {
+			command_shell_chunk_sized(buffer, length, type, cap);
+			return;
+		}
 		command_shell_post(buffer, length, type, FALSE);
 	}
 }

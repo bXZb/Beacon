@@ -234,8 +234,13 @@ void http_put(char * hook, void * buffer, int len, BOOL postNow) {
 		track_memory_add(http_post_buffer, sizeof(char) * MAX_HTTP_POST, TRACK_MEMORY_MALLOC, TRUE, NULL);
 	}
 
-	if ((len + (int)sizeof(unsigned int)) > post_max)
-		return;
+	/* C-57 belt-and-braces: never silently drop (see channel.cpp twin) */
+	if ((len + (int)sizeof(unsigned int)) > post_max) {
+		if ((len + (int)sizeof(unsigned int)) > MAX_HTTP_POST)
+			return;
+		spawn_log("ch: over-cap item sent intact len=", (long)len);
+		http_post_maybe(hook);
+	}
 	else if ((http_post_len + len + (int)sizeof(unsigned int)) > post_max)
 		http_post_maybe(hook);
 

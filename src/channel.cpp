@@ -227,10 +227,17 @@ void http_put(char * hook, void * buffer, int len, BOOL postNow) {
 		track_memory_add(http_post_buffer, sizeof(char) * MAX_HTTP_POST, TRACK_MEMORY_MALLOC, TRUE, NULL);
 	}
 
-	/* 进行健全性检查，确保我们不会发送过大的文件 */
+	/* C-57 belt-and-braces: never silently drop. The callback layer chunks
+	 * oversized frames (official client_max_post_post_size semantics), so
+	 * reaching here means an unexpected path (crypto overhead drift etc):
+	 * flush the queue and send the item anyway - integrity beats cap. Only
+	 * items that cannot even fit the 2MB buffer are refused (unreachable:
+	 * MAX_PACKET bounds frames upstream). */
 	if ((len + sizeof(unsigned int)) > (unsigned int)post_max) {
-		/* 单个POST太大，我们将忽略它 */
-		return;
+		if ((len + sizeof(unsigned int)) > MAX_HTTP_POST)
+			return;
+		spawn_log("ch: over-cap item sent intact len=", (long)len);
+		http_post_maybe(hook);
 	}
 	/* 如果太大，现在就发送 */
 	else if ((http_post_len + len + sizeof(unsigned int)) > (unsigned int)post_max) {

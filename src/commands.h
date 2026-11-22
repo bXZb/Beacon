@@ -230,6 +230,7 @@ void safe_exit();
 /* stuff for sending output */
 char * command_shell_encrypt(char * buffer, int length, int type, DWORD * result_len);
 void command_shell_chunk_maybe(char * buffer, int blength, int type);
+void command_shell_chunk_sized(char * buffer, int length, int type, int chunk);
 void GargleSleep(DWORD time);
 
 /* alternate credentials data structure */
