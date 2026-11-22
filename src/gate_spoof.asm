@@ -50,13 +50,14 @@ gate_spoof_recovery PROC
     lea  rcx, gate_spoof_probe_tag
     mov  rdx, [rbx]                  ; fn pointer as the probe value
     call gate_spoof_probe
-    add  rsp, 28h
-    mov  rsp, [rbp+00h]              ; ctx+0x10 saved_rsp
+    add  rsp, 28h                    ; balance the probe shadow
+    mov  rsp, [rbp+00h]              ; ctx+0x10 saved_rsp = R-0x40 (3 pushes 0x18 + shadow 0x28)
+    add  rsp, 28h                    ; step past the shadow -> R-0x18 where pushed r15 sits
     mov  rax, [rbp+10h]              ; return value back into RAX
-    pop  r15
-    pop  rbx
-    pop  rbp
-    ret
+    pop  r15                         ; R-0x18 -> R-0x10
+    pop  rbx                         ; R-0x10 -> R-0x08
+    pop  rbp                         ; R-0x08 -> R
+    ret                              ; back to gate_dispatch
 gate_spoof_recovery ENDP
 
 END
