@@ -18,6 +18,11 @@
  */
 BOOL gen3_sleep(DWORD time);
 
+/* C-58 BeaconGate: resolve the spoolsv frame table (retaddrs + unwind
+ * exact sizes) and the frame size at an arbitrary address. x86: FALSE. */
+BOOL g3_gate_frames(unsigned long long retaddr_out[4], unsigned long sizes_out[4]);
+BOOL g3_gate_frame_size_at(unsigned long long addr, DWORD * out);
+
 /* snapshot accessor for the BOF-window engine: fills out[] with the same
  * block list gen3_sleep masks (header page + writable non-.text sections +
  * tracked heap, g3 dedup rules) and, when text_span is non-NULL, writes the

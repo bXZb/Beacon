@@ -494,6 +494,11 @@ void process_message(unsigned int type, char * buffer, int length) {
 	case COMMAND_BEACON_INFO:
 		command_beacon_info(buffer, length, command_shell_callback);
 		break;
+#ifdef COMMAND_BEACON_GATE
+	case COMMAND_BEACON_GATE:
+		command_beacon_gate(buffer, length, command_shell_callback);
+		break;
+#endif
 	case COMMAND_INTERPRETER:
 		command_interpreter(buffer, length, command_shell_callback);
 		break;

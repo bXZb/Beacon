@@ -35,6 +35,15 @@ void    * beacon_ptr;
  * shorter (see hostprof_reload). */
 static unsigned int setting_lengths[128];
 
+/* C-58: live settings-table write (beacon_gate runtime toggle - same
+ * in-place semantics as the beacon_config host hot-swap). */
+void setting_apply_int(int field, int value) {
+	if (field < 0 || field >= 128)
+		return;
+	settings[field].type = TYPE_INT;
+	settings[field].value.i_value = value;
+}
+
 unsigned int setting_length(int field) {
 	if (field < 0 || field >= 128)
 		return 0;

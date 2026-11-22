@@ -154,6 +154,7 @@ unsigned short setting_short(int field);
 unsigned int   setting_int(int field);
 char *         setting_ptr(int field);
 unsigned int   setting_len(int field);      /* strlen semantics (ASCIIZ settings) */
+void           setting_apply_int(int field, int value); /* live-table write (C-58 gate toggle) */
 unsigned int   setting_length(int field);   /* malloc'd blob size (binary TLV settings) */
 #ifdef __cplusplus
 }
@@ -204,6 +205,9 @@ unsigned int bigger_rand();
  * (the marker is authoritative - it is readable before settings init) */
 #define SETTING_RDLL_DRIP            84
 #define SETTING_RDLL_DRIP_DELAY      85
+/* C-58 BeaconGate (4.10): 96 = per-API bitmask, 97 = mode flags (bit0=All) */
+#define SETTING_BEACON_GATE_API      96
+#define SETTING_BEACON_GATE_MODE     97
 
 /* 4.12 UDC2 (beacon_udc2.cpp) - beacon.h is included before windows.h
  * in some translation units, so spell the return types out */

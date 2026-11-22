@@ -190,6 +190,10 @@
     <ClCompile Include="src\datastore.cpp" />
     <ClCompile Include="src\hostprof.cpp" />
     <ClCompile Include="src\syscalls.cpp" />
+        <ClCompile Include="src\beacon_gate.cpp" />
+<MASM Include="src\gate_spoof.asm">
+      <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
+    </MASM>
     <ClCompile Include="src\spawn.cpp" />
     <ClCompile Include="src\strategy.cpp" />
     <ClCompile Include="src\thread.cpp" />
@@ -494,6 +498,8 @@ copy /Y "$(TargetPath)" "$(SolutionDir)bin\"</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(VCTargetsPath)\buildcustomizations\masm.targets" />
+  <Import Project="
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
