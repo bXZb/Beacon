@@ -210,16 +210,6 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 	return fc->retValue;
 }
 
-#else /* x86: plain only */
-
-unsigned long long gate_dispatch(FUNCTION_CALL * fc)
-{
-	fc->retValue = gate_exec_plain(fc);
-	return fc->retValue;
-}
-
-#endif
-
 /* ---------------- gate wrappers (call-site funnels) ---------------- */
 
 LPVOID gate_VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD protect)

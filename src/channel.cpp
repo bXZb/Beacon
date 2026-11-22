@@ -85,10 +85,10 @@ void http_init(char * host, int port, char * ua) {
 				session_h = (HINTERNET)gate_dispatch(&fc);
 			}
 			else
-				session_h = InternetOpenA(ua, acctype, proxy, NULL, NULL, 0);
+				session_h = InternetOpenA(ua, acctype, proxy, NULL, 0);
 		}
 		else
-			session_h = InternetOpenA(ua, acctype, proxy, NULL, NULL, 0);
+			session_h = InternetOpenA(ua, acctype, proxy, NULL, 0);
 	}
 
 	/* 4 minute timeout... this is fair I think; unless you're hacking someone on dialup. Then you're in trouble :P~
