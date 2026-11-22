@@ -101,14 +101,16 @@ static BOOL gate_find_gadget(unsigned long long * out_gadget, unsigned long long
 			p = base + sec->VirtualAddress;
 			end = p + sec->Misc.VirtualSize - 5;
 			for (; p < end; p++) {
-				DWORD sz = 0;
+				DWORD sz = 0x48;
 				if (p[0] != 0xFF || p[1] != 0x65 || p[2] != 0xF8)
 					continue;
-				/* extent from the gadget address through its function frame */
-				if (!g3_gate_frame_size_at((unsigned long long)p, &sz))
-					continue;
-				if (sz < 0x48 || sz > 0x400)
-					continue;
+				KD("gate: gadget hit mod=", (long)m);
+				/* extent from the gadget address through its function frame;
+				 * leaf/unwindless sites keep the 0x48 default */
+				if (g3_gate_frame_size_at((unsigned long long)p, &sz) && sz > 0x48 && sz < 0x6000)
+					sz = sz;
+				else
+					sz = 0x48;
 				*out_gadget = (unsigned long long)p;
 				*out_extent = sz;
 				return TRUE;
