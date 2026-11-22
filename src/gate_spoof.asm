@@ -16,6 +16,8 @@
 
 PUBLIC gate_spoof_execute
 PUBLIC gate_spoof_recovery
+EXTERN gate_spoof_probe:PROC
+EXTERN gate_spoof_probe_tag:BYTE
 
 .code
 
@@ -42,11 +44,15 @@ gate_spoof_execute PROC
 gate_spoof_execute ENDP
 
 gate_spoof_recovery PROC
-    ; arrives via gadget jmp; rbp = ctx+0x10; RAX = fn's return value
+    ; arrives via gadget ret; rbp = ctx+0x10; RAX = fn's return value
     mov  [rbp+10h], rax              ; ctx+0x20 result = RAX
+    sub  rsp, 28h                    ; shadow for the probe call (fake stack)
+    lea  rcx, gate_spoof_probe_tag
+    mov  rdx, [rbx]                  ; fn pointer as the probe value
+    call gate_spoof_probe
+    add  rsp, 28h
     mov  rsp, [rbp+00h]              ; ctx+0x10 saved_rsp
     mov  rax, [rbp+10h]              ; return value back into RAX
-    add  rsp, 28h
     pop  r15
     pop  rbx
     pop  rbp

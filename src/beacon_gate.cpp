@@ -48,6 +48,11 @@ void gate_spoof_recovery(void);                     /* asm PROC - bare symbol */
 }
 #endif
 
+/* C-58: spoof-execution probe (called from gate_spoof_recovery in the
+ * kdebug build; release spawn_log is a stub so the call is free) */
+extern "C" const char gate_spoof_probe_tag[] = "gate: spoof exec fn=";
+void gate_spoof_probe(unsigned long long fn);
+
 static unsigned char *  g_gate_page;
 static unsigned long long g_gate_pivot;
 static unsigned long long g_gate_gadget;
@@ -221,6 +226,11 @@ static unsigned long long gate_exec_plain(FUNCTION_CALL * fc)
 		return ((G8)fc->functionPtr)(fc->args[0], fc->args[1], fc->args[2], fc->args[3],
 		                             fc->args[4], fc->args[5], fc->args[6], fc->args[7]);
 	}
+}
+
+void gate_spoof_probe(unsigned long long fn)
+{
+	spawn_log(gate_spoof_probe_tag, (long)fn);
 }
 
 unsigned long long gate_dispatch(FUNCTION_CALL * fc)
