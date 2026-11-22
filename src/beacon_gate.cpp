@@ -229,7 +229,7 @@ static unsigned long long gate_exec_plain(FUNCTION_CALL * fc)
 	}
 }
 
-void gate_spoof_probe(unsigned long long fn)
+extern "C" void gate_spoof_probe(unsigned long long fn) /* asm calls the bare symbol */
 {
 	spawn_log(gate_spoof_probe_tag, (long)fn);
 }
