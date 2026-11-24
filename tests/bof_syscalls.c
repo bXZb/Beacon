@@ -27,8 +27,6 @@ EXTERN_C __declspec(dllimport) SIZE_T BeaconVirtualQuery(LPCVOID address, PMEMOR
 EXTERN_C __declspec(dllimport) BOOL BeaconDuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, LPHANDLE lpTargetHandle, DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwOptions);
 EXTERN_C __declspec(dllimport) BOOL BeaconReadProcessMemory(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesRead);
 EXTERN_C __declspec(dllimport) BOOL BeaconWriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesWritten);
-EXTERN_C __declspec(dllimport) HANDLE BeaconCreateFileMappingA(HANDLE hFile, LPSECURITY_ATTRIBUTES lpAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName);
-EXTERN_C __declspec(dllimport) LPVOID BeaconMapViewOfFile(HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap);
 EXTERN_C __declspec(dllimport) VOID BeaconDisableBeaconGate();
 EXTERN_C __declspec(dllimport) VOID BeaconEnableBeaconGate();
 EXTERN_C __declspec(dllimport) VOID BeaconDisableBeaconGateMasking();
@@ -40,6 +38,8 @@ EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateThread(LPSECURITY_AT
 EXTERN_C __declspec(dllimport) DWORD WINAPI kernel32$GetThreadId(HANDLE);
 EXTERN_C __declspec(dllimport) DWORD WINAPI kernel32$WaitForSingleObject(HANDLE, DWORD);
 EXTERN_C __declspec(dllimport) BOOL WINAPI kernel32$VirtualFreeEx(HANDLE, LPVOID, SIZE_T, DWORD);
+EXTERN_C __declspec(dllimport) HANDLE WINAPI kernel32$CreateFileMappingA(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCSTR);
+EXTERN_C __declspec(dllimport) LPVOID WINAPI kernel32$MapViewOfFile(HANDLE, DWORD, DWORD, DWORD, SIZE_T);
 
 #define CALLBACK_OUTPUT 0x00
 
@@ -130,14 +130,15 @@ void go(char * args, int alen)
 	kernel32$WaitForSingleObject(t, 5000);
 	if (BeaconCloseHandle(t) != TRUE) fails++;
 
-	/* section mapping: create -> map -> write -> unmap -> close */
-	map = BeaconCreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 0x1000, NULL);
-	view = map ? BeaconMapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, 0x1000) : NULL;
+	/* section mapping: create + map are plain imports (not Beacon API - only the
+	 * unmap is), then unmap -> close through the Beacon API */
+	map = kernel32$CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 0x1000, NULL);
+	view = map ? kernel32$MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, 0x1000) : NULL;
 	if (view != NULL)
 		*(unsigned int *)view = 0x11223344;
 	if (map == NULL || view == NULL) fails++;
-	BeaconPrintf(CALLBACK_OUTPUT, "BeaconCreateFileMappingA %s map=%p", map ? "ok" : "FAIL", map);
-	BeaconPrintf(CALLBACK_OUTPUT, "BeaconMapViewOfFile      %s view=%p first=%x", view ? "ok" : "FAIL", view, view ? *(unsigned int *)view : 0);
+	BeaconPrintf(CALLBACK_OUTPUT, "CreateFileMappingA        %s map=%p", map ? "ok" : "FAIL", map);
+	BeaconPrintf(CALLBACK_OUTPUT, "MapViewOfFile             %s view=%p first=%x", view ? "ok" : "FAIL", view, view ? *(unsigned int *)view : 0);
 	if (view != NULL && BeaconUnmapViewOfFile(view) != TRUE) fails++;
 	BeaconPrintf(CALLBACK_OUTPUT, "BeaconUnmapViewOfFile    %s", view ? "ok" : "FAIL");
 	if (BeaconCloseHandle(map) != TRUE) fails++;
