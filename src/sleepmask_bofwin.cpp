@@ -171,6 +171,7 @@ static unsigned char *       g_bw_after;        /* stub page: where the trampoli
 static unsigned char *       g_bw_tramp_site;   /* the 16 bytes, or NULL */
 static unsigned long long *  g_bw_tramp_slot;   /* site + 6 */
 static void *                g_bw_tramp_override; /* test hook: an executable page of our own */
+static BOOL bw_arm_tramp(void);
 static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 
 #define BW_STATE_IDLE   0

