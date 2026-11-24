@@ -138,20 +138,18 @@ TEST(gate_thunk_call_win32) {
 	CHECK(p != NULL);
 	memset(&rec, 0, sizeof(rec));
 	rec.fn = (unsigned long long)(size_t)VirtualQuery;
-	/* VirtualQuery(GetCurrentProcess(), p, MemoryBasicInformation, &mbi, sizeof(mbi), &got) */
-	rec.args[0] = (unsigned long long)(size_t)GetCurrentProcess();
-	rec.args[1] = (unsigned long long)(size_t)p;
-	rec.args[2] = 0;
-	rec.args[3] = (unsigned long long)(size_t)&mbi;
-	rec.args[4] = sizeof(mbi);
+	/* VirtualQuery(address, buffer, length) */
+	rec.args[0] = (unsigned long long)(size_t)p;
+	rec.args[1] = (unsigned long long)(size_t)&mbi;
+	rec.args[2] = sizeof(mbi);
 	memset(&mbi, 0, sizeof(mbi));
 	thunk(&rec);
-	printf("  [thunk] NtQueryVirtualMemory-shaped call ret=%llx state=%lx\n",
-	       (unsigned long long)rec.ret, (unsigned long)mbi.State);
+	printf("  [thunk] VirtualQuery ret=%llx state=%lx base=%p\n",
+	       (unsigned long long)rec.ret, (unsigned long)mbi.State, mbi.BaseAddress);
 	fflush(stdout);
-	/* VirtualQuery's real arity is 3: the two extra slots are ignored and
-	 * it returns the structure length */
+	/* the buffer and the output pointer were usable by the callee */
 	CHECK(rec.ret == sizeof(mbi));
 	CHECK(mbi.State == MEM_COMMIT);
+	CHECK(mbi.BaseAddress == p);
 	VirtualFree(p, 0, MEM_RELEASE);
 }

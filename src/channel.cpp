@@ -38,8 +38,8 @@ static HINTERNET gate_InternetOpenA(LPCSTR agent, DWORD accesstype, LPCSTR proxy
 	if (!gate_api_enabled(GATE_API_INTERNETOPENA))
 		return InternetOpenA(agent, accesstype, proxy, bypass, flags);
 	return (HINTERNET)(ULONG_PTR)gate_call((void *)InternetOpenA, GATE_API_INTERNETOPENA, 5,
-		(unsigned long long)(ULONG_PTR)agent, (unsigned long long)acctype, (unsigned long long)(ULONG_PTR)proxy,
-		(unsigned long long)(ULONG_PTR)bypass, flags);
+		(unsigned long long)(ULONG_PTR)agent, (unsigned long long)accesstype, (unsigned long long)(ULONG_PTR)proxy,
+		(unsigned long long)(ULONG_PTR)bypass, (unsigned long long)flags);
 }
 
 static HINTERNET gate_InternetConnectA(HINTERNET session, LPCSTR server, INTERNET_PORT port, LPCSTR user, LPCSTR pass,
