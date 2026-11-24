@@ -803,8 +803,7 @@ static BOOL bw_build_pages(void)
 		e[3] = 0x75; e[4] = 0x07;                                       /* jnz -> push */
 		e[5] = 0x4C; e[6] = 0x8D; e[7] = 0x15;                         /* lea r10,[rip+d32] after */
 		lea_at = (int)(e - p) + 5;
-		e = bw_put32(e + 8, 0);                                         /* patched below */
-		e += 12;
+		e = bw_put32(e + 8, 0);                                         /* patched below; e now sits on push */
 		e[0] = 0x41; e[1] = 0x52;                                       /* push r10 */
 		e[2] = 0x41; e[3] = 0xFF; e[4] = 0xE3;                         /* jmp r11 */
 		e += 5;
