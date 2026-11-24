@@ -18,6 +18,7 @@ typedef struct _PSH_ENTRY {
 	DWORD type;				/* callback type */
 	short mode;				/* our mode... stream or blob */
 	char description[JOB_DESCRIPTION_LENGTH];
+	DWORD task_no;				/* the task that started it, 0 = no task's (proto.cpp) */
 } psh_entry;
 
 /* track a process as a job */

