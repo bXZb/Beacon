@@ -153,20 +153,3 @@ TEST(gate_thunk_call_win32) {
 	CHECK(mbi.BaseAddress == p);
 	VirtualFree(p, 0, MEM_RELEASE);
 }
-
-/* WinInet resolves its caller's return address through
- * GetModuleHandleEx(FROM_ADDRESS) (apphelp's shim engine walks the stack
- * for the first non-system frame); an address on the stub page must resolve
- * to the allocation base - stubs on a bare page made InternetOpenA hand
- * back a bogus handle (the masked comms round, 2026-11-24). */
-TEST(gate_thunk_page_resolves_to_a_module) {
-	unsigned char * code = (unsigned char *)bofwin_test_stub_page();
-	HMODULE module = NULL;
-
-	CHECK(code != NULL);
-	CHECK(bofwin_test_base() == code - 0x1000);
-	CHECK(*(unsigned short *)(code - 0x1000) == 0x5A4D);
-	CHECK(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-	                         (LPCWSTR)(code + BW_CALL_OFF), &module));
-	CHECK((unsigned char *)module == code - 0x1000);
-}

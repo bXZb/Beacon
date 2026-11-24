@@ -22,8 +22,6 @@ BOOL bofwin_supported(void);
 /* CI diagnostics: the built stub page (capstone-mirror verification), or
  * NULL before the first bofwin_supported/window call. */
 void * bofwin_test_stub_page(void);
-/* ... and the allocation base (the PE header page in front of it) */
-void * bofwin_test_base(void);
 
 /* CI diagnostics: last window phase (0 start / 1 VP done / 2 masked /
  * 3 BOF returned / 4 exit returned) - survives a crash for the log. */
@@ -32,6 +30,9 @@ int bofwin_test_phase(void);
 /* CI diagnostics: block count of the last window before / after the
  * keep-plaintext filter (bofwin_call). */
 void bofwin_test_blocks(int * before, int * after);
+/* CI diagnostics: the return trampoline placed in the beacon image (see
+ * bofwin_call), or NULL. */
+void * bofwin_test_tramp(void);
 
 /* Run entry(args, alen) inside the masked window. Returns FALSE when the
  * window cannot be served (engine unavailable, background threads active,

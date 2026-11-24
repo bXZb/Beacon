@@ -322,6 +322,7 @@ static int gate_mask_run(FUNCTION_CALL * fc)
 		bofwin_test_blocks(&before, &after);
 		KD("gate: mask blocks before=", (long)before);
 		KD("gate: mask blocks after=", (long)after);
+		KD("gate: mask tramp=", (long)(LONG_PTR)bofwin_test_tramp());
 	}
 	return served;
 #else

