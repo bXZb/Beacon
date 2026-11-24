@@ -269,6 +269,10 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 		return fc->retValue;
 	}
 #endif
+	/* the plain executor has no init step, so this probe is the only on-target
+	 * sign that a call went through the gate (the spoof probes above only
+	 * fire on the opt-in tier; value = GATE_API_* bit) */
+	KD("gate: plain api=", fc->function);
 	fc->retValue = gate_exec_plain(fc);
 	return fc->retValue;
 }
