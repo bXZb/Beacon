@@ -84,13 +84,23 @@ extern "C" unsigned char gated_comms[];
 static void * gate_comms_stub(int api, void * fn)
 {
 	unsigned char * stub;
+	void ** slot;
+	DWORD old = 0, back = 0;
 
 	if (api != GATE_API_INTERNETOPENA && api != GATE_API_INTERNETCONNECTA)
 		return fn;
 	stub = gated_comms + GATE_COMMS_STRIDE * api;
 	if (stub[0] != 0xFF || stub[1] != 0x25)
 		return fn;
-	*(void **)(stub + 8) = fn;
+	/* the section is read-only and executable: the slot opens for the one
+	 * write, here while the image is in the clear (a mask comes later) */
+	slot = (void **)(stub + 8);
+	if (*slot != fn) {
+		if (!VirtualProtect(slot, sizeof(void *), PAGE_READWRITE, &old))
+			return fn;
+		*slot = fn;
+		VirtualProtect(slot, sizeof(void *), old, &back);
+	}
 	return stub;
 }
 #endif
