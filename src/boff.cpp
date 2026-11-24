@@ -760,6 +760,25 @@ struct CdGuard {
 	~CdGuard() { crashdiag_disarm(); }
 };
 
+/* What a SYMBOL_DYNAMICF relocation has to resolve to. The dllimport form
+ * (call / lea qword ptr [rip+d]) references a slot that HOLDS the function
+ * pointer. A direct `call/jmp rel32` (E8/E9 right before the displacement)
+ * goes to the function itself - that is how a bare CRT reference compiles,
+ * and the TS maps those to msvcrt$X (memset, memcpy...). Same relocation
+ * type for both. Patching the direct call to the slot jumped into the heap
+ * and killed the session (bof_syscalls live round, 2026-11-24). src is the
+ * section's object bytes; reloc->offset is at least the field width. */
+static BOOL dyn_reloc_wants_slot(OBJ_RELOC * reloc, char * src) {
+	int relative = reloc->type == RELOC_REL32
+	            || (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5);
+	unsigned char op;
+
+	if (!relative)
+		return FALSE; /* an absolute reference stores the function pointer */
+	op = (unsigned char)src[reloc->offset - 1];
+	return op != 0xE8 && op != 0xE9;
+}
+
 BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv) {
 	datap parser;
 	CdGuard cd_guard;
@@ -932,12 +951,16 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				boftrace("DYNFAIL %s!%s", lib, fun);
 				break;
 			}
-			slot = function_slot(ftable, ptr);
-			if (slot == NULL) {
-				post_error_na(0x4e);
-				boftrace("SLOTFAIL %s!%s", lib, fun);
-				break;
+			if (dyn_reloc_wants_slot(reloc, (char *)src)) {
+				slot = function_slot(ftable, ptr);
+				if (slot == NULL) {
+					post_error_na(0x4e);
+					boftrace("SLOTFAIL %s!%s", lib, fun);
+					break;
+				}
 			}
+			else
+				slot = ptr; /* a direct call: the function, not a slot to it */
 			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base)) {
 				boftrace("RELOCFAIL dyn %s!%s type=%d off=%d", lib, fun, reloc->type, reloc->offset);
 				break;
