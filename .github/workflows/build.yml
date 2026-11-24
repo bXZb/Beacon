@@ -251,6 +251,22 @@ jobs:
           name: beacon-kdebug-x64
           path: beacon.kdebug.x64.dll
 
+      # KDEBUG + the BOF-window mask engine: the own-exe/UDRL sleeve shape
+      # (rl0k) with the probes. BeaconGate's bMask only exists where the
+      # engine is compiled in, so the live gate tests bake this one.
+      - name: Build KDEBUG variant with the mask engine (beacon only)
+        if: matrix.project == 'beacon'
+        shell: pwsh
+        run: |
+          ./build.ps1 -Project beacon -Toolset v143 -Platform x64 -ExtraProperties BeaconKDebug=true,BeaconBofWin=true
+          cp x64/Release/bofwin/beacon.x64.rl0k.dll beacon.kdebug.rl0k.x64.dll
+      - name: Upload KDEBUG mask-engine variant
+        if: matrix.project == 'beacon'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-kdebug-rl0k-x64
+          path: beacon.kdebug.rl0k.x64.dll
+
       - name: Upload WinHTTP artifact
         if: matrix.project == 'beacon'
         uses: actions/upload-artifact@v4
