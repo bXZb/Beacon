@@ -41,7 +41,8 @@ void task_job_context(unsigned int task_no, unsigned int job_id);
 /* a lifecycle frame for a task; job_id < 0 when there is none */
 void task_notify(unsigned int type, unsigned int task_no, int job_id, const char * data, int length);
 void command_shell_send(char * buffer, int length, int type);
-void command_shell_post(char * buffer, int length, int type, BOOL sendNow);
+/* int, not BOOL: this header is included ahead of windows.h */
+void command_shell_post(char * buffer, int length, int type, int sendNow);
 void process_payload(char * buffer, unsigned int length);
 
 /* prototype for our error function */
