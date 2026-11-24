@@ -124,6 +124,8 @@ void syscall_method_set(int method);
 BOOL BeaconInformation(BEACON_INFO * info);
 void beacon_info_fill(BEACON_INFO * info, char * sm_base, DWORD sm_text, DWORD sm_total);
 void beacon_sleep_mask_set_exec(char * ptr, DWORD text_size, DWORD total_size);
+/* a user mask: leave what the call's arguments point into in the clear */
+void beacon_info_keep_plaintext(BEACON_INFO * info, const unsigned long long * args, int nargs, HEAP_RECORD * copy, int max);
 BOOL BeaconAddValue(const char * key, void * ptr);
 void * BeaconGetValue(const char * key);
 BOOL BeaconRemoveValue(const char * key);

