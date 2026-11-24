@@ -318,7 +318,7 @@
          marker, which is how the team server learns it. -->
     <SleepMaskRegionDefine Condition="'$(Platform)'=='x64'">SLEEPMASK_REGION_PATCH=65536;</SleepMaskRegionDefine>
     <SleepMaskRegionDefine Condition="'$(Platform)'!='x64'"></SleepMaskRegionDefine>
-  </PropertyGroup
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
     <IntDir>$(Configuration)\</IntDir>

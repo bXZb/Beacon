@@ -108,6 +108,12 @@ static BOOL sm410_exec(FUNCTION_CALL * fc)
 	free(decoded);
 	return g_sm410_state == 1;
 }
+
+/* the gate's executor: every gated call goes through the object */
+static void sm410_gate(FUNCTION_CALL * fc)
+{
+	(void)sm410_exec(fc);
+}
 #endif
 
 void GargleSleep(DWORD time) {
@@ -140,7 +146,7 @@ void GargleSleep(DWORD time) {
 		fc.numOfArgs   = 1;
 		fc.args[0]     = (unsigned long long)time;
 		fc.bMask       = TRUE;
-		gate_set_executor(sm410_exec);
+		gate_set_executor(sm410_gate);
 		if (sm410_exec(&fc))
 			return;
 		/* the object failed to load: the built-in engines take over */
