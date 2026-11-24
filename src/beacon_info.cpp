@@ -40,24 +40,29 @@ void command_beacon_info(char * buffer, int length, void (*callback)(char * buff
 		syscall_method_get());
 	bi_out(callback, line);
 
-	/* the masked-image layout the sleepmask operates on */
+	/* the masked-image layout the sleepmask operates on: BeaconInformation's
+	 * 4.10 view - the beacon memory region's sections and the heap records */
 	memset(&info, 0, sizeof(info));
 	BeaconInformation(&info);
 
 	_snprintf(line, sizeof(line) - 1,
-		"  beacon_ptr=%p sections=%p heap_records=%p\n",
-		info.beacon_ptr, info.sections, info.heap_records);
+		"  beacon_ptr=%p version=%x heap_records=%p\n",
+		info.beacon_ptr, info.version, info.heap_records);
 	bi_out(callback, line);
 
-	if (info.sections != NULL) {
-		bi_out(callback, "  masked image sections (start,end):\n");
-		for (i = 0; info.sections[i] != 0 || info.sections[i + 1] != 0; i += 2) {
-			_snprintf(line, sizeof(line) - 1, "    %08lX - %08lX\n",
-				(unsigned long)(DWORD_PTR)info.sections[i],
-				(unsigned long)(DWORD_PTR)info.sections[i + 1]);
+	if (info.allocatedMemory.AllocatedMemoryRegions[0].Purpose == AM_PURPOSE_BEACON_MEMORY) {
+		static const char * names[] = { "", "buffer", "peheader", "text", "rdata", "data", "pdata", "reloc" };
+		ALLOCATED_MEMORY_SECTION * sec;
+		bi_out(callback, "  beacon memory region sections (label base size protect mask):\n");
+		for (i = 0; i < 8; i++) {
+			sec = &info.allocatedMemory.AllocatedMemoryRegions[0].Sections[i];
+			if (sec->BaseAddress == NULL)
+				continue;
+			_snprintf(line, sizeof(line) - 1, "    %-8s %p %llx %lx %s\n",
+				(unsigned)sec->Label < 8 ? names[sec->Label] : "?",
+				sec->BaseAddress, (unsigned long long)sec->VirtualSize, (unsigned long)sec->CurrentProtect,
+				sec->MaskSection ? "mask" : "-");
 			bi_out(callback, line);
-			if (i > 64)
-				break; /* defensive bound */
 		}
 	}
 

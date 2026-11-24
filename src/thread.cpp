@@ -114,6 +114,9 @@ void safe_exit() {
 	int exit_funk = setting_short(SETTING_EXIT_FUNK);
 	int cfg_caution = setting_short(SETTING_CFG_CAUTION);
 
+	KD("exit: funk=", (long)exit_funk);
+	KD("exit: cfg=", (long)cfg_caution);
+
 	track_memory_cleanup(); /* clean up all the tracked memory. */
 
 	if (exit_funk == EXIT_FUNK_THREAD) {

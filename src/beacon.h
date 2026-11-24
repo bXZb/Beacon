@@ -163,7 +163,14 @@ unsigned int   setting_length(int field);   /* malloc'd blob size (binary TLV se
 /* maintenance */
 void settings_init(void * bptr);
 void * get_beacon_ptr();
-int sleepmask_decode(char * out, int max);
+/* the sleep-mask object patched into the SSSS region: decode it (flag:
+ * 4.10+ entry contract), or just ask for the flag */
+int sleepmask_decode(char * out, int max, int * contract410);
+int sleepmask_contract(void);
+/* the size the TS patches behind the marker (16384, 65536 on the x64 sleeve) */
+#ifndef SLEEPMASK_REGION_PATCH
+#define SLEEPMASK_REGION_PATCH 16384
+#endif
 
 /* yes, this is useful! */
 unsigned int bigger_rand();

