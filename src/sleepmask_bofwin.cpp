@@ -533,8 +533,12 @@ static const unsigned char BW_RC4_CODE[0x3B] = {
 };
 
 /* sbox1 <- sbox0: push rsi/rdi (callee-saved, rep movsq clobbers them),
- * load both qwords rip-relatively, 0x40 qwords, pop. 26 bytes; the two
- * d32s are computed by the caller: rel = qword_off - (R+9) / (R+16). */
+ * load both qwords rip-relatively, 0x20 qwords (one 256-byte box), pop.
+ * 26 bytes; the two d32s are computed by the caller: rel = qword_off -
+ * (R+9) / (R+16). The count used to be 0x40 - twice the box: the copy ran
+ * 256 bytes past sbox1. Nothing lived there until bofwin_call's call
+ * record did, and every masked call then came back with the record
+ * overwritten by box bytes (garbage return value, bogus handles). */
 static int bw_emit_refresh(unsigned char * e, long d0, long d1)
 {
 	int n = 0;
@@ -544,7 +548,7 @@ static int bw_emit_refresh(unsigned char * e, long d0, long d1)
 	memcpy(e + n, &d0, 4); n += 4;
 	e[n++] = 0x48; e[n++] = 0x8B; e[n++] = 0x3D;    /* mov rdi,[rip+d1] */
 	memcpy(e + n, &d1, 4); n += 4;
-	e[n++] = 0xB9; e[n++] = 0x40; e[n++] = 0x00; e[n++] = 0x00; e[n++] = 0x00; /* mov ecx,0x40 */
+	e[n++] = 0xB9; e[n++] = 0x20; e[n++] = 0x00; e[n++] = 0x00; e[n++] = 0x00; /* mov ecx,0x20 */
 	e[n++] = 0xF3; e[n++] = 0x48; e[n++] = 0xA5;    /* rep movsq */
 	e[n++] = 0x5F;                                  /* pop rdi */
 	e[n++] = 0x5E;                                  /* pop rsi */
