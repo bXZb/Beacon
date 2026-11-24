@@ -560,7 +560,7 @@ static void bw_put_pe_header(unsigned char * base)
 	nt->OptionalHeader.SizeOfImage = BW_STUB_BYTES;
 	nt->OptionalHeader.SizeOfHeaders = BW_STUB_HEADER;
 	memcpy(sec->Name, ".text", 6);
-	sec->VirtualSize = BW_STUB_HEADER;
+	sec->Misc.VirtualSize = BW_STUB_HEADER;
 	sec->VirtualAddress = BW_STUB_HEADER;
 	sec->SizeOfRawData = BW_STUB_HEADER;
 	sec->Characteristics = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ;
