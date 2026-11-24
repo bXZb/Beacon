@@ -27,6 +27,10 @@ void * bofwin_test_stub_page(void);
  * 3 BOF returned / 4 exit returned) - survives a crash for the log. */
 int bofwin_test_phase(void);
 
+/* CI diagnostics: block count of the last window before / after the
+ * keep-plaintext filter (bofwin_call). */
+void bofwin_test_blocks(int * before, int * after);
+
 /* Run entry(args, alen) inside the masked window. Returns FALSE when the
  * window cannot be served (engine unavailable, background threads active,
  * snapshot without .text, no watchdog) - the caller then runs the BOF

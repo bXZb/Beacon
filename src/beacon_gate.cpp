@@ -316,6 +316,13 @@ static int gate_mask_run(FUNCTION_CALL * fc)
 	int served = bofwin_call((void *)fc->functionPtr, fc->args, fc->numOfArgs, &fc->retValue,
 	                         fc->function == GATE_API_EXITTHREAD ? 0 : GATE_MASK_WATCHDOG_MS);
 	KD(served ? "gate: masked api=" : "gate: mask unserved api=", fc->function);
+	KD(served ? "gate: masked ret=" : "gate: unserved ret=", (long)fc->retValue);
+	{
+		int before = 0, after = 0;
+		bofwin_test_blocks(&before, &after);
+		KD("gate: mask blocks before=", (long)before);
+		KD("gate: mask blocks after=", (long)after);
+	}
 	return served;
 #else
 	(void)fc;

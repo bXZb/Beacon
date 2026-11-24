@@ -146,6 +146,7 @@ typedef char bw_assert_call_ret[offsetof(BW_CTX, call_ret) == 0xAA8 ? 1 : -1];
 typedef char bw_assert_call_args[offsetof(BW_CTX, call_args) == 0xAB0 ? 1 : -1];
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
+int g_bw_dbg_before, g_bw_dbg_after;  /* test hook: block count before/after the keep-plaintext filter */
 
 static unsigned char * g_bw_stubs;   /* private RX page: enter/exit/watchdog */
 static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
@@ -817,6 +818,12 @@ void * bofwin_test_stub_page(void)
 	return g_bw_stubs; /* NULL before the first bw_build_pages */
 }
 
+void bofwin_test_blocks(int * before, int * after)
+{
+	*before = g_bw_dbg_before;
+	*after = g_bw_dbg_after;
+}
+
 int bofwin_test_phase(void)
 {
 	return g_bw_ctx != NULL ? g_bw_ctx->phase : -1;
@@ -904,10 +911,12 @@ static BOOL bw_window(const BW_TARGET * t)
 	ctx = g_bw_ctx;
 	blocks = (BW_BLOCK *)ctx->storage;
 	nblocks = bw_snapshot(blocks, BW_MAX_BLOCKS, gparms->beacon_ptr, &text_idx);
+	g_bw_dbg_before = nblocks;
 	if (nblocks < 2 || text_idx < 0)
 		return FALSE;
 	if (t->image_only) {
 		nblocks = bw_keep_plaintext(blocks, nblocks, &text_idx, t->avoid, t->navoid);
+		g_bw_dbg_after = nblocks;
 		if (nblocks < 1 || text_idx < 0)
 			return FALSE;
 	}
@@ -1118,6 +1127,12 @@ BOOL bofwin_supported(void)
 void * bofwin_test_stub_page(void)
 {
 	return NULL;
+}
+
+void bofwin_test_blocks(int * before, int * after)
+{
+	*before = 0;
+	*after = 0;
 }
 
 int bofwin_test_phase(void)
