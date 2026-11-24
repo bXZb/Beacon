@@ -577,6 +577,16 @@ jobs:
       # Win32 call through it. Run the real bytes for arity 0..10. Unlike
       # the full suite below this one blocks the build: no image, no mask
       # window, nothing environment-specific.
+      # A probe (KD, spawn_log, ...) is a trace - KD is a no-op in a release
+      # build - so a call that does something must never be written as its
+      # argument. channel.cpp sent its GET that way: every kdebug battery was
+      # green, and no release beacon ever checked in.
+      - name: No side effects inside probe arguments
+        shell: pwsh
+        run: |
+          python tools\probe_side_effects.py
+          if ($LASTEXITCODE -ne 0) { throw "a probe argument performs a call" }
+
       - name: Gate call thunk test
         shell: pwsh
         run: |

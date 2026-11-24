@@ -349,7 +349,12 @@ int _http_get(char * hook, sessdata * meta, char * buffer, int max) {
 	KD("ch: open gle=", (long)GetLastError());
 	KD("ch: open req=", (long)(request != NULL));
 	fixRequest(request);
-	KD("ch: send ok=", (long)HttpSendRequestA(request, myprofile.headers, strlen(myprofile.headers), myprofile.buffer, myprofile.blen));
+	/* the call is made first and probed after: KD is a no-op in a release
+	 * build, and written as its argument the GET was never sent there */
+	{
+		BOOL sent = HttpSendRequestA(request, myprofile.headers, strlen(myprofile.headers), myprofile.buffer, myprofile.blen);
+		KD("ch: send ok=", (long)sent);
+	}
 	KD("ch: send gle=", (long)GetLastError());
 
 	/* 配置文件使用完毕，释放它 */
