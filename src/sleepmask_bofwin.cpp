@@ -797,7 +797,7 @@ static BOOL bw_build_pages(void)
 		e[15] = 0xFF; e[16] = 0x70; e[17] = 0x30;                      /* push [rax+0x30] a4 */
 		e[18] = 0x48; e[19] = 0x83; e[20] = 0xEC; e[21] = 0x20;        /* sub rsp,0x20 shadow */
 		e += 22;
-		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x15;                         /* mov r10,[rip+d32] tramp */
+		e[0] = 0x4C; e[1] = 0x8B; e[2] = 0x15;                         /* mov r10,[rip+d32] tramp (4C: REX.R) */
 		e = bw_put32(e + 3, bw_disp((int)(e - p) + 7, BW_TRAMPQ_OFF));
 		e[0] = 0x4D; e[1] = 0x85; e[2] = 0xD2;                         /* test r10,r10 */
 		e[3] = 0x75; e[4] = 0x07;                                       /* jnz -> push */
