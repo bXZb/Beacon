@@ -45,6 +45,32 @@ unsigned long crypto_rng_get_bytes(unsigned char * out, unsigned long outlen) {
 	return outlen;
 }
 
+/* gate_tramp.asm's symbols. The host link has no assembler step, and the
+ * test points the engine at an executable page of its own instead
+ * (bofwin_test_set_tramp, below); these only satisfy the linker. */
+extern "C" {
+unsigned char        gated_tramp[16];
+unsigned long long   gated_target;
+}
+
+/* where the test's calls return to: an executable page holding the
+ * trampoline the engine arms (jmp qword ptr [rip+0] + target) */
+static unsigned char * g_tramp_page;
+
+static unsigned char * tramp_page(void)
+{
+	DWORD old = 0;
+	unsigned char * p;
+
+	if (g_tramp_page != NULL)
+		return g_tramp_page;
+	p = (unsigned char *)VirtualAlloc(NULL, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	CHECK(p != NULL);
+	VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old);
+	g_tramp_page = p;
+	return p;
+}
+
 /* the record the thunk reads: {fn, ret, args[10]} */
 struct CALL_RECORD {
 	unsigned long long fn;
@@ -86,10 +112,22 @@ extern "C" __declspec(noinline) unsigned long long thunk_callee(
 }
 
 TEST(gate_thunk_page) {
+	unsigned char * t;
+
+	/* name the trampoline page before the engine builds its pages */
+	bofwin_test_set_tramp(tramp_page());
 	CHECK(bofwin_supported());
 	CHECK(bofwin_test_stub_page() != NULL);
 	/* the thunk starts with `push rbx` */
 	CHECK(((unsigned char *)bofwin_test_stub_page())[BW_CALL_OFF] == 0x53);
+	/* the engine armed the trampoline in it: jmp qword ptr [rip+0] and a
+	 * target inside the stub page. From here on every thunk call below
+	 * returns through it - the path a masked call takes in the image */
+	t = (unsigned char *)bofwin_test_tramp();
+	CHECK(t == g_tramp_page);
+	CHECK(t[0] == 0xFF && t[1] == 0x25 && t[2] == 0 && t[3] == 0 && t[4] == 0 && t[5] == 0);
+	CHECK(*(unsigned long long *)(t + 6) >= (unsigned long long)bofwin_test_stub_page()
+	   && *(unsigned long long *)(t + 6) < (unsigned long long)bofwin_test_stub_page() + 0x1000);
 }
 
 TEST(gate_thunk_call_every_arity) {

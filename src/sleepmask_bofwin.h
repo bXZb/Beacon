@@ -33,6 +33,9 @@ void bofwin_test_blocks(int * before, int * after);
 /* CI diagnostics: the return trampoline placed in the beacon image (see
  * bofwin_call), or NULL. */
 void * bofwin_test_tramp(void);
+/* ... and, before the first window, an executable page of the test's own to
+ * put it in (the image's gate_tramp.asm section otherwise). */
+void bofwin_test_set_tramp(void * site);
 
 /* Run entry(args, alen) inside the masked window. Returns FALSE when the
  * window cannot be served (engine unavailable, background threads active,
