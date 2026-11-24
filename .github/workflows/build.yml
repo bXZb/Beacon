@@ -191,6 +191,10 @@ jobs:
           & cl /nologo /W3 /O1 /GS- /Zl /Gy- /c /Fo:tests\_build\sleepmask410.x64.o tests\bof_sleepmask410.c
           if ($LASTEXITCODE -ne 0) { throw "sleepmask410 build failed" }
           Get-Item tests\_build\sleepmask410.x64.o | Select-Object Name,Length
+          # the same object past the old 16K region limit: reaches a beacon only through the x64 sleeve's 64K patch
+          & cl /nologo /W3 /O1 /GS- /Zl /Gy- /c /DBIG=1 /Fo:tests\_build\sleepmask410_big.x64.o tests\bof_sleepmask410.c
+          if ($LASTEXITCODE -ne 0) { throw "sleepmask410_big build failed" }
+          Get-Item tests\_build\sleepmask410_big.x64.o | Select-Object Name,Length
 
       # campaign ② (C-19 residual): self-built async-execute postex DLL -
       # kit-template contract, our own packed-args protocol (once/bg)
@@ -308,6 +312,7 @@ jobs:
             tests/_build/bof_selfptr.x64.o
             tests/_build/bof_syscalls.x64.o
             tests/_build/sleepmask410.x64.o
+            tests/_build/sleepmask410_big.x64.o
 
   udrl-x64:
     name: udrl x64 object (Phase 4 loader)
