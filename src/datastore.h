@@ -142,4 +142,12 @@ unsigned long long datastore_hash_at(int index);
 int datastore_type_at(int index);
 void datastore_reset_for_test(int slots);
 
+/* conv 3 - a resident object - reports itself through args: */
+typedef struct {
+	void * entry;   /* the loaded entry point: call it by address, no load in between */
+	char * base;    /* its block (BEACON_INFO.sleep_mask_ptr) */
+	DWORD  text;    /* the block's code part */
+	DWORD  total;   /* the whole block */
+} RESIDENT_OBJECT;
+
 BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entry, char * args, int alen, int conv);
