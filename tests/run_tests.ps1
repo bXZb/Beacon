@@ -27,6 +27,7 @@ $sources = @(
     'tests/test_miniprintf.cpp',
     'tests/test_keygen.cpp',
     'tests/test_bofwin.cpp',
+    'tests/test_gate_stubs.cpp',
     'src/parse.cpp',
     'src/bformat.cpp',
     'src/settings.cpp',

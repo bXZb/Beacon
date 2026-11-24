@@ -528,6 +528,20 @@ jobs:
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe' -Name DumpCount -Value 5 -Type DWord
           Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name ConsentDefault -Value 1 -Type DWord -ErrorAction SilentlyContinue
 
+      # BeaconGate's call thunk (sleepmask_bofwin.cpp BW_CALL_OFF) is a
+      # hand-assembled x64 call frame - the bMask path runs every proxied
+      # Win32 call through it. Run the real bytes for arity 0..10. Unlike
+      # the full suite below this one blocks the build: no image, no mask
+      # window, nothing environment-specific.
+      - name: Gate call thunk test
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tests\_build\gt | Out-Null
+          & cl /nologo /W3 /EHsc /MT /D_CRT_SECURE_NO_WARNINGS /DWIN32_LEAN_AND_MEAN /Isrc /Itests tests\test_gate_thunk.cpp tests\test_main.cpp src\sleepmask_bofwin.cpp /Fe:tests\_build\gate_thunk.exe /Fo:tests\_build\gt\
+          if ($LASTEXITCODE -ne 0) { throw "gate thunk test build failed" }
+          & tests\_build\gate_thunk.exe
+          if ($LASTEXITCODE -ne 0) { throw "gate thunk test failed" }
+
       - name: Build & run tests
         shell: pwsh
         # lib/ 现为自研精简重编库（1.18.2，keygen 健康），探针默认开启

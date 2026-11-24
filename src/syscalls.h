@@ -28,6 +28,24 @@ BOOL   beacon_ReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD got, LPOVERLA
 BOOL   beacon_WriteFile(HANDLE h, LPCVOID buf, DWORD toWrite, LPDWORD wrote, LPOVERLAPPED ov);
 HANDLE beacon_CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disp, DWORD flags, HANDLE tmpl);
 
+/* The rest of the 4.10 BeaconGate API set. Every beacon_* wrapper is:
+ * BeaconGate on for that API -> the gate; else the syscall method where we
+ * have the NT call (marked *); else the plain API. Together with the ones
+ * above they are the BOF system-call API (BeaconVirtualAlloc and friends).
+ * VirtualAlloc* / VirtualProtect* / VirtualFree* / VirtualQuery* /
+ * UnmapViewOfFile* / Get+SetThreadContext* / ResumeThread* have the NT call. */
+LPVOID beacon_VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD protect);
+BOOL   beacon_VirtualProtect(LPVOID addr, SIZE_T size, DWORD protect, PDWORD old);
+BOOL   beacon_VirtualFree(LPVOID addr, SIZE_T size, DWORD freetype);
+SIZE_T beacon_VirtualQuery(LPCVOID addr, PMEMORY_BASIC_INFORMATION mbi, SIZE_T len);
+BOOL   beacon_GetThreadContext(HANDLE thread, CONTEXT * ctx);
+BOOL   beacon_SetThreadContext(HANDLE thread, CONTEXT * ctx);
+DWORD  beacon_ResumeThread(HANDLE thread);
+HANDLE beacon_CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD id);
+HANDLE beacon_CreateFileMappingA(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect, DWORD high, DWORD low, const char * name);
+LPVOID beacon_MapViewOfFile(HANDLE map, DWORD access, DWORD high, DWORD low, SIZE_T size);
+BOOL   beacon_UnmapViewOfFile(LPCVOID base);
+
 /* ---- 4.11 BeaconGetSyscallInformation surface (arsenal-kit 20251100
  * beacon.h layout, frozen order): a BY-COPY table BOFs consume from their
  * own memory - the 4.11 breaking change that replaced pointer handoff. */

