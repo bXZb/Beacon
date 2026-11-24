@@ -195,9 +195,9 @@
       <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
     </MASM>
 <MASM Include="src\gate_tramp.asm">
-      <!-- the return trampoline of a BeaconGate masked call (sleepmask_bofwin.cpp) -->
+      <!-- the gate's section: the comms stubs for a user sleepmask (every x64
+           build), the return trampoline of a masked call (mask engine builds) -->
       <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(BeaconBofWin)'!='true'">true</ExcludedFromBuild>
     </MASM>
     <ClCompile Include="src\spawn.cpp" />
     <ClCompile Include="src\strategy.cpp" />

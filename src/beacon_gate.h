@@ -102,6 +102,9 @@ void BeaconEnableBeaconGateMasking(void);
 void gate_exit_snapshot(void);
 
 /* a user sleepmask BOF takes every gated call (and the sleep itself):
- * gate_set_executor installs it, NULL selects the built-in executor */
-typedef void (*GATE_EXECUTOR)(FUNCTION_CALL * fc);
+ * gate_set_executor installs it, NULL selects the built-in executor.
+ * It answers TRUE when it ran the call. FALSE hands the call back and
+ * the built-in executors take it - an object that failed to load must
+ * not cost Beacon the API call it was going to make */
+typedef BOOL (*GATE_EXECUTOR)(FUNCTION_CALL * fc);
 void gate_set_executor(GATE_EXECUTOR executor);

