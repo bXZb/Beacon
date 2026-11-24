@@ -56,7 +56,7 @@
 #define CALLBACK_TASK_COMPLETED  0x27   /* the task's handler returned; no data */
 #define CALLBACK_JOB_REGISTERED  0x28   /* a job the task started: id in the header, description in the data */
 #define CALLBACK_JOB_COMPLETED   0x29   /* that job ended: same shape */
-#define CALLBACK_HOST_FAILOVER   0x2a   /* the next callback host after a failure: a message in the data */
+#define CALLBACK_HOST_FAILOVER   0x2a   /* opt-in failover notification, once a connection is back: a message in the data */
 #define CALLBACK_DATA_STORE_ADD      0x33
 #define CALLBACK_DATA_STORE_REMOVE   0x34
 #define CALLBACK_DATA_STORE_LIST     0x35

