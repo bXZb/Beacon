@@ -22,6 +22,8 @@ BOOL bofwin_supported(void);
 /* CI diagnostics: the built stub page (capstone-mirror verification), or
  * NULL before the first bofwin_supported/window call. */
 void * bofwin_test_stub_page(void);
+/* ... and the allocation base (the PE header page in front of it) */
+void * bofwin_test_base(void);
 
 /* CI diagnostics: last window phase (0 start / 1 VP done / 2 masked /
  * 3 BOF returned / 4 exit returned) - survives a crash for the log. */
