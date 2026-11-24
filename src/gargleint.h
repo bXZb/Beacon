@@ -17,6 +17,9 @@ extern GARGLEP * gparms;
 extern volatile long threadcount;
 
 void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon);
+/* the session's mask bytes (BEACON_INFO.mask), valid after the exit path
+ * released gparms */
+void gargle_mask_bytes(char * out, int len);
 void gargle_trampoline(void * end, void * begin);
 
 /* 4.5 trampoline placeholder body: a wall of INT3/NOP pairs that

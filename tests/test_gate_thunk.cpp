@@ -35,6 +35,10 @@
  * wants them */
 volatile long threadcount = 0;
 GARGLEP * gparms = NULL;
+/* the image base the engine masks - this exe */
+void * get_beacon_ptr() {
+	return (void *)GetModuleHandleA(NULL);
+}
 /* the beacon's g3_snapshot_blocks, for THIS exe: the header page and every
  * non-.text section as blocks, the .text span reported separately (the
  * engine appends .text itself). A masked window below masks the test exe. */

@@ -96,6 +96,11 @@ void BeaconEnableBeaconGate(void);
 void BeaconDisableBeaconGateMasking(void);
 void BeaconEnableBeaconGateMasking(void);
 
+/* The exit path releases the settings table before it reaches the gate
+ * (safe_exit: track_memory_cleanup first): call this while the settings
+ * exist and the gate decides from the snapshot from then on. */
+void gate_exit_snapshot(void);
+
 /* a user sleepmask BOF takes every gated call (and the sleep itself):
  * gate_set_executor installs it, NULL selects the built-in executor */
 typedef void (*GATE_EXECUTOR)(FUNCTION_CALL * fc);

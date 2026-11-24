@@ -117,6 +117,10 @@ void safe_exit() {
 	KD("exit: funk=", (long)exit_funk);
 	KD("exit: cfg=", (long)cfg_caution);
 
+	/* the cleanup below zeroes and frees the settings table: what the exit
+	 * call's gate decision needs is read here, while the settings exist */
+	gate_exit_snapshot();
+
 	track_memory_cleanup(); /* clean up all the tracked memory. */
 
 	if (exit_funk == EXIT_FUNK_THREAD) {

