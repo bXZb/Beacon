@@ -357,11 +357,19 @@ void command_token_store(char * buffer, int length, void (*callback)(char * buff
 }
 
 void logintoken(char * domain, char * user, char * pass, void(*callback)(char * buffer, int length, int type)) {
+	/* 4.11: a user written as user@domain (a UPN) carries its own domain.
+	 * LogonUserA and CreateProcessWithLogonW both document that the domain
+	 * must be NULL when the user name is in UPN form, so the domain
+	 * argument is ignored for a UPN. Anything else keeps the 4.9 behaviour
+	 * (the client sends "." when the operator gave no domain). */
+	BOOL  upn = user != NULL && strchr(user, '@') != NULL;
+	char * logondomain = upn ? NULL : domain;
+
 	/* drop the current token and clean it up */
 	command_rev2self();
 
 	/* try to create a token with these credentials */
-	if (!LogonUserA(user, domain, pass, LOGON32_LOGON_NEW_CREDENTIALS, LOGON32_PROVIDER_WINNT50, &atoken)) {
+	if (!LogonUserA(user, logondomain, pass, LOGON32_LOGON_NEW_CREDENTIALS, LOGON32_PROVIDER_WINNT50, &atoken)) {
 		post_error_d(0x18, GetLastError());
 		return;
 	}
@@ -380,7 +388,10 @@ void logintoken(char * domain, char * user, char * pass, void(*callback)(char * 
 
 	/* populate them, please */
 	toWideChar(user, acreds.user, 256);
-	toWideChar(domain, acreds.domain, 256);
+	if (upn)
+		acreds.domain = NULL;   /* CreateProcessWithLogonW wants NULL beside a UPN; the block acreds.manager owns is unaffected */
+	else
+		toWideChar(domain, acreds.domain, 256);
 	toWideChar(pass, acreds.password, 512);
 	acreds.active = TRUE;
 
