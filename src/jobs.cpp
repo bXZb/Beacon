@@ -158,6 +158,41 @@ void psh_prune_list() {
 }
 
 /* poll any running powershell processes for output and report it */
+/* whether more of the job's output is waiting in its pipe */
+static BOOL job_more_output(psh_entry * temp) {
+	DWORD avail = 0;
+	return PeekNamedPipe(temp->read_stdout, NULL, 0, NULL, &avail, 0) && avail > 0;
+}
+
+/* A job that has just produced output is given a moment to end: the
+ * process exits, the pipe closes - usually at once. Watched for up to half
+ * a second, ten looks 100ms apart. The wait stops at whichever comes
+ * first: the end, or more output (a job still producing is read on, not
+ * waited for). `read` is set to -1 for a pipe job whose pipe closed - the
+ * caller reads that as gone. */
+static void job_wait_end(psh_entry * temp, int * read) {
+	int wait;
+
+	for (wait = 0; wait < 5; wait++) {
+		DWORD avail = 0;
+		if (!PeekNamedPipe(temp->read_stdout, NULL, 0, NULL, &avail, 0)) {
+			/* the pipe is gone */
+			if (temp->tag == JOB_ENTRY_NAMEDPIPE) {
+				*read = -1;
+			}
+			return;
+		}
+		if (avail > 0) {
+			/* more to read: not the end, yet */
+			return;
+		}
+		if (temp->tag == JOB_ENTRY_PROCESS && WaitForSingleObject(temp->pi.hProcess, 0) != WAIT_TIMEOUT) {
+			return;
+		}
+		Sleep(100);
+	}
+}
+
 void psh_poll(void(*callback)(char * buffer, int length, int type), int max) {
 	psh_entry * temp = psh_list;
 	psh_entry * prev = NULL;
@@ -192,6 +227,12 @@ void psh_poll(void(*callback)(char * buffer, int length, int type), int max) {
 			task_job_context(temp->task_no, temp->jid);
 			callback(bufferz, total_read, temp->type);
 			task_job_context(0, 0);
+			/* its output and its end in one checkin: the task's callback
+			 * then knows the output was the last (is_final), and the task
+			 * is completed a checkin sooner */
+			if (!job_more_output(temp)) {
+				job_wait_end(temp, &total_read);
+			}
 		}
 
 		/* check if the pipe is alive or not */
