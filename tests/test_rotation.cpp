@@ -36,20 +36,21 @@ TEST(rotation_round_robin_holds_a_failed_host) {
 	/* cycle 3: b failed and is held: c comes next */
 	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "c.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "/c") == 0);
-	/* cycle 4: c answered: the walk wraps to a */
+	/* cycle 4: c answered: the walk skips b and wraps to a */
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "a.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/a") == 0);
 	/* cycle 5: a answered: c again, b is still held */
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "c.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/c") == 0);
-	/* cycle 6: c failed too: every host has now failed, so all are released
-	 * and the walk starts over at a */
+	/* cycle 6: c failed too: b and c are held, a is the only one left */
 	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "a.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/a") == 0);
-	/* cycle 7: a failed: b is back in the rotation */
+	/* cycle 7: a failed: every host has failed now, so all are released and
+	 * the walk goes on to b */
 	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "b.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/b") == 0);
-	/* cycle 8: b failed: c; then c failed: all released again */
+	/* cycle 8: b failed: c. Then c failed: b and c are held again and a is
+	 * the one left */
 	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "c.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/c") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "a.example") == 0);
@@ -57,11 +58,17 @@ TEST(rotation_round_robin_holds_a_failed_host) {
 }
 
 TEST(rotation_round_robin_holds_nothing_after_a_good_cycle) {
-	/* continues the sequence above: the walk is at b (a just answered) */
+	/* continues the sequence above: a just answered, b and c are held */
 	char hosts[] = "a.example,/a,b.example,/b,c.example,/c";
-	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "b.example") == 0);
+	/* a good cycle holds nothing new: a is still the only host left */
+	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "a.example") == 0);
+	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/a") == 0);
+	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "a.example") == 0);
+	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/a") == 0);
+	/* now a fails: every host is held, all are released, and nothing is
+	 * held any more: b, c, a */
+	CHECK(strcmp(next_host_round_robin(hosts, TRUE), "b.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/b") == 0);
-	/* a good cycle on b changes nothing: on to c, then a again */
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "c.example") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "/c") == 0);
 	CHECK(strcmp(next_host_round_robin(hosts, FALSE), "a.example") == 0);
@@ -98,10 +105,15 @@ TEST(rotation_random_never_returns_a_held_host) {
 		}
 	}
 
-	/* the other one failed too: all held, so all are released and both are
-	 * candidates again - each one comes up in 200 picks */
-	CHECK(strcmp(next_host_random(hosts, TRUE), first) == 0 || strcmp(next_host_random(hosts, TRUE), other) == 0);
-	next_host_random(hosts, FALSE);
+	/* the other one failed too (this flag): every host is held, all are
+	 * released, and both are candidates again. One call, one check: a check
+	 * that calls twice moves the walk twice when its first half is false. */
+	{
+		const char * h = next_host_random(hosts, TRUE);
+		CHECK(strcmp(h, first) == 0 || strcmp(h, other) == 0);
+		next_host_random(hosts, FALSE);   /* its uri */
+	}
+	/* each one comes up in 200 picks */
 	{
 		int seen_first = 0, seen_other = 0, i;
 		for (i = 0; i < 200; i++) {
@@ -117,8 +129,9 @@ TEST(rotation_random_never_returns_a_held_host) {
 
 TEST(rotation_dispatch_forwards_the_flag_to_round_robin) {
 	/* next_host() routes by strategy. Round-robin (the default) continues
-	 * the sequence above: the walk is at b. The flag says a failed, and it
-	 * must reach the hold table through the dispatcher. */
+	 * the sequence of the first two tests: a just answered, nothing is
+	 * held. The flag says a failed, and it must reach the hold table
+	 * through the dispatcher. */
 	strategy_info si;
 	char hosts[] = "a.example,/a,b.example,/b,c.example,/c";
 	strategy_setup(&si, HOST_STRATEGY_ROUND_ROBIN, -1, -1, -1);
@@ -126,22 +139,35 @@ TEST(rotation_dispatch_forwards_the_flag_to_round_robin) {
 	CHECK(strcmp(next_host(hosts, TRUE, &si), "/b") == 0);
 	CHECK(strcmp(next_host(hosts, FALSE, &si), "c.example") == 0);
 	CHECK(strcmp(next_host(hosts, FALSE, &si), "/c") == 0);
-	/* a is held: c -> b */
+	/* a is held: the walk goes back to b */
 	CHECK(strcmp(next_host(hosts, FALSE, &si), "b.example") == 0);
 	CHECK(strcmp(next_host(hosts, FALSE, &si), "/b") == 0);
 }
 
 TEST(rotation_dispatch_keeps_the_failover_strategies_their_own) {
 	/* the failover-* and rotate-* strategies (HOST_STRATEGY_EVENT) keep their
-	 * own host-moving logic: a failure rotates to the next host, and the
-	 * dispatcher's round-robin and random tables are not touched */
+	 * own host-moving logic: a failure moves to the next host - once, on
+	 * the host call. The uri call of the same pair carries the same flag and
+	 * must not move again (it used to, which skipped a host after every
+	 * failure and paired a host with the next one's uri). The round-robin
+	 * and random tables are not touched. */
 	strategy_info si;
 	char hosts[] = "f1.example,/1,f2.example,/2,f3.example,/3";
 	strategy_setup(&si, HOST_STRATEGY_EVENT, -1, -1, 0);   /* rotate off, failover on every failure */
+	/* f1 answers for a cycle */
 	CHECK(strcmp(next_host(hosts, FALSE, &si), "f1.example") == 0);
 	CHECK(strcmp(next_host(hosts, FALSE, &si), "/1") == 0);
+	/* it fails: the next host, with its own uri */
 	CHECK(strcmp(next_host(hosts, TRUE, &si), "f2.example") == 0);
 	CHECK(strcmp(next_host(hosts, TRUE, &si), "/2") == 0);
+	/* fails again: on to f3, then back to f1 */
+	CHECK(strcmp(next_host(hosts, TRUE, &si), "f3.example") == 0);
+	CHECK(strcmp(next_host(hosts, TRUE, &si), "/3") == 0);
+	CHECK(strcmp(next_host(hosts, TRUE, &si), "f1.example") == 0);
+	CHECK(strcmp(next_host(hosts, TRUE, &si), "/1") == 0);
+	/* f1 answers now: it stays */
+	CHECK(strcmp(next_host(hosts, FALSE, &si), "f1.example") == 0);
+	CHECK(strcmp(next_host(hosts, FALSE, &si), "/1") == 0);
 }
 
 TEST(rotation_dispatch_routes_random) {

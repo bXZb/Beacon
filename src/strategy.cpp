@@ -237,7 +237,14 @@ char * next_host_priority_failover(char * hosts, BOOL lastCheckinFailed, strateg
 	}
 
 	// Should we advance to the next host/uri pair?
-	if (lastCheckinFailed) {
+	// Both calls of a pair carry the same flag, and it describes the
+	// previous pair: only the host call acts on it. (Acting on it twice
+	// skipped a host after every failure and paired a host with the uri of
+	// the next one.)
+	if (uriOffset != 0) {
+		// the uri call of a pair: nothing to decide
+	}
+	else if (lastCheckinFailed) {
 		// Have we reached a failure limit? Force expiration of the host.
 		if (max_fail_times > -1) {
 			failedCount++;
