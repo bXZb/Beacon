@@ -50,13 +50,24 @@
  * and a job's frame carries the job's id behind the task number:
  *   [callback | TASK_TAG | JOB_TAG][task no u32][job id u32][data]
  * The tag goes in front of chunking and queueing, so a chunked frame is
- * rebuilt on the team server with it in place. */
+ * rebuilt on the team server with it in place.
+ *
+ * A task the team server sends as several packets (a postex job is a spawn
+ * and then the job itself) flags every packet but the last TASK_MORE: the
+ * task is not done when such a packet's handler returns. The bit is the
+ * job tag's, in the other direction.
+ *
+ * The lifecycle callbacks sit at 0x60 and up, clear of every callback
+ * number either side sends. 0x27 to 0x29 (39 to 41) were taken first; they
+ * are the client's "output with a callback id" family - a job queued with
+ * a callback reports its output as 40, and that read as a registration. */
 #define TASK_TAG                0x80000000u
-#define JOB_TAG                 0x40000000u
-#define CALLBACK_TASK_COMPLETED  0x27   /* the task's handler returned; no data */
-#define CALLBACK_JOB_REGISTERED  0x28   /* a job the task started: id in the header, description in the data */
-#define CALLBACK_JOB_COMPLETED   0x29   /* that job ended: same shape */
-#define CALLBACK_HOST_FAILOVER   0x2a   /* opt-in failover notification, once a connection is back: a message in the data */
+#define JOB_TAG                 0x40000000u   /* beacon -> team server: the frame names its job */
+#define TASK_MORE               0x40000000u   /* team server -> beacon: more packets of the task follow */
+#define CALLBACK_TASK_COMPLETED  0x60   /* the task's last handler returned; no data */
+#define CALLBACK_JOB_REGISTERED  0x61   /* a job the task started: id in the header, description in the data */
+#define CALLBACK_JOB_COMPLETED   0x62   /* that job ended: same shape */
+#define CALLBACK_HOST_FAILOVER   0x63   /* opt-in failover notification, once a connection is back: a message in the data */
 #define CALLBACK_DATA_STORE_ADD      0x33
 #define CALLBACK_DATA_STORE_REMOVE   0x34
 #define CALLBACK_DATA_STORE_LIST     0x35

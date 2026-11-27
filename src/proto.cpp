@@ -592,6 +592,7 @@ void process_payload(char * buffer, unsigned int length) {
 		char * args;
 		int arglen;
 		unsigned int task_no = 0;
+		int          more;         /* more packets of this task follow in the payload */
 		unsigned int outer_task;
 		int outer_job;
 		int job_started;
@@ -625,6 +626,12 @@ void process_payload(char * buffer, unsigned int length) {
 			args += 4;
 			arglen -= 4;
 			h.type &= ~TASK_TAG;
+			/* not the task's last packet: its last handler completes it */
+			more = (h.type & TASK_MORE) != 0;
+			h.type &= ~TASK_MORE;
+		}
+		else {
+			more = 0;
 		}
 
 		/* the task is current for its handler's frames. A handler may run a
@@ -651,8 +658,9 @@ void process_payload(char * buffer, unsigned int length) {
 		g_task_job = outer_job;
 
 		/* the handler returned: the task is completed - unless it started a
-		 * job, which completes it when the job ends (jobs.cpp) */
-		if (task_no != 0 && !job_started)
+		 * job, which completes it when the job ends (jobs.cpp), or more
+		 * packets of it are to run */
+		if (task_no != 0 && !job_started && !more)
 			task_notify(CALLBACK_TASK_COMPLETED, task_no, -1, NULL, 0);
 
 		/* on to the next message please */
