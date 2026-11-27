@@ -166,6 +166,7 @@ TEST(sleepmask_xor_roundtrip_and_unpatched) {
 	unsigned int i;
 	char saved[16416];
 	int n;
+	int contract;
 
 	memcpy(saved, sleepmask_region, 16416);
 
@@ -188,12 +189,28 @@ TEST(sleepmask_xor_roundtrip_and_unpatched) {
 	for (i = 0; i < ilen; i++)
 		sleepmask_region[8 + i] = (char)(sleepmask_region[8 + i] ^ key[i % 4]);
 
-	n = sleepmask_decode(out, (int)sizeof(out));
+	n = sleepmask_decode(out, (int)sizeof(out), NULL);
 	CHECK(n == (int)ilen);
 	CHECK(memcmp(out, inner, ilen) == 0);
 
+	/* the 4.10+ entry contract: bit 31 of the length marks it and is not
+	 * part of the length; a caller that does not care may pass NULL */
+	contract = -1;
+	put_u32((unsigned char *)sleepmask_region + 4, ilen | 0x80000000u);
+	n = sleepmask_decode(out, (int)sizeof(out), &contract);
+	CHECK(n == (int)ilen);
+	CHECK(contract == 1);
+	CHECK(memcmp(out, inner, ilen) == 0);
+	n = sleepmask_decode(out, (int)sizeof(out), NULL);
+	CHECK(n == (int)ilen);
+	put_u32((unsigned char *)sleepmask_region + 4, ilen);
+	contract = -1;
+	n = sleepmask_decode(out, (int)sizeof(out), &contract);
+	CHECK(n == (int)ilen);
+	CHECK(contract == 0);
+
 	memcpy(sleepmask_region, "SSSSLLLLEEEEPPPPMMMMAAAASSSSKKKK", 32);
-	CHECK(sleepmask_decode(out, (int)sizeof(out)) == 0);
+	CHECK(sleepmask_decode(out, (int)sizeof(out), NULL) == 0);
 
 	memcpy(sleepmask_region, saved, 16416);
 }
