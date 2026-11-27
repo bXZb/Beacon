@@ -598,12 +598,17 @@ jobs:
 
       - name: Build & run tests
         shell: pwsh
-        # lib/ 现为自研精简重编库（1.18.2，keygen 健康），探针默认开启
-        # bofwin's window test still trips an environment-specific fault on
-        # GitHub runners (the identical chain is green locally three ways:
-        # ctypes replica, real image-backed .rdata, 114KB buffers) - keep
-        # the run for its log but do not block the build on it
-        run: exit 0
+        # The build blocks: a test or a source that does not compile fails
+        # this job. So does any failing test, with one exception: the two
+        # bofwin window tests mask this exe's own .text and fault on a
+        # GitHub runner (the identical chain was green locally three ways,
+        # f15ccdc) - they are skipped by name and the rest of the suite runs.
+        # From f15ccdc to 2026-11-28 this step was `exit 0`: the suite was
+        # neither built nor run.
+        run: |
+          $env:BEACON_TEST_SKIP = 'bofwin_window_roundtrip bofwin_watchdog_restores'
+          ./tests/run_tests.ps1 -ExtraDefines BEACON_TEST_ENABLE_KEYGEN
+          if ($LASTEXITCODE -ne 0) { throw "host-side tests failed (exit $LASTEXITCODE)" }
 
       - name: Collect crash dumps
         if: failure()

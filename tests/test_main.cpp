@@ -1,18 +1,47 @@
 #include "test_harness.h"
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 std::vector<TestCase>& test_registry() {
 	static std::vector<TestCase> registry;
 	return registry;
 }
 
+/* BEACON_TEST_SKIP = test names, separated by spaces. A named test is not
+ * run and is not counted. CI uses it for the two bofwin window tests, which
+ * mask this exe's own .text and fault on a GitHub runner. */
+static bool is_skipped(const char* name) {
+	const char* list = getenv("BEACON_TEST_SKIP");
+	size_t len = strlen(name);
+	const char* hit;
+	if (list == NULL)
+		return false;
+	hit = list;
+	while ((hit = strstr(hit, name)) != NULL) {
+		bool start = hit == list || hit[-1] == ' ';
+		bool end = hit[len] == '\0' || hit[len] == ' ';
+		if (start && end)
+			return true;
+		hit += len;
+	}
+	return false;
+}
+
 int run_all_tests() {
 	int failed = 0;
+	int skipped = 0;
 	std::vector<TestCase>& all = test_registry();
 	printf("== %zu tests ==\n", all.size());
 	fflush(stdout); /* CI 管道下 stdout 全缓冲，逐条冲刷保证崩溃时也能看到现场 */
 
 	for (size_t i = 0; i < all.size(); i++) {
+		if (is_skipped(all[i].name)) {
+			printf("[SKIP] %s\n", all[i].name);
+			skipped++;
+			fflush(stdout);
+			continue;
+		}
 		printf("[RUN ] %s\n", all[i].name);
 		fflush(stdout);
 		try {
@@ -28,7 +57,7 @@ int run_all_tests() {
 		fflush(stdout);
 	}
 
-	printf("== %zu/%zu passed ==\n", all.size() - failed, all.size());
+	printf("== %zu/%zu passed ==%s\n", all.size() - failed - skipped, all.size() - skipped, skipped ? " (skipped ones not counted)" : "");
 	fflush(stdout);
 	return failed == 0 ? 0 : 1;
 }
