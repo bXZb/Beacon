@@ -45,6 +45,7 @@
  * ------------------------------------------------------------------------- */
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>   /* rand - the beacon build does not pull its declaration in through windows.h */
 #include <string.h>
 #include "parse.h"
 #include "beacon.h"
