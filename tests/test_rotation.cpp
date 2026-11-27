@@ -254,6 +254,8 @@ TEST(overlay_round_robin_holds_a_failed_host) {
 		command_host_config(&packet[0], (int)packet.size(), collect);
 	}
 	CHECK(info_line("b.example").find(" ok  ") != std::string::npos);
+	/* the walk was at c: a comes next, and then b is back in the rotation */
+	CHECK(strcmp(overlay_pick(), "a.example") == 0);
 	CHECK(strcmp(overlay_pick(), "b.example") == 0);
 }
 

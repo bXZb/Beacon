@@ -45,11 +45,15 @@ void strategy_setup(strategy_info * si, int strategy, int rotation_timer, int fa
 * （host,uri,host,uri...）、hold 表、当前走到哪。调用成对到来——第一次
 * 返回主机，第二次返回它的 uri——lastCheckinFailed 说的是上一对的主机。
 */
-/* 主机列表 tokenize 序言（3 个策略共用）：调用方已 malloc/track hs。 */
+/* 主机列表 tokenize 序言（3 个策略共用）：调用方已 malloc/track hs（strlen(hosts) + 1 字节），拷贝在这里做。 */
 static int split_hosts(char * hosts, char * hs, char ** tokens) {
 	char * token;
 	int    tokenCount = 0;
 
+	/* every caller allocates hs for hosts and none copies it: without
+	 * this the walk reads an uninitialized buffer (eac12f9 dropped the
+	 * copy each strategy used to make for itself) */
+	strcpy(hs, hosts);
 	token = strtok(hs, ",");
 	while (token != NULL && tokenCount < 200) {
 		tokens[tokenCount++] = token;
