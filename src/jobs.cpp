@@ -165,15 +165,17 @@ static BOOL job_more_output(psh_entry * temp) {
 }
 
 /* A job that has just produced output is given a moment to end: the
- * process exits, the pipe closes - usually at once. Watched for up to half
- * a second, ten looks 100ms apart. The wait stops at whichever comes
- * first: the end, or more output (a job still producing is read on, not
- * waited for). `read` is set to -1 for a pipe job whose pipe closed - the
- * caller reads that as gone. */
+ * process exits, the pipe closes - an official postex DLL a second or so
+ * after its output was read. Watched for up to two seconds, twenty looks
+ * 100ms apart. The wait stops at whichever comes first: the end, or more
+ * output (a job still producing is read on, not waited for); only a
+ * checkin that read output from a job then silent pays it. `read` is set
+ * to -1 for a pipe job whose pipe closed - the caller reads that as
+ * gone. */
 static void job_wait_end(psh_entry * temp, int * read) {
 	int wait;
 
-	for (wait = 0; wait < 5; wait++) {
+	for (wait = 0; wait < 20; wait++) {
 		DWORD avail = 0;
 		if (!PeekNamedPipe(temp->read_stdout, NULL, 0, NULL, &avail, 0)) {
 			/* the pipe is gone */
