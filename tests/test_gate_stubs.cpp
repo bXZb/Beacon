@@ -30,3 +30,33 @@ BOOL gate_DuplicateHandle(HANDLE a, HANDLE b, HANDLE c, LPHANDLE d, DWORD e, BOO
 BOOL gate_ReadProcessMemory(HANDLE p, LPCVOID a, LPVOID b, SIZE_T c, SIZE_T * d) { return ReadProcessMemory(p, a, b, c, d); }
 BOOL gate_WriteProcessMemory(HANDLE p, LPVOID a, LPCVOID b, SIZE_T c, SIZE_T * d) { return WriteProcessMemory(p, a, b, c, d); }
 void gate_ExitThread(DWORD c) { ExitThread(c); }
+
+/* The rest of what the suite links to but does not carry. Each was added
+ * to a source of the test link after the suite last built (f15ccdc,
+ * October) - nothing compiled the suite, so nothing missed them:
+ *  - gargle_mask_bytes (gargleint.cpp): the session's mask bytes for
+ *    BEACON_INFO.mask. Here a fixed pattern; nothing in the suite reads it.
+ *  - spawn_log (spawn.cpp): the kdebug trace. A no-op in a release build
+ *    too.
+ *  - g3_snapshot_for_bofwin (sleepmask_gen3.cpp): 0 = no snapshot, so the
+ *    bofwin engine finds nothing to mask.
+ *  - gated_tramp / gated_target (gate_tramp.asm): the 16 bytes the gate's
+ *    thunk returns through. Nothing in the suite arms the thunk. */
+#include "gargleint.h"
+#include "sleepmask_gen3.h"
+
+void gargle_mask_bytes(char * out, int len) {
+	int k;
+	for (k = 0; k < len; k++)
+		out[k] = (char)(0x5A ^ k);
+}
+
+extern "C" void spawn_log(const char * msg, long v) { (void)msg; (void)v; }
+
+int g3_snapshot_for_bofwin(G3_HEADER_BLOCK * out, int max, DWORD * text_span) {
+	(void)out; (void)max; (void)text_span;
+	return 0;
+}
+
+extern "C" const unsigned char gated_tramp[16] = { 0xFF, 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+extern "C" unsigned long long gated_target = 0;
